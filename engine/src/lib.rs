@@ -17,7 +17,7 @@ pub mod instruction;
 pub mod vm;
 
 pub use instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
-pub use vm::{Core, MatchState, Warrior};
+pub use vm::{Core, MatchResult, MatchState, Warrior};
 
 use wasm_bindgen::prelude::*;
 

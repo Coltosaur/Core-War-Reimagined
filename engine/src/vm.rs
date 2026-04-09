@@ -1,33 +1,45 @@
 //! MARS execution: core memory, processes, warriors, and the step function.
 //!
-//! Currently implements most of ICWS '94:
+//! Implements the full ICWS '94 opcode and addressing mode set:
 //!
-//!   opcodes:          DAT, MOV, ADD, SUB, MUL, DIV, MOD,
-//!                     JMP, JMZ, JMN, DJN, SPL, SEQ, SNE, NOP
+//!   opcodes (16/16):  DAT, MOV, ADD, SUB, MUL, DIV, MOD,
+//!                     JMP, JMZ, JMN, DJN, SPL, SEQ, SNE, SLT, NOP
+//!   addressing modes (8/8): Immediate, Direct, AIndirect, BIndirect,
+//!                           APredecrement, BPredecrement,
+//!                           APostincrement, BPostincrement
 //!   modifiers:        all seven for arithmetic / MOV (via modifier_field_pairs);
-//!                     .A / .B / .AB / .BA only for DJN / JMZ / JMN; only .I
-//!                     for SEQ / SNE. Multi-field variants of the jump and
-//!                     skip opcodes panic — they need separate semantics
-//!                     decisions and no current warrior needs them.
-//!   addressing modes: Immediate, Direct, AIndirect, BIndirect, BPredecrement
+//!                     .A / .B / .AB / .BA only for DJN / JMZ / JMN / SLT;
+//!                     only .I for SEQ / SNE. Multi-field modifier variants
+//!                     of the jump and skip opcodes panic — they need
+//!                     separate semantics decisions and no current warrior
+//!                     needs them.
+//!
+//! The opcode and addressing-mode matches in `execute` and `resolve` are
+//! both *exhaustive*: there is no catch-all arm. If a new variant is added
+//! to either enum, the compiler will refuse to build until it's handled.
 //!
 //! Two opcodes have non-trivial semantics worth calling out:
 //!
-//!   - SEQ / SNE introduce the *skip-next-instruction* primitive — a
-//!     conditional that advances PC by 2 instead of 1, distinct from a JMP
-//!     because there's no target operand. This is the foundation for scanner
-//!     warriors.
+//!   - SEQ / SNE / SLT introduce the *skip-next-instruction* primitive —
+//!     a conditional that advances PC by 2 instead of 1, distinct from a
+//!     JMP because there's no target operand. SEQ/SNE compare whole
+//!     instructions; SLT compares numeric fields with strict less-than
+//!     (it has no .I modifier because there's no defined ordering for
+//!     full instructions).
 //!
 //!   - DIV / MOD kill the executing process on divide-by-zero (same effect
 //!     as executing a DAT). This is the only opcode-internal failure mode
 //!     that ends a process — every other death comes from running into a
 //!     DAT cell directly.
 //!
-//! Anything outside that subset panics with a clear "not yet implemented"
-//! message rather than silently no-op-ing — partial silence makes broken
-//! warriors look like working ones, which is the worst possible failure
-//! mode for a simulator. New opcodes / modes get added one at a time, each
-//! with its own unit test, and the panic surface shrinks as we go.
+//! The four side-effecting addressing modes (`{ } < >`) all share the
+//! same shape: read the intermediate cell, mutate the selected field
+//! (decrement before address calc OR increment after), write the
+//! intermediate back. This is why `resolve()` takes `&mut Core` rather
+//! than `&Core`.
+//!
+//! Modifier variants that aren't yet implemented panic with a clear
+//! "not yet implemented" message rather than silently no-op-ing.
 
 use std::collections::VecDeque;
 
@@ -480,6 +492,34 @@ impl MatchState {
                 self.warriors[warrior_idx].processes.push_back(resume_pc);
             }
 
+            Opcode::Slt => {
+                // Skip-if-less-than: if the source field is strictly less
+                // than the destination field, skip the next instruction.
+                //
+                // Unlike SEQ/SNE, SLT cannot use the .I modifier because
+                // there's no defined ordering for whole instructions —
+                // less-than only makes sense on numeric fields. The
+                // single-field modifiers (.A, .B, .AB, .BA) operate on one
+                // (source_field, dest_field) pair each.
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let (sf, df) = match instr.modifier {
+                    Modifier::A => (Field::A, Field::A),
+                    Modifier::B => (Field::B, Field::B),
+                    Modifier::AB => (Field::A, Field::B),
+                    Modifier::BA => (Field::B, Field::A),
+                    other => {
+                        unimplemented!("SLT modifier {:?} is not yet implemented", other)
+                    }
+                };
+                let resume_pc = if src.field(sf) < dest.field(df) {
+                    (pc + 2) % core_size
+                } else {
+                    next_pc
+                };
+                self.warriors[warrior_idx].processes.push_back(resume_pc);
+            }
+
             Opcode::Jmn => {
                 // Inverse of JMZ — jump to A when the destination's selected
                 // field is *non-zero*.
@@ -505,11 +545,6 @@ impl MatchState {
                 // postinc side effects), but no field is read or written.
                 self.warriors[warrior_idx].processes.push_back(next_pc);
             }
-
-            // Every other opcode: panic loudly so we know exactly what to
-            // implement next when a warrior reaches it. Silent no-ops were
-            // catching real bugs as "the warrior just keeps running fine".
-            other => unimplemented!("opcode {:?} is not yet implemented", other),
         }
     }
 }
@@ -595,7 +630,43 @@ fn resolve(pc: i32, op: Operand, core: &mut Core) -> i32 {
             pc + op.value + new_b
         }
 
-        other => unimplemented!("addressing mode {:?} is not yet implemented", other),
+        // {N — predecrement A-indirect. Same pattern as BPredecrement, but
+        // operates on the intermediate cell's A-field instead of its B-field.
+        AddressMode::APredecrement => {
+            let intermediate_addr = pc + op.value;
+            let mut intermediate = core.get(intermediate_addr);
+            let core_size_i = core.size() as i32;
+            let new_a = (intermediate.a.value - 1).rem_euclid(core_size_i);
+            intermediate.a.value = new_a;
+            core.set(intermediate_addr, intermediate);
+            pc + op.value + new_a
+        }
+
+        // }N — postincrement A-indirect. Use the *current* A-field value to
+        // compute the effective address, THEN increment. The current value
+        // is captured before the write-back so the address calculation
+        // doesn't see the new value.
+        AddressMode::APostincrement => {
+            let intermediate_addr = pc + op.value;
+            let mut intermediate = core.get(intermediate_addr);
+            let current_a = intermediate.a.value;
+            let core_size_i = core.size() as i32;
+            intermediate.a.value = (current_a + 1).rem_euclid(core_size_i);
+            core.set(intermediate_addr, intermediate);
+            pc + op.value + current_a
+        }
+
+        // >N — postincrement B-indirect. Same pattern as APostincrement on
+        // the intermediate's B-field.
+        AddressMode::BPostincrement => {
+            let intermediate_addr = pc + op.value;
+            let mut intermediate = core.get(intermediate_addr);
+            let current_b = intermediate.b.value;
+            let core_size_i = core.size() as i32;
+            intermediate.b.value = (current_b + 1).rem_euclid(core_size_i);
+            core.set(intermediate_addr, intermediate);
+            pc + op.value + current_b
+        }
     }
 }
 
@@ -639,6 +710,27 @@ mod tests {
     fn b_predec(v: i32) -> Operand {
         Operand {
             mode: AddressMode::BPredecrement,
+            value: v,
+        }
+    }
+
+    fn a_predec(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::APredecrement,
+            value: v,
+        }
+    }
+
+    fn a_postinc(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::APostincrement,
+            value: v,
+        }
+    }
+
+    fn b_postinc(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::BPostincrement,
             value: v,
         }
     }
@@ -1791,5 +1883,192 @@ mod tests {
         assert_eq!(state.steps(), 4);
         assert_eq!(state.max_steps(), 4);
         assert!(!state.step(), "step() should refuse to advance past max_steps");
+    }
+
+    // ==================================================================
+    // SLT — skip if less than. Three tests covering the three orderings
+    // (less, greater, equal). The equal case matters because SLT is
+    // strict less-than: equal values must fall through.
+    // ==================================================================
+
+    #[test]
+    fn slt_b_skips_when_source_b_less_than_dest_b() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // SLT.B $1, $2 — if cell 1's B < cell 2's B, skip the next instruction.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Slt, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(10)));
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(2),
+            "SLT should skip when src.B (3) < dest.B (10)",
+        );
+    }
+
+    #[test]
+    fn slt_b_falls_through_when_source_b_greater_than_dest_b() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Slt, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(10)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(1),
+            "SLT should fall through when src.B (10) > dest.B (3)",
+        );
+    }
+
+    #[test]
+    fn slt_b_falls_through_when_source_b_equals_dest_b() {
+        // The strict-less-than edge case: equal values must NOT skip.
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Slt, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(1),
+            "SLT is strict less-than — equal values must fall through",
+        );
+    }
+
+    // ==================================================================
+    // The three remaining side-effecting addressing modes. All three
+    // mirror the existing BPredecrement test: verify both the side
+    // effect on the intermediate cell AND the resolved destination
+    // address. The postincrement tests in particular catch any "I used
+    // the post-mutated value" bug because the destination is asserted
+    // at the *pre-increment* address.
+    // ==================================================================
+
+    #[test]
+    fn a_predecrement_decrements_intermediate_a_then_resolves() {
+        let mut state = MatchState::new(16, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // MOV.I $5, {1
+        //   - source: $5 — direct, effective = PC+5 = 5
+        //   - dest:   {1 — predec A-indirect: intermediate at PC+1 = cell 1,
+        //                  decrement its A (4 → 3), target = 1 + 3 = 4.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mov, Modifier::I, dir(5), a_predec(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(4), imm(0)));
+        let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
+        state.core_mut().set(5, marker);
+
+        state.step();
+
+        assert_eq!(
+            state.core().get(1).a.value,
+            3,
+            "predecrement should have written 3 back to cell 1's A field",
+        );
+        assert_eq!(
+            state.core().get(4),
+            marker,
+            "MOV destination should have used the post-decrement A value",
+        );
+    }
+
+    #[test]
+    fn a_postincrement_uses_current_a_then_increments() {
+        let mut state = MatchState::new(16, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // MOV.I $5, }1
+        //   - source: $5 — direct, effective = PC+5 = 5
+        //   - dest:   }1 — postinc A-indirect: intermediate at PC+1 = cell 1,
+        //                  use current A (3), target = 1 + 3 = 4,
+        //                  THEN increment cell 1's A to 4.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mov, Modifier::I, dir(5), a_postinc(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(3), imm(0)));
+        let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
+        state.core_mut().set(5, marker);
+
+        state.step();
+
+        assert_eq!(
+            state.core().get(4),
+            marker,
+            "MOV destination should have used the PRE-increment A value (3)",
+        );
+        assert_eq!(
+            state.core().get(1).a.value,
+            4,
+            "intermediate A should have been incremented from 3 to 4 after the address calc",
+        );
+    }
+
+    #[test]
+    fn b_postincrement_uses_current_b_then_increments() {
+        let mut state = MatchState::new(16, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // MOV.I $5, >1
+        //   - source: $5 — direct, effective = PC+5 = 5
+        //   - dest:   >1 — postinc B-indirect: intermediate at PC+1 = cell 1,
+        //                  use current B (3), target = 1 + 3 = 4,
+        //                  THEN increment cell 1's B to 4.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mov, Modifier::I, dir(5), b_postinc(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
+        let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
+        state.core_mut().set(5, marker);
+
+        state.step();
+
+        assert_eq!(
+            state.core().get(4),
+            marker,
+            "MOV destination should have used the PRE-increment B value (3)",
+        );
+        assert_eq!(
+            state.core().get(1).b.value,
+            4,
+            "intermediate B should have been incremented from 3 to 4 after the address calc",
+        );
     }
 }

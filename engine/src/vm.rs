@@ -474,4 +474,99 @@ mod tests {
         // And the dwarf is still going.
         assert!(state.warriors[0].is_alive());
     }
+
+    #[test]
+    fn spl_adds_a_second_process_to_warrior_queue() {
+        // SPL $5 — the executing process continues at PC+1, AND a new
+        // process is spawned at PC+5. Both end up in the queue, with the
+        // continuing process ahead of the spawned one (per ICWS '94).
+        let mut state = MatchState::new(8, 10);
+        state.warriors.push(Warrior::new(0, 0));
+        state
+            .core
+            .set(0, instr(Opcode::Spl, Modifier::B, dir(5), dir(0)));
+
+        assert_eq!(state.warriors[0].processes.len(), 1);
+
+        state.step();
+
+        assert_eq!(state.warriors[0].processes.len(), 2);
+        let pcs: Vec<usize> = state.warriors[0].processes.iter().copied().collect();
+        assert_eq!(
+            pcs,
+            vec![1, 5],
+            "queue should be [continuing_pc, spawned_pc] after SPL",
+        );
+    }
+
+    /// Multi-process imp ring. Demonstrates that within a single warrior,
+    /// the FIFO process queue interleaves processes one-instruction-at-a-time
+    /// — *not* one-process-runs-to-completion-then-the-next.
+    ///
+    /// Setup:
+    ///   cell 0:  SPL  $10        ; spawn a second process at cell 10
+    ///   cell 1:  MOV.I $0, $1    ; imp_a — the original process falls into this
+    ///   cell 10: MOV.I $0, $1    ; imp_b — the spawned process starts here
+    ///
+    /// Trace (queue shown as [front, ..., back] after each step):
+    ///   step 1:  SPL    queue=[1, 10]
+    ///   step 2:  imp_a  copies cell 1→2,    queue=[10, 2]
+    ///   step 3:  imp_b  copies cell 10→11,  queue=[2, 11]
+    ///   step 4:  imp_a  copies cell 2→3,    queue=[11, 3]
+    ///   ... and so on, alternating perfectly between the two processes.
+    ///
+    /// After 11 steps total (1 SPL + 5 imp_a runs + 5 imp_b runs), each
+    /// imp has advanced exactly 5 cells, so cells 1..=6 and 10..=15 are
+    /// all imps. Wrong scheduling (one process running ahead, or neither
+    /// alternating) would produce trails of unequal length.
+    #[test]
+    fn spl_creates_two_imps_walking_in_alternation() {
+        let mut state = MatchState::new(32, 100);
+        state.warriors.push(Warrior::new(0, 0));
+
+        state
+            .core
+            .set(0, instr(Opcode::Spl, Modifier::B, dir(10), dir(0)));
+        state.core.set(1, imp());
+        state.core.set(10, imp());
+
+        for _ in 0..11 {
+            assert!(state.step(), "neither imp should die");
+        }
+
+        for cell in 1..=6 {
+            assert_eq!(
+                state.core.get(cell),
+                imp(),
+                "imp_a trail: cell {cell} should be the imp",
+            );
+        }
+        for cell in 10..=15 {
+            assert_eq!(
+                state.core.get(cell),
+                imp(),
+                "imp_b trail: cell {cell} should be the imp",
+            );
+        }
+
+        // The gap between the two trails must be untouched — proves that
+        // neither imp ran ahead of the other and stomped past its expected
+        // last cell.
+        for cell in 7..=9 {
+            assert_eq!(
+                state.core.get(cell).opcode,
+                Opcode::Dat,
+                "gap cell {cell} should still be empty",
+            );
+        }
+
+        // Both processes alive, in the expected positions.
+        assert_eq!(state.warriors[0].processes.len(), 2);
+        let pcs: Vec<usize> = state.warriors[0].processes.iter().copied().collect();
+        assert_eq!(
+            pcs,
+            vec![6, 15],
+            "queue should be [imp_a_pc=6, imp_b_pc=15] after 11 steps",
+        );
+    }
 }

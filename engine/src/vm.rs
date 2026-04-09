@@ -1,18 +1,27 @@
 //! MARS execution: core memory, processes, warriors, and the step function.
 //!
-//! Currently implements the subset of ICWS '94 needed to run the canonical
-//! Imp, Dwarf, Mice-style replicator, and simple scanner warriors:
+//! Currently implements most of ICWS '94:
 //!
-//!   opcodes:          DAT, MOV, ADD, JMP, SPL, DJN, JMZ, SEQ
+//!   opcodes:          DAT, MOV, ADD, SUB, MUL, DIV, MOD,
+//!                     JMP, JMZ, JMN, DJN, SPL, SEQ, SNE, NOP
 //!   modifiers:        all seven for arithmetic / MOV (via modifier_field_pairs);
-//!                     .A and .B only for DJN / JMZ; only .I for SEQ (multi-
-//!                     field variants of all three panic — they need separate
-//!                     semantics decisions and aren't needed yet).
+//!                     .A / .B / .AB / .BA only for DJN / JMZ / JMN; only .I
+//!                     for SEQ / SNE. Multi-field variants of the jump and
+//!                     skip opcodes panic — they need separate semantics
+//!                     decisions and no current warrior needs them.
 //!   addressing modes: Immediate, Direct, AIndirect, BIndirect, BPredecrement
 //!
-//! SEQ introduces the *skip-next-instruction* primitive — a conditional
-//! that advances PC by 2 instead of 1, distinct from a JMP because there's
-//! no target operand. This is the foundation for scanner warriors.
+//! Two opcodes have non-trivial semantics worth calling out:
+//!
+//!   - SEQ / SNE introduce the *skip-next-instruction* primitive — a
+//!     conditional that advances PC by 2 instead of 1, distinct from a JMP
+//!     because there's no target operand. This is the foundation for scanner
+//!     warriors.
+//!
+//!   - DIV / MOD kill the executing process on divide-by-zero (same effect
+//!     as executing a DAT). This is the only opcode-internal failure mode
+//!     that ends a process — every other death comes from running into a
+//!     DAT cell directly.
 //!
 //! Anything outside that subset panics with a clear "not yet implemented"
 //! message rather than silently no-op-ing — partial silence makes broken
@@ -305,16 +314,72 @@ impl MatchState {
             }
 
             Opcode::Add => {
-                // Field-wise addition. .I is treated identically to .F here,
-                // per the ICWS '94 spec for arithmetic opcodes.
                 let src = self.core.get(a_eff);
-                let mut dest = self.core.get(b_eff);
-                for &(sf, df) in modifier_field_pairs(instr.modifier) {
-                    let sum = (dest.field(df) + src.field(sf)).rem_euclid(core_size_i);
-                    dest.set_field(df, sum);
-                }
-                self.core.set(b_eff, dest);
+                let dest = self.core.get(b_eff);
+                let new_dest =
+                    arithmetic_op(src, dest, instr.modifier, core_size_i, |d, s| Some(d + s))
+                        .expect("ADD never reports failure");
+                self.core.set(b_eff, new_dest);
                 self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
+
+            Opcode::Sub => {
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let new_dest =
+                    arithmetic_op(src, dest, instr.modifier, core_size_i, |d, s| Some(d - s))
+                        .expect("SUB never reports failure");
+                self.core.set(b_eff, new_dest);
+                self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
+
+            Opcode::Mul => {
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let new_dest =
+                    arithmetic_op(src, dest, instr.modifier, core_size_i, |d, s| Some(d * s))
+                        .expect("MUL never reports failure");
+                self.core.set(b_eff, new_dest);
+                self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
+
+            Opcode::Div => {
+                // DIV by zero kills the process — same effect as executing a DAT.
+                // Returning None from the closure aborts arithmetic_op without
+                // writing back any partial results, then we skip enqueueing
+                // the next PC, which is exactly the DAT death pattern.
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let new_dest = arithmetic_op(src, dest, instr.modifier, core_size_i, |d, s| {
+                    if s == 0 {
+                        None
+                    } else {
+                        Some(d / s)
+                    }
+                });
+                if let Some(new_dest) = new_dest {
+                    self.core.set(b_eff, new_dest);
+                    self.warriors[warrior_idx].processes.push_back(next_pc);
+                }
+                // else: divide by zero — process dies, no PC pushed.
+            }
+
+            Opcode::Mod => {
+                // Same divide-by-zero rule as DIV.
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let new_dest = arithmetic_op(src, dest, instr.modifier, core_size_i, |d, s| {
+                    if s == 0 {
+                        None
+                    } else {
+                        Some(d % s)
+                    }
+                });
+                if let Some(new_dest) = new_dest {
+                    self.core.set(b_eff, new_dest);
+                    self.warriors[warrior_idx].processes.push_back(next_pc);
+                }
+                // else: mod by zero — process dies, no PC pushed.
             }
 
             Opcode::Jmp => {
@@ -396,12 +461,79 @@ impl MatchState {
                 self.warriors[warrior_idx].processes.push_back(resume_pc);
             }
 
+            Opcode::Sne => {
+                // Inverse of SEQ — skip the next instruction when the source
+                // and destination *differ*.
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let differ = match instr.modifier {
+                    Modifier::I => src != dest,
+                    other => {
+                        unimplemented!("SNE modifier {:?} is not yet implemented", other)
+                    }
+                };
+                let resume_pc = if differ {
+                    (pc + 2) % core_size
+                } else {
+                    next_pc
+                };
+                self.warriors[warrior_idx].processes.push_back(resume_pc);
+            }
+
+            Opcode::Jmn => {
+                // Inverse of JMZ — jump to A when the destination's selected
+                // field is *non-zero*.
+                let dest = self.core.get(b_eff);
+                let target = self.core.wrap(a_eff);
+                let field = match instr.modifier {
+                    Modifier::A | Modifier::BA => Field::A,
+                    Modifier::B | Modifier::AB => Field::B,
+                    other => {
+                        unimplemented!("JMN modifier {:?} is not yet implemented", other)
+                    }
+                };
+                if dest.field(field) != 0 {
+                    self.warriors[warrior_idx].processes.push_back(target);
+                } else {
+                    self.warriors[warrior_idx].processes.push_back(next_pc);
+                }
+            }
+
+            Opcode::Nop => {
+                // No-op: do nothing except advance to the next instruction.
+                // Operand resolution still happens (which matters for predec/
+                // postinc side effects), but no field is read or written.
+                self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
+
             // Every other opcode: panic loudly so we know exactly what to
             // implement next when a warrior reaches it. Silent no-ops were
             // catching real bugs as "the warrior just keeps running fine".
             other => unimplemented!("opcode {:?} is not yet implemented", other),
         }
     }
+}
+
+/// Apply a binary arithmetic operation field-wise to a destination instruction,
+/// using the modifier to decide which (source_field, dest_field) pairs to
+/// operate on. Returns `None` if any iteration of the operation reports
+/// failure (used by `DIV` and `MOD` to signal divide-by-zero, which kills
+/// the executing process).
+///
+/// All results are reduced modulo `core_size` so that field values stay in
+/// the canonical `[0, core_size)` range.
+fn arithmetic_op(
+    src: Instruction,
+    mut dest: Instruction,
+    modifier: Modifier,
+    core_size: i32,
+    op: impl Fn(i32, i32) -> Option<i32>,
+) -> Option<Instruction> {
+    for &(sf, df) in modifier_field_pairs(modifier) {
+        let result = op(dest.field(df), src.field(sf))?;
+        dest.set_field(df, result.rem_euclid(core_size));
+    }
+    Some(dest)
 }
 
 /// For arithmetic and field-wise MOV operations, the (source_field, dest_field)
@@ -1373,6 +1505,260 @@ mod tests {
         assert_eq!(state.core().get(56).opcode, Opcode::Jmp);
         assert_eq!(state.core().get(57).opcode, Opcode::Mov);
         assert_eq!(state.core().get(58).opcode, Opcode::Jmp);
+    }
+
+    // ==================================================================
+    // Trivial opcode tests — the SUB / MUL / DIV / MOD / JMN / SNE / NOP
+    // additions are all variations on existing opcodes, but each gets a
+    // focused unit test to lock in its specific semantics (especially the
+    // divide-by-zero death rule for DIV and MOD).
+    // ==================================================================
+
+    #[test]
+    fn sub_b_subtracts_source_b_from_dest_b() {
+        let mut state = MatchState::new(16, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // SUB.B $1, $2 — dest.B = dest.B - src.B (cell 2's B - cell 1's B)
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Sub, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(10)));
+
+        state.step();
+
+        // 10 - 3 = 7
+        assert_eq!(state.core().get(2).b.value, 7);
+        // .B must not have touched the A field.
+        assert_eq!(state.core().get(2).a.value, 0);
+    }
+
+    #[test]
+    fn mul_b_multiplies_dest_b_by_source_b() {
+        let mut state = MatchState::new(64, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // MUL.B $1, $2 — dest.B = dest.B * src.B
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mul, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(6)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(7)));
+
+        state.step();
+
+        // 7 * 6 = 42 (no wrap; well within core size)
+        assert_eq!(state.core().get(2).b.value, 42);
+    }
+
+    #[test]
+    fn div_b_divides_dest_b_by_source_b() {
+        let mut state = MatchState::new(64, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // DIV.B $1, $2 — dest.B = dest.B / src.B (integer division)
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Div, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(4)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(20)));
+
+        state.step();
+
+        // 20 / 4 = 5
+        assert_eq!(state.core().get(2).b.value, 5);
+        // Process should still be alive.
+        assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });
+    }
+
+    #[test]
+    fn div_by_zero_kills_process() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // DIV.B $1, $2 — but cell 1's B is zero. Divide-by-zero must kill
+        // the process, *exactly* as if it had executed a DAT.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Div, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(0)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(20)));
+
+        state.step();
+
+        // The destination cell must NOT have been modified (the operation
+        // aborted before any write).
+        assert_eq!(state.core().get(2).b.value, 20, "DIV-by-zero must not write");
+        // And the process is dead.
+        assert_eq!(state.result(), MatchResult::AllDead);
+    }
+
+    #[test]
+    fn mod_b_takes_remainder_of_dest_b_over_source_b() {
+        let mut state = MatchState::new(64, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // MOD.B $1, $2 — dest.B = dest.B mod src.B
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mod, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(7)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(23)));
+
+        state.step();
+
+        // 23 mod 7 = 2
+        assert_eq!(state.core().get(2).b.value, 2);
+    }
+
+    #[test]
+    fn mod_by_zero_kills_process() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Mod, Modifier::B, dir(1), dir(2)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(0)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(23)));
+
+        state.step();
+
+        // No partial write, process dead.
+        assert_eq!(state.core().get(2).b.value, 23);
+        assert_eq!(state.result(), MatchResult::AllDead);
+    }
+
+    #[test]
+    fn jmn_b_jumps_when_destination_b_is_nonzero() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // JMN.B $3, $1 — if cell 1's B != 0, jump to cell 3.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmn, Modifier::B, dir(3), dir(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(3),
+            "JMN should jump because dest.B is non-zero",
+        );
+    }
+
+    #[test]
+    fn jmn_b_falls_through_when_destination_b_is_zero() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // JMN.B $3, $1 — but cell 1's B is zero (the default), so JMN
+        // should NOT jump.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmn, Modifier::B, dir(3), dir(1)));
+        // Cell 1 is the default DAT.F #0 #0.
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(1),
+            "JMN should fall through because dest.B is zero",
+        );
+    }
+
+    #[test]
+    fn sne_i_skips_next_when_full_cells_differ() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // SNE.I $1, $2 — cells 1 and 2 differ (imp vs default DAT), so
+        // SNE should skip the next instruction.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Sne, Modifier::I, dir(1), dir(2)));
+        state.core_mut().set(1, imp());
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(2),
+            "SNE should skip the next instruction when source/dest differ",
+        );
+    }
+
+    #[test]
+    fn sne_i_falls_through_when_full_cells_are_equal() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // SNE.I $1, $2 — both cells are the default DAT.F #0 #0, so they
+        // ARE equal and SNE should NOT skip.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Sne, Modifier::I, dir(1), dir(2)));
+
+        state.step();
+
+        assert_eq!(
+            state.warriors()[0].next_process_pc(),
+            Some(1),
+            "SNE should fall through when source/dest are equal",
+        );
+    }
+
+    #[test]
+    fn nop_advances_pc_with_no_other_effect() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+
+        // NOP $5, $3 — operands are present but should have no effect on
+        // the cells they reference.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Nop, Modifier::F, dir(5), dir(3)));
+        // Snapshot the operand-target cells before stepping.
+        let cell3_before = state.core().get(3);
+        let cell5_before = state.core().get(5);
+
+        state.step();
+
+        // PC advanced by exactly one.
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+        // Operand-target cells are unchanged.
+        assert_eq!(state.core().get(3), cell3_before);
+        assert_eq!(state.core().get(5), cell5_before);
     }
 
     /// The `Tie` variant isn't reachable through any of the migrated tests

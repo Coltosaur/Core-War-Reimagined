@@ -9,13 +9,14 @@ A modernized web rebuild of the 1984 programming game **Core War**. Players writ
 The repo is early-stage. The frontend is a stub (`<h1>Core War</h1>`); the backend is a working axum + socketioxide skeleton with a `/health` endpoint and Socket.IO connect/disconnect handlers but no auth, persistence, or matchmaking yet; the engine has a working executor for the canonical Imp, Dwarf, multi-process imp rings (via SPL), Mice-style replicators, and simple linear scanners — covering all three classical warrior strategies (stones, papers, scanners) — but no parser, and an opcode set still short of full ICWS '94.
 
 **Engine implementation status (see `engine/src/vm.rs`):**
-- Opcodes implemented: `DAT`, `MOV`, `ADD`, `JMP`, `SPL`, `DJN`, `JMZ`, `SEQ`
-- Modifiers for `MOV` and `ADD`: all seven (`A`, `B`, `AB`, `BA`, `F`, `X`, `I`) via the shared `modifier_field_pairs` helper
-- Modifiers for `DJN` and `JMZ`: only `.A` / `.B` / `.AB` / `.BA` (the multi-field variants panic — they need a separate semantics decision about how "jump if zero" applies when both fields are involved)
-- Modifiers for `SEQ`: only `.I` (full-instruction comparison). Field-wise variants panic.
-- Addressing modes: `Immediate`, `Direct`, `AIndirect`, `BIndirect`, `BPredecrement`
+- Opcodes implemented (15 of 16 from ICWS '94): `DAT`, `MOV`, `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `JMP`, `JMZ`, `JMN`, `DJN`, `SPL`, `SEQ`, `SNE`, `NOP`. Only `SLT` is missing.
+- Modifiers for `MOV` / `ADD` / `SUB` / `MUL` / `DIV` / `MOD`: all seven (`A`, `B`, `AB`, `BA`, `F`, `X`, `I`) via the shared `arithmetic_op` + `modifier_field_pairs` helpers. The four arithmetic opcodes share a single closure-driven helper so each match arm is essentially `arithmetic_op(..., |d, s| Some(d OP s))`.
+- Modifiers for `DJN` / `JMZ` / `JMN`: only `.A` / `.B` / `.AB` / `.BA` (multi-field variants panic — they need a separate semantics decision about how "jump if zero" applies when both fields are involved).
+- Modifiers for `SEQ` / `SNE`: only `.I` (full-instruction comparison). Field-wise variants panic.
+- Addressing modes: `Immediate`, `Direct`, `AIndirect`, `BIndirect`, `BPredecrement`. Predec-A and postinc-A/B are still missing.
 - The opcode `Seq` was renamed from the older `Cmp` (ICWS '88 name) to align with ICWS '94. There is no longer an `Opcode::Cmp` variant.
-- `SEQ` introduces the **skip-next-instruction** primitive — a conditional that advances PC by 2 instead of 1, distinct from a JMP because there's no target operand. Scanners depend on this.
+- `SEQ` / `SNE` introduce the **skip-next-instruction** primitive — a conditional that advances PC by 2 instead of 1, distinct from a JMP because there's no target operand. Scanners depend on this.
+- `DIV` and `MOD` introduce the **only opcode-internal failure mode**: a divide-by-zero kills the executing process exactly as if it had executed a `DAT`. Implemented by having `arithmetic_op`'s closure return `Option<i32>` — `None` aborts the operation without writing back, and the opcode arm skips enqueueing the next PC.
 - Anything outside that subset **panics with an explicit "not yet implemented" message** — this is deliberate. Silent fall-through no-ops were hiding bugs as "the warrior just keeps running fine." Each unimplemented feature is meant to fail loudly until it's actually built.
 - New opcodes / modes / modifiers should be added one at a time, each with a focused unit test, plus a full-warrior integration test when a new canonical warrior becomes runnable.
 

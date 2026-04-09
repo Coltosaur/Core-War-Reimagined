@@ -1,13 +1,18 @@
 //! MARS execution: core memory, processes, warriors, and the step function.
 //!
 //! Currently implements the subset of ICWS '94 needed to run the canonical
-//! Imp, Dwarf, and Mice-style replicator warriors:
+//! Imp, Dwarf, Mice-style replicator, and simple scanner warriors:
 //!
-//!   opcodes:          DAT, MOV, ADD, JMP, SPL, DJN, JMZ
+//!   opcodes:          DAT, MOV, ADD, JMP, SPL, DJN, JMZ, SEQ
 //!   modifiers:        all seven for arithmetic / MOV (via modifier_field_pairs);
-//!                     .A and .B only for DJN / JMZ (multi-field variants
-//!                     panic — they need a separate semantics decision).
+//!                     .A and .B only for DJN / JMZ; only .I for SEQ (multi-
+//!                     field variants of all three panic — they need separate
+//!                     semantics decisions and aren't needed yet).
 //!   addressing modes: Immediate, Direct, AIndirect, BIndirect, BPredecrement
+//!
+//! SEQ introduces the *skip-next-instruction* primitive — a conditional
+//! that advances PC by 2 instead of 1, distinct from a JMP because there's
+//! no target operand. This is the foundation for scanner warriors.
 //!
 //! Anything outside that subset panics with a clear "not yet implemented"
 //! message rather than silently no-op-ing — partial silence makes broken
@@ -242,6 +247,31 @@ impl MatchState {
                 } else {
                     self.warriors[warrior_idx].processes.push_back(next_pc);
                 }
+            }
+
+            Opcode::Seq => {
+                // Skip-if-equal: if the source and destination match, the
+                // process *skips* the next instruction (PC advances by 2
+                // instead of 1). Otherwise it falls through normally.
+                //
+                // This is the first opcode that introduces the skip-next
+                // primitive — strictly different from JMP because there's
+                // no target operand, just a conditional advance.
+                let src = self.core.get(a_eff);
+                let dest = self.core.get(b_eff);
+                let equal = match instr.modifier {
+                    // Whole-instruction comparison: every field must match.
+                    Modifier::I => src == dest,
+                    other => {
+                        unimplemented!("SEQ modifier {:?} is not yet implemented", other)
+                    }
+                };
+                let resume_pc = if equal {
+                    (pc + 2) % core_size
+                } else {
+                    next_pc
+                };
+                self.warriors[warrior_idx].processes.push_back(resume_pc);
             }
 
             // Every other opcode: panic loudly so we know exactly what to
@@ -828,6 +858,166 @@ mod tests {
         assert!(
             !state.warriors[0].is_alive(),
             "process should have died on the cell-5 DAT",
+        );
+    }
+
+    #[test]
+    fn seq_i_skips_next_when_full_cells_are_equal() {
+        let mut state = MatchState::new(8, 10);
+        state.warriors.push(Warrior::new(0, 0));
+
+        // SEQ.I $1, $2  — compare cells 1 and 2. Both are default DAT.F #0 #0
+        // (untouched by Core::new) so they're equal as full instructions.
+        state
+            .core
+            .set(0, instr(Opcode::Seq, Modifier::I, dir(1), dir(2)));
+
+        state.step();
+
+        // PC should have advanced by 2 (skipping cell 1) instead of by 1.
+        assert_eq!(
+            state.warriors[0].processes.front(),
+            Some(&2),
+            "SEQ with equal source/dest should set PC to PC+2",
+        );
+    }
+
+    #[test]
+    fn seq_i_falls_through_when_full_cells_differ() {
+        let mut state = MatchState::new(8, 10);
+        state.warriors.push(Warrior::new(0, 0));
+
+        // SEQ.I $1, $2 — but plant an imp at cell 1 so it differs from
+        // cell 2's default DAT.
+        state
+            .core
+            .set(0, instr(Opcode::Seq, Modifier::I, dir(1), dir(2)));
+        state.core.set(1, imp());
+
+        state.step();
+
+        // PC should have advanced by 1 (no skip).
+        assert_eq!(
+            state.warriors[0].processes.front(),
+            Some(&1),
+            "SEQ with differing source/dest should set PC to PC+1",
+        );
+    }
+
+    /// A simple linear scanner. Walks core forward looking for a cell that
+    /// differs from a "blank" template; when it finds one, it bombs that
+    /// location and dies. This is the third major warrior strategy after
+    /// stones (Dwarf) and papers (Mice), and it's the first one that needs
+    /// the skip-next-instruction primitive (`SEQ`).
+    ///
+    /// Layout (process starts at cell 3, the loop body):
+    ///
+    ///   cell 0: ptr      DAT.F #0, #9       ; scan pointer (B = address being scanned)
+    ///   cell 1: blank    DAT.F #0, #0       ; the "empty cell" template
+    ///   cell 2: bomb     DAT.F #0, #99      ; the bomb (distinct B for assertion)
+    ///   cell 3: loop     ADD.AB #1, $-3     ; ptr.B += 1
+    ///   cell 4:          SEQ.I @-4, $-3     ; compare cell-at-ptr to blank
+    ///   cell 5:          JMP $2             ; not equal: jump to "found" (cell 7)
+    ///   cell 6:          JMP $-3            ; equal:     jump back to loop (cell 3)
+    ///   cell 7: found    MOV.I $-5, @-7     ; copy bomb (cell 2) to where ptr points
+    ///   cell 8:          DAT.F #0, #0       ; landing pad — process dies here
+    ///
+    ///   cell 12: marker (a JMP — anything that's not a default DAT)
+    ///
+    /// The scanner sweeps cells 10, 11, 12 (ptr.B advances 9 → 10 → 11 → 12).
+    /// Cells 10 and 11 are empty so SEQ matches and the loop continues.
+    /// Cell 12 holds the marker so SEQ falls through and the bomb fires.
+    ///
+    /// 11 total steps:
+    ///   3 scans-that-match × 3 instructions per scan (ADD/SEQ-skip/JMP-back) = 9
+    ///   ... wait, only 2 match, then 1 mismatch, then bomb-and-die.
+    ///   2 matching iters × 3 = 6
+    ///   1 mismatching iter: ADD/SEQ-no-skip/JMP-found/MOV/DAT-death = 5
+    ///   Total = 11
+    #[test]
+    fn simple_scanner_finds_and_bombs_planted_marker() {
+        let mut state = MatchState::new(32, 100);
+        state.warriors.push(Warrior::new(0, 3));
+
+        state
+            .core
+            .set(0, instr(Opcode::Dat, Modifier::F, imm(0), imm(9)));
+        state
+            .core
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(0)));
+        state
+            .core
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(99)));
+        state
+            .core
+            .set(3, instr(Opcode::Add, Modifier::AB, imm(1), dir(-3)));
+        state
+            .core
+            .set(4, instr(Opcode::Seq, Modifier::I, b_ind(-4), dir(-3)));
+        state
+            .core
+            .set(5, instr(Opcode::Jmp, Modifier::B, dir(2), dir(0)));
+        state
+            .core
+            .set(6, instr(Opcode::Jmp, Modifier::B, dir(-3), dir(0)));
+        state
+            .core
+            .set(7, instr(Opcode::Mov, Modifier::I, dir(-5), b_ind(-7)));
+        // Cell 8 stays as default DAT.F #0 #0 — the landing pad.
+
+        // The marker we expect the scanner to find. Anything that's not a
+        // default DAT.F #0 #0 will trigger SEQ to fall through.
+        let marker = instr(Opcode::Jmp, Modifier::B, dir(123), dir(456));
+        state.core.set(12, marker);
+
+        for _ in 0..11 {
+            state.step();
+        }
+
+        // The marker at cell 12 should have been replaced by the bomb.
+        let bombed = state.core.get(12);
+        assert_eq!(
+            bombed.opcode,
+            Opcode::Dat,
+            "cell 12 should now be a DAT (bombed)",
+        );
+        assert_eq!(
+            bombed.b.value, 99,
+            "cell 12 should have the bomb's distinctive B value",
+        );
+
+        // The scan pointer should have stopped exactly at the marker's address.
+        assert_eq!(
+            state.core.get(0).b.value,
+            12,
+            "scan pointer should have stopped at 12",
+        );
+
+        // The cells the scanner scanned past must be untouched.
+        for cell in [10, 11] {
+            assert_eq!(
+                state.core.get(cell).opcode,
+                Opcode::Dat,
+                "scanned-past cell {cell} should still be empty",
+            );
+            assert_eq!(
+                state.core.get(cell).b.value,
+                0,
+                "scanned-past cell {cell} should still have B=0",
+            );
+        }
+
+        // The scanner program code itself must be untouched.
+        assert_eq!(state.core.get(3).opcode, Opcode::Add);
+        assert_eq!(state.core.get(4).opcode, Opcode::Seq);
+        assert_eq!(state.core.get(5).opcode, Opcode::Jmp);
+        assert_eq!(state.core.get(6).opcode, Opcode::Jmp);
+        assert_eq!(state.core.get(7).opcode, Opcode::Mov);
+
+        // Process died on the cell-8 DAT landing pad.
+        assert!(
+            !state.warriors[0].is_alive(),
+            "scanner should have died on the cell-8 DAT after bombing",
         );
     }
 }

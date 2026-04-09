@@ -6,7 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A modernized web rebuild of the 1984 programming game **Core War**. Players write **Redcode** warriors that battle inside **MARS** (Memory Array Redcode Simulator), a virtual machine implemented in Rust and compiled to WebAssembly.
 
-The repo is in skeleton state — directories and tooling are scaffolded but the engine, frontend, and backend are essentially empty. Expect to be implementing things from scratch rather than modifying existing logic.
+The repo is early-stage. The frontend is a stub (`<h1>Core War</h1>`); the backend is a working axum + socketioxide skeleton with a `/health` endpoint and Socket.IO connect/disconnect handlers but no auth, persistence, or matchmaking yet; the engine has a working executor for the canonical Imp and Dwarf warriors but no parser and only a partial opcode set.
+
+**Engine implementation status (see `engine/src/vm.rs`):**
+- Opcodes implemented: `DAT`, `MOV`, `ADD`, `JMP`, `SPL`
+- Modifiers: all seven (`A`, `B`, `AB`, `BA`, `F`, `X`, `I`) — `MOV` and `ADD` share the field-pair logic via `modifier_field_pairs`
+- Addressing modes: `Immediate`, `Direct`, `AIndirect`, `BIndirect`
+- Anything outside that subset **panics with an explicit "not yet implemented" message** — this is deliberate. Silent fall-through no-ops were hiding bugs as "the warrior just keeps running fine." Each unimplemented feature is meant to fail loudly until it's actually built.
+- New opcodes / modes / modifiers should be added one at a time, each with a focused unit test, plus a full-warrior integration test when a new canonical warrior becomes runnable.
 
 ## Architecture
 

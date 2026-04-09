@@ -1,16 +1,21 @@
 //! MARS execution: core memory, processes, warriors, and the step function.
 //!
-//! Currently implements only the minimum needed to run an Imp:
-//!   - addressing modes: Direct, Immediate
-//!   - opcodes:          Dat, Mov.I, Jmp, Spl
+//! Currently implements the subset of ICWS '94 needed to run the canonical
+//! Imp and Dwarf warriors:
 //!
-//! Other opcodes/modes/modifiers fall through as no-ops (process keeps running)
-//! so the simulator stays usable while it's incrementally fleshed out. Each
-//! addition is a localized change in `execute` and `resolve` plus a new test.
+//!   opcodes:          DAT, MOV, ADD, JMP, SPL
+//!   modifiers:        all seven (A, B, AB, BA, F, X, I)
+//!   addressing modes: Immediate, Direct, AIndirect, BIndirect
+//!
+//! Anything outside that subset panics with a clear "not yet implemented"
+//! message rather than silently no-op-ing — partial silence makes broken
+//! warriors look like working ones, which is the worst possible failure
+//! mode for a simulator. New opcodes / modes get added one at a time, each
+//! with its own unit test, and the panic surface shrinks as we go.
 
 use std::collections::VecDeque;
 
-use crate::instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
+use crate::instruction::{AddressMode, Field, Instruction, Modifier, Opcode, Operand};
 
 /// The shared memory array. Indexing is circular modulo `size()`.
 #[derive(Debug, Clone)]
@@ -138,30 +143,50 @@ impl MatchState {
     fn execute(&mut self, warrior_idx: usize, pc: usize, instr: Instruction) {
         let pc_i = pc as i32;
         let core_size = self.core.size();
+        let core_size_i = core_size as i32;
         let next_pc = (pc + 1) % core_size;
 
-        // Resolve effective addresses for both operands.
-        let a_eff = resolve(pc_i, instr.a);
-        let b_eff = resolve(pc_i, instr.b);
+        // Resolve effective addresses for both operands. ICWS '94 specifies
+        // A is resolved before B, which matters once predec/postinc modes
+        // with side effects are added.
+        let a_eff = resolve(pc_i, instr.a, &mut self.core);
+        let b_eff = resolve(pc_i, instr.b, &mut self.core);
 
         match instr.opcode {
             Opcode::Dat => {
                 // DAT terminates the executing process — nothing is enqueued.
             }
 
-            Opcode::Mov => match instr.modifier {
-                Modifier::I => {
-                    // MOV.I copies the entire source instruction to the destination.
+            Opcode::Mov => {
+                if instr.modifier == Modifier::I {
+                    // Whole-instruction copy: source replaces destination cell.
                     let src = self.core.get(a_eff);
                     self.core.set(b_eff, src);
-                    self.warriors[warrior_idx].processes.push_back(next_pc);
+                } else {
+                    // Field-wise copy: only the integer value of selected fields
+                    // is copied; addressing modes of the destination are preserved.
+                    let src = self.core.get(a_eff);
+                    let mut dest = self.core.get(b_eff);
+                    for &(sf, df) in modifier_field_pairs(instr.modifier) {
+                        dest.set_field(df, src.field(sf));
+                    }
+                    self.core.set(b_eff, dest);
                 }
-                _ => {
-                    // Field-wise MOV variants not yet implemented; treat as no-op
-                    // so the simulator stays usable. To be filled in incrementally.
-                    self.warriors[warrior_idx].processes.push_back(next_pc);
+                self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
+
+            Opcode::Add => {
+                // Field-wise addition. .I is treated identically to .F here,
+                // per the ICWS '94 spec for arithmetic opcodes.
+                let src = self.core.get(a_eff);
+                let mut dest = self.core.get(b_eff);
+                for &(sf, df) in modifier_field_pairs(instr.modifier) {
+                    let sum = (dest.field(df) + src.field(sf)).rem_euclid(core_size_i);
+                    dest.set_field(df, sum);
                 }
-            },
+                self.core.set(b_eff, dest);
+                self.warriors[warrior_idx].processes.push_back(next_pc);
+            }
 
             Opcode::Jmp => {
                 let target = self.core.wrap(a_eff);
@@ -175,27 +200,60 @@ impl MatchState {
                 self.warriors[warrior_idx].processes.push_back(target);
             }
 
-            // Every other opcode is a no-op for now — keep the process alive
-            // so the simulation continues. Real semantics get added per-opcode.
-            _ => {
-                self.warriors[warrior_idx].processes.push_back(next_pc);
-            }
+            // Every other opcode: panic loudly so we know exactly what to
+            // implement next when a warrior reaches it. Silent no-ops were
+            // catching real bugs as "the warrior just keeps running fine".
+            other => unimplemented!("opcode {:?} is not yet implemented", other),
         }
+    }
+}
+
+/// For arithmetic and field-wise MOV operations, the (source_field, dest_field)
+/// pairs that the modifier expands to.
+///
+/// `.I` is treated as `.F` here — for arithmetic ops the spec says they're
+/// equivalent, and for `MOV` the whole-instruction copy is handled separately
+/// in the opcode body, so this fallback is only ever consulted for the
+/// arithmetic case.
+fn modifier_field_pairs(m: Modifier) -> &'static [(Field, Field)] {
+    use Field::{A, B};
+    match m {
+        Modifier::A => &[(A, A)],
+        Modifier::B => &[(B, B)],
+        Modifier::AB => &[(A, B)],
+        Modifier::BA => &[(B, A)],
+        Modifier::F => &[(A, A), (B, B)],
+        Modifier::X => &[(A, B), (B, A)],
+        Modifier::I => &[(A, A), (B, B)],
     }
 }
 
 /// Resolve an operand to an effective core address relative to the executing PC.
 ///
-/// Currently supports `Direct` and `Immediate` only. Indirect / pre-dec /
-/// post-inc modes panic — they need to be implemented before any non-trivial
-/// warrior (e.g. Dwarf, which uses `@`) can run.
-fn resolve(pc: i32, op: Operand) -> i32 {
+/// Takes `&mut Core` so that future predecrement / postincrement modes can
+/// mutate the intermediate cell as part of resolution. Direct, Immediate,
+/// AIndirect, and BIndirect do not mutate.
+fn resolve(pc: i32, op: Operand, core: &mut Core) -> i32 {
     match op.mode {
         AddressMode::Direct => pc + op.value,
+
         // Per ICWS '94, an immediate operand "points to" the cell containing
         // the executing instruction itself.
         AddressMode::Immediate => pc,
-        other => panic!("addressing mode {:?} not yet implemented", other),
+
+        // *N — read the intermediate cell at PC+N, then offset by its A-field.
+        AddressMode::AIndirect => {
+            let intermediate = core.get(pc + op.value);
+            pc + op.value + intermediate.a.value
+        }
+
+        // @N — read the intermediate cell at PC+N, then offset by its B-field.
+        AddressMode::BIndirect => {
+            let intermediate = core.get(pc + op.value);
+            pc + op.value + intermediate.b.value
+        }
+
+        other => unimplemented!("addressing mode {:?} is not yet implemented", other),
     }
 }
 
@@ -204,21 +262,42 @@ mod tests {
     use super::*;
     use crate::instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
 
+    /// Convenience for building an `Instruction` in a test without rendering
+    /// the full struct literal six lines tall every time.
+    fn instr(opcode: Opcode, modifier: Modifier, a: Operand, b: Operand) -> Instruction {
+        Instruction {
+            opcode,
+            modifier,
+            a,
+            b,
+        }
+    }
+
+    fn imm(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::Immediate,
+            value: v,
+        }
+    }
+
+    fn dir(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::Direct,
+            value: v,
+        }
+    }
+
+    fn b_ind(v: i32) -> Operand {
+        Operand {
+            mode: AddressMode::BIndirect,
+            value: v,
+        }
+    }
+
     /// The canonical Imp: `MOV.I $0, $1`. Copies itself one cell forward
     /// every step, walking through core forever.
     fn imp() -> Instruction {
-        Instruction {
-            opcode: Opcode::Mov,
-            modifier: Modifier::I,
-            a: Operand {
-                mode: AddressMode::Direct,
-                value: 0,
-            },
-            b: Operand {
-                mode: AddressMode::Direct,
-                value: 1,
-            },
-        }
+        instr(Opcode::Mov, Modifier::I, dir(0), dir(1))
     }
 
     #[test]
@@ -286,5 +365,113 @@ mod tests {
         assert!(state.step());
         // Second step finds no live warriors and reports the match is over.
         assert!(!state.step());
+    }
+
+    #[test]
+    fn add_ab_adds_source_a_to_dest_b() {
+        // ADD.AB #7, $1   — add 7 (the source's A-field, which for an
+        //                   immediate is just the literal value) to the
+        //                   destination cell's B-field.
+        let mut state = MatchState::new(16, 10);
+        state.warriors.push(Warrior::new(0, 0));
+
+        state.core.set(0, instr(Opcode::Add, Modifier::AB, imm(7), dir(1)));
+        // Cell 1 starts as DAT.F #0, #5 — we'll watch its B-field grow to 12.
+        state
+            .core
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+
+        state.step();
+
+        let cell1 = state.core.get(1);
+        assert_eq!(cell1.b.value, 12, "5 + 7 should be 12");
+        assert_eq!(cell1.a.value, 0, ".AB must not touch the destination's A field");
+    }
+
+    #[test]
+    fn b_indirect_resolves_through_intermediate_cell() {
+        // MOV.I $2, @1
+        //   - source: $2 — direct, effective = PC+2 = 2
+        //   - dest:   @1 — B-indirect: intermediate = PC+1 = cell 1, then
+        //                  add cell 1's B-field (5) to that, giving target 6.
+        let mut state = MatchState::new(16, 10);
+        state.warriors.push(Warrior::new(0, 0));
+
+        state
+            .core
+            .set(0, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(1)));
+        // Cell 1 — the "pointer". Its B-field of 5 is what makes @1 land on cell 6.
+        state
+            .core
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+        // Cell 2 — a recognizable source instruction we expect to see at cell 6.
+        let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
+        state.core.set(2, marker);
+
+        state.step();
+
+        assert_eq!(
+            state.core.get(6),
+            marker,
+            "B-indirect destination should have landed on cell 1+5=6",
+        );
+    }
+
+    /// Dwarf — A. K. Dewdney's classic stone warrior. Bombs core at intervals
+    /// of 4, marching ever-further from its starting position. Per iteration:
+    ///
+    ///   ADD.AB #4, $3   ; cell 3's B-field += 4 (advance the bomb pointer)
+    ///   MOV.I  $2, @2   ; copy cell 3 (the DAT bomb) to wherever cell 3's
+    ///                   ;   B-field now points, relative to cell 3
+    ///   JMP    -2       ; loop back to start
+    ///   DAT.F  #0, #0   ; the "bomb" — also the pointer state
+    ///
+    /// After N iterations, cell 3's B-field is 4*N and there are N DAT bombs
+    /// at addresses 3+4, 3+8, ..., 3+4*N. Each bomb is a snapshot of cell 3
+    /// at the time it was thrown.
+    #[test]
+    fn dwarf_bombs_core_at_intervals_of_four() {
+        let mut state = MatchState::new(64, 100);
+        state.warriors.push(Warrior::new(0, 0));
+
+        state
+            .core
+            .set(0, instr(Opcode::Add, Modifier::AB, imm(4), dir(3)));
+        state
+            .core
+            .set(1, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(2)));
+        state
+            .core
+            .set(2, instr(Opcode::Jmp, Modifier::B, dir(-2), dir(0)));
+        // Cell 3 is already DAT.F #0, #0 from Core::new — that's the bomb.
+
+        // 5 iterations × 3 instructions per iteration = 15 steps.
+        for _ in 0..15 {
+            assert!(state.step(), "dwarf should never die — it has no DAT in its loop");
+        }
+
+        // Bomb pointer (cell 3's B-field) advanced 5 times by 4.
+        assert_eq!(state.core.get(3).b.value, 20);
+        assert_eq!(state.core.get(3).opcode, Opcode::Dat);
+
+        // One bomb per iteration, at the bomb pointer's value-at-time-of-MOV.
+        // Each bomb is a snapshot of cell 3 with the B-field it had then.
+        let expected = [(7, 4), (11, 8), (15, 12), (19, 16), (23, 20)];
+        for (addr, expected_b) in expected {
+            let cell = state.core.get(addr);
+            assert_eq!(cell.opcode, Opcode::Dat, "cell {addr} should be a DAT bomb");
+            assert_eq!(
+                cell.b.value, expected_b,
+                "cell {addr}'s b-field should be {expected_b}",
+            );
+        }
+
+        // The dwarf's program code itself must be untouched.
+        assert_eq!(state.core.get(0).opcode, Opcode::Add);
+        assert_eq!(state.core.get(1).opcode, Opcode::Mov);
+        assert_eq!(state.core.get(2).opcode, Opcode::Jmp);
+
+        // And the dwarf is still going.
+        assert!(state.warriors[0].is_alive());
     }
 }

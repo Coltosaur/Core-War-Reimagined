@@ -34,8 +34,10 @@ pub enum Opcode {
     Spl,
     /// Skip next instruction if A is less than B.
     Slt,
-    /// Compare (== Seq in '94) — skip next if A == B.
-    Cmp,
+    /// Skip next instruction if A == B. Called `CMP` in ICWS '88; the '94
+    /// standard renamed it `SEQ` ("skip if equal") for consistency with
+    /// the other skip-style opcodes (`SLT`, `SNE`).
+    Seq,
     /// Skip next instruction if A != B.
     Sne,
     /// No-op.

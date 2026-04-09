@@ -76,6 +76,17 @@ pub enum AddressMode {
     BPostincrement,
 }
 
+/// One of the two operand positions in a Redcode instruction.
+///
+/// Used by `Modifier`s to specify which field(s) of the source and destination
+/// instructions an opcode operates on. For example, `MOV.AB` copies the
+/// source's A field to the destination's B field — that's `(Field::A, Field::B)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    A,
+    B,
+}
+
 /// One operand: an addressing mode plus a signed offset value.
 ///
 /// Values are stored signed (`i32`) so we can represent the negative offsets
@@ -112,6 +123,24 @@ impl Instruction {
                 mode: AddressMode::Immediate,
                 value: 0,
             },
+        }
+    }
+
+    /// Read the integer value of the A or B field. The addressing mode is
+    /// not returned — modifier-driven field operations work on raw values.
+    pub fn field(&self, f: Field) -> i32 {
+        match f {
+            Field::A => self.a.value,
+            Field::B => self.b.value,
+        }
+    }
+
+    /// Write the integer value of the A or B field, leaving the addressing
+    /// mode of that operand untouched.
+    pub fn set_field(&mut self, f: Field, value: i32) {
+        match f {
+            Field::A => self.a.value = value,
+            Field::B => self.b.value = value,
         }
     }
 }

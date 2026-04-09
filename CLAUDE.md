@@ -21,6 +21,8 @@ The repo is early-stage. The frontend is a stub (`<h1>Core War</h1>`); the backe
 
 The `resolve()` function takes `&mut Core` rather than `&Core` so that addressing modes with side effects (predecrement, postincrement) can mutate the intermediate cell during resolution. `BPredecrement` already exercises this; the other three predec/postinc modes will reuse the same pattern when they're added.
 
+`MatchState::result()` returns a `MatchResult` enum (`Ongoing` / `Victory { winner_id }` / `Tie` / `AllDead`) for queries about who's won. It is purely a query — calling `result()` does not stop the simulation, and `step()` will keep executing the surviving warrior even after `Victory` is reported. The `Tie` and `AllDead` variants are kept distinct because they encode different end-state diagnostics (step limit hit vs. mutual death) even though both are "no winner" for scoring purposes.
+
 ## Architecture
 
 Three independent components, **two** deployment services (frontend static + backend API):

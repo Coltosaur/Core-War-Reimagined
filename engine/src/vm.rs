@@ -110,6 +110,33 @@ impl Warrior {
     }
 }
 
+/// The end-state of a battle (or its in-progress state).
+///
+/// `Tie` and `AllDead` are both "no winner" outcomes but they mean
+/// different things diagnostically: `Tie` = "warriors were still trying
+/// when the step limit ran out," `AllDead` = "they killed each other (or
+/// themselves) before the limit." For scoring purposes neither is a
+/// victory, but a frontend or replay viewer may want to display them
+/// differently.
+///
+/// `Victory` is independent of the step limit — if exactly one warrior
+/// is alive, that warrior has won regardless of how many steps have
+/// elapsed. The limit only matters when there's still more than one
+/// warrior alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchResult {
+    /// More than one warrior is alive and the step limit hasn't been reached.
+    /// The battle should keep running.
+    Ongoing,
+    /// Exactly one warrior is still alive — they win.
+    Victory { winner_id: usize },
+    /// Multiple warriors are still alive but the step limit has been reached.
+    /// No clear winner; the match is over.
+    Tie,
+    /// Every warrior is dead. No survivors, no winner.
+    AllDead,
+}
+
 /// Full state of an in-progress battle.
 ///
 /// All fields are private. External code reads state via the accessor
@@ -173,6 +200,33 @@ impl MatchState {
     /// The configured step limit for this match.
     pub fn max_steps(&self) -> u64 {
         self.max_steps
+    }
+
+    /// Classify the current state of the match: ongoing, won by a single
+    /// warrior, tied at the step limit, or every warrior dead.
+    ///
+    /// Note that this is purely a *query* — calling `result()` does not
+    /// stop the simulation. `step()` will continue to execute the surviving
+    /// warrior even after `result()` reports `Victory`, which is what the
+    /// existing tests rely on (`match_continues_for_surviving_warrior_after_other_dies`
+    /// runs the imp for eight more steps after the other warrior dies).
+    pub fn result(&self) -> MatchResult {
+        // Find the first two live warriors. If there are fewer than two,
+        // the match outcome is determined by the count alone.
+        let mut alive = self.warriors.iter().filter(|w| w.is_alive());
+        match (alive.next(), alive.next()) {
+            (None, _) => MatchResult::AllDead,
+            (Some(only), None) => MatchResult::Victory {
+                winner_id: only.id(),
+            },
+            (Some(_), Some(_)) => {
+                if self.steps >= self.max_steps {
+                    MatchResult::Tie
+                } else {
+                    MatchResult::Ongoing
+                }
+            }
+        }
     }
 
     /// Advance the simulation by one process-step (one instruction for one
@@ -513,8 +567,9 @@ mod tests {
 
         state.step();
 
-        assert!(
-            !state.warriors()[0].is_alive(),
+        assert_eq!(
+            state.result(),
+            MatchResult::AllDead,
             "executing DAT should have killed the only process",
         );
     }
@@ -526,8 +581,10 @@ mod tests {
 
         // First step executes DAT and kills the warrior.
         assert!(state.step());
+        assert_eq!(state.result(), MatchResult::AllDead);
         // Second step finds no live warriors and reports the match is over.
         assert!(!state.step());
+        assert_eq!(state.result(), MatchResult::AllDead);
     }
 
     #[test]
@@ -923,8 +980,9 @@ mod tests {
         assert_eq!(state.core().get(4).opcode, Opcode::Djn, "DJN body intact");
 
         // Process fell into the DAT landing pad and died.
-        assert!(
-            !state.warriors()[0].is_alive(),
+        assert_eq!(
+            state.result(),
+            MatchResult::AllDead,
             "process should have died on the cell-5 DAT",
         );
     }
@@ -1087,5 +1145,265 @@ mod tests {
             !state.warriors()[0].is_alive(),
             "scanner should have died on the cell-8 DAT after bombing",
         );
+    }
+
+    // ==================================================================
+    // Multi-warrior tests — the engine's first battles between two
+    // independent warriors sharing a single core.
+    // ==================================================================
+
+    /// Two imps at non-overlapping positions, alternating one instruction
+    /// per step under the round-robin scheduler. After 10 steps, each
+    /// warrior should have executed exactly 5 times.
+    ///
+    /// This is the multi-warrior version of `imp_propagates_one_cell_per_step`
+    /// and is the simplest test that exercises `next_warrior` rotation
+    /// across more than one live warrior. Wrong alternation, double-popping
+    /// a warrior, or skipping a warrior's turn would all manifest as trails
+    /// of unequal length.
+    #[test]
+    fn two_warriors_alternate_in_round_robin() {
+        let mut state = MatchState::new(64, 50);
+        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(1, 32));
+        state.core_mut().set(0, imp());
+        state.core_mut().set(32, imp());
+
+        for _ in 0..10 {
+            assert!(state.step(), "neither imp should die");
+        }
+
+        // Each imp ran 5 times, so each trail spans 6 cells.
+        for cell in 0..=5 {
+            assert_eq!(
+                state.core().get(cell),
+                imp(),
+                "imp 0 trail: cell {cell} should be the imp",
+            );
+        }
+        for cell in 32..=37 {
+            assert_eq!(
+                state.core().get(cell),
+                imp(),
+                "imp 1 trail: cell {cell} should be the imp",
+            );
+        }
+
+        // Both warriors are still alive with one process each, at the end
+        // of their respective trails.
+        assert_eq!(state.result(), MatchResult::Ongoing);
+        assert_eq!(state.warriors()[0].process_count(), 1);
+        assert_eq!(state.warriors()[1].process_count(), 1);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(5));
+        assert_eq!(state.warriors()[1].next_process_pc(), Some(37));
+    }
+
+    /// When one warrior dies, the surviving warrior should keep running.
+    /// This exercises the dead-warrior-skipping path in `step()`: every
+    /// subsequent step starts at `next_warrior = 1` (the dead one), fails
+    /// the `is_alive` check, falls through to warrior 0, and executes it.
+    #[test]
+    fn match_continues_for_surviving_warrior_after_other_dies() {
+        let mut state = MatchState::new(64, 50);
+
+        // Warrior 0: an imp at cell 0.
+        state.add_warrior(Warrior::new(0, 0));
+        state.core_mut().set(0, imp());
+
+        // Warrior 1: starts at cell 50, which is the default DAT.F #0 #0.
+        // It will die the first time it executes — i.e., on its first turn.
+        state.add_warrior(Warrior::new(1, 50));
+
+        // Step 1: imp executes. Both warriors still alive.
+        state.step();
+        assert_eq!(state.result(), MatchResult::Ongoing);
+
+        // Step 2: warrior 1 executes its DAT and dies — warrior 0 wins.
+        state.step();
+        assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });
+        assert_eq!(state.warriors()[1].process_count(), 0);
+
+        // Steps 3-10: imp continues, warrior 1 stays dead. After 10 total
+        // steps, the imp has executed 9 times (1 in step 1, 8 in steps 3-10),
+        // so cells 0..=9 are all imps and the imp's PC is at cell 9.
+        for _ in 0..8 {
+            assert!(state.step(), "match should still be alive (imp survives)");
+        }
+
+        for cell in 0..=9 {
+            assert_eq!(
+                state.core().get(cell),
+                imp(),
+                "imp trail: cell {cell} should be the imp",
+            );
+        }
+        assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(9));
+    }
+
+    /// **The headline multi-warrior test.** A real Dwarf and a real Scanner
+    /// loaded into the same core, fighting it out. The scanner is set up
+    /// to find the dwarf on its very first scan iteration (by initializing
+    /// its pointer to land on cell 0 after the first `ADD`), bombs cell 0,
+    /// and then loops on `JMP $0` at cell 58 instead of dying in a landing
+    /// pad — so it survives past the kill as a clean winner.
+    ///
+    /// Layout:
+    ///
+    ///   Dwarf at cells 0..=3 (start PC 0):
+    ///     0:  ADD.AB #4, $3       ; advance bomb pointer
+    ///     1:  MOV.I  $2, @2       ; drop bomb
+    ///     2:  JMP    $-2          ; loop
+    ///     3:  DAT.F  #0, #0       ; the bomb
+    ///
+    ///   Scanner at cells 50..=58 (start PC 53):
+    ///    50:  DAT.F  #0, #13      ; ptr — first scan after ADD lands at 50+14 = 64 ≡ 0
+    ///    51:  DAT.F  #0, #0       ; blank template
+    ///    52:  DAT.F  #0, #99      ; bomb (B=99 is the kill signature)
+    ///    53:  ADD.AB #1, $-3      ; advance scan ptr
+    ///    54:  SEQ.I  @-4, $-3     ; compare cell-at-ptr to blank
+    ///    55:  JMP    $2           ; not equal: jump to bomb step
+    ///    56:  JMP    $-3          ; equal:     keep scanning
+    ///    57:  MOV.I  $-5, @-7     ; bomb the located cell
+    ///    58:  JMP    $0           ; survive! loop forever instead of dying
+    ///
+    /// Hand-traced step-by-step (D = dwarf turn, S = scanner turn):
+    ///   1: D ADD     → cell 3.B = 4
+    ///   2: S ADD     → ptr.B = 14
+    ///   3: D MOV     → cell 7  = DAT.F #0 #4 (dwarf's first bomb)
+    ///   4: S SEQ     → cell 0 ≠ blank, no skip, fall through
+    ///   5: D JMP     → PC = 0
+    ///   6: S JMP $2  → PC = 57
+    ///   7: D ADD     → cell 3.B = 8
+    ///   8: S MOV     → BOMB cell 0 with DAT.F #0 #99
+    ///   9: D MOV     → cell 11 = DAT.F #0 #8 (dwarf's second bomb)
+    ///  10: S JMP $0  → loop at 58
+    ///  11: D JMP     → PC = 0  (heading to its doom)
+    ///  12: S JMP $0  → loop at 58
+    ///  13: D DAT     → DWARF EXECUTES THE BOMB AT CELL 0 AND DIES
+    ///  14-20: scanner continues looping at cell 58 (dwarf is dead and skipped)
+    #[test]
+    fn scanner_kills_dwarf_in_head_to_head_battle() {
+        let mut state = MatchState::new(64, 200);
+
+        // Dwarf at cells 0..=3, starting PC 0.
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Add, Modifier::AB, imm(4), dir(3)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(2)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Jmp, Modifier::B, dir(-2), dir(0)));
+        // Cell 3 stays as default DAT.F #0 #0 — the bomb.
+
+        // Scanner at cells 50..=58, starting PC 53 (the scan-loop ADD).
+        state.add_warrior(Warrior::new(1, 53));
+        state
+            .core_mut()
+            .set(50, instr(Opcode::Dat, Modifier::F, imm(0), imm(13)));
+        state
+            .core_mut()
+            .set(51, instr(Opcode::Dat, Modifier::F, imm(0), imm(0)));
+        state
+            .core_mut()
+            .set(52, instr(Opcode::Dat, Modifier::F, imm(0), imm(99)));
+        state
+            .core_mut()
+            .set(53, instr(Opcode::Add, Modifier::AB, imm(1), dir(-3)));
+        state
+            .core_mut()
+            .set(54, instr(Opcode::Seq, Modifier::I, b_ind(-4), dir(-3)));
+        state
+            .core_mut()
+            .set(55, instr(Opcode::Jmp, Modifier::B, dir(2), dir(0)));
+        state
+            .core_mut()
+            .set(56, instr(Opcode::Jmp, Modifier::B, dir(-3), dir(0)));
+        state
+            .core_mut()
+            .set(57, instr(Opcode::Mov, Modifier::I, dir(-5), b_ind(-7)));
+        // Cell 58 is the survival loop: JMP $0 (jump to self).
+        state
+            .core_mut()
+            .set(58, instr(Opcode::Jmp, Modifier::B, dir(0), dir(0)));
+
+        for _ in 0..20 {
+            state.step();
+        }
+
+        // The scanner bombed cell 0 — the dwarf's main loop entry point.
+        let cell0 = state.core().get(0);
+        assert_eq!(
+            cell0.opcode,
+            Opcode::Dat,
+            "cell 0 should have been bombed (now a DAT)",
+        );
+        assert_eq!(
+            cell0.b.value, 99,
+            "cell 0 should bear the scanner's bomb signature B=99",
+        );
+
+        // The scanner won — dwarf is dead, scanner is alive.
+        assert_eq!(
+            state.result(),
+            MatchResult::Victory { winner_id: 1 },
+            "scanner (warrior 1) should have won by bombing the dwarf",
+        );
+        assert_eq!(
+            state.warriors()[1].next_process_pc(),
+            Some(58),
+            "scanner should be looping at its post-kill cell 58",
+        );
+
+        // The dwarf got off two bombs before dying — proves it was actually
+        // running and not just inert. (If the simulation were broken and
+        // the dwarf never executed at all, these cells would still be empty.)
+        assert_eq!(state.core().get(7).opcode, Opcode::Dat);
+        assert_eq!(state.core().get(7).b.value, 4, "dwarf's first bomb (B=4)");
+        assert_eq!(state.core().get(11).opcode, Opcode::Dat);
+        assert_eq!(state.core().get(11).b.value, 8, "dwarf's second bomb (B=8)");
+
+        // Scanner program body intact.
+        assert_eq!(state.core().get(53).opcode, Opcode::Add);
+        assert_eq!(state.core().get(54).opcode, Opcode::Seq);
+        assert_eq!(state.core().get(55).opcode, Opcode::Jmp);
+        assert_eq!(state.core().get(56).opcode, Opcode::Jmp);
+        assert_eq!(state.core().get(57).opcode, Opcode::Mov);
+        assert_eq!(state.core().get(58).opcode, Opcode::Jmp);
+    }
+
+    /// The `Tie` variant isn't reachable through any of the migrated tests
+    /// (none of them run into the step limit). Two imps with a tiny
+    /// `max_steps` is the most direct way to force the path: imps don't
+    /// die naturally, so when the step counter reaches the limit both
+    /// warriors are still alive.
+    #[test]
+    fn result_is_tie_at_step_limit_with_multiple_warriors_alive() {
+        let mut state = MatchState::new(64, 4);
+        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(1, 32));
+        state.core_mut().set(0, imp());
+        state.core_mut().set(32, imp());
+
+        // While the match is still progressing, result() reports Ongoing.
+        assert_eq!(state.result(), MatchResult::Ongoing);
+
+        // Run exactly to the step limit. After this, step() should refuse
+        // to advance further (returns false) and result() should report Tie.
+        for _ in 0..4 {
+            state.step();
+        }
+
+        assert_eq!(
+            state.result(),
+            MatchResult::Tie,
+            "step limit reached with both warriors alive",
+        );
+        assert_eq!(state.steps(), 4);
+        assert_eq!(state.max_steps(), 4);
+        assert!(!state.step(), "step() should refuse to advance past max_steps");
     }
 }

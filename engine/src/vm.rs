@@ -63,10 +63,15 @@ impl Core {
 
 /// One warrior — its identity and its FIFO queue of running processes.
 /// An empty queue means the warrior is dead.
+///
+/// Both fields are private. The process queue is internal scheduling state
+/// that must only be mutated via `step()` (and via `MatchState` setup, which
+/// lives in the same module and can therefore reach in directly). External
+/// code reads queue state through the accessor methods below.
 #[derive(Debug, Clone)]
 pub struct Warrior {
-    pub id: usize,
-    pub processes: VecDeque<usize>,
+    id: usize,
+    processes: VecDeque<usize>,
 }
 
 impl Warrior {
@@ -77,21 +82,51 @@ impl Warrior {
         Self { id, processes }
     }
 
+    /// The warrior's identifier (assigned at construction).
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    /// Whether the warrior still has at least one running process.
     pub fn is_alive(&self) -> bool {
         !self.processes.is_empty()
+    }
+
+    /// How many processes this warrior currently has in its queue.
+    pub fn process_count(&self) -> usize {
+        self.processes.len()
+    }
+
+    /// The PC of the next process to run, or `None` if the warrior is dead.
+    pub fn next_process_pc(&self) -> Option<usize> {
+        self.processes.front().copied()
+    }
+
+    /// All process PCs in queue order, front to back. The iterator borrows
+    /// from `self`, so it can't outlive the warrior — but it yields owned
+    /// `usize`s rather than `&usize`, which is friendlier at call sites.
+    pub fn process_pcs(&self) -> impl Iterator<Item = usize> + '_ {
+        self.processes.iter().copied()
     }
 }
 
 /// Full state of an in-progress battle.
+///
+/// All fields are private. External code reads state via the accessor
+/// methods below and mutates state only via `add_warrior` (setup time)
+/// or `step` (execution). `core_mut` exists as a deliberate escape hatch
+/// for loading initial cells before a battle starts (and for tests
+/// constructing scenarios) — it should not be used for anything that
+/// resembles "executing instructions."
 #[derive(Debug, Clone)]
 pub struct MatchState {
-    pub core: Core,
-    pub warriors: Vec<Warrior>,
+    core: Core,
+    warriors: Vec<Warrior>,
     /// Number of process-steps that have been executed. Note: in classic
     /// Core War a "cycle" is one step *per warrior*; we count individual
     /// process steps here. Equivalent for single-warrior matches.
-    pub steps: u64,
-    pub max_steps: u64,
+    steps: u64,
+    max_steps: u64,
     /// Round-robin index — the warrior whose turn it is next.
     next_warrior: usize,
 }
@@ -105,6 +140,39 @@ impl MatchState {
             max_steps,
             next_warrior: 0,
         }
+    }
+
+    /// Add a warrior to the match. Used at setup time, before stepping begins.
+    pub fn add_warrior(&mut self, warrior: Warrior) {
+        self.warriors.push(warrior);
+    }
+
+    /// Read access to the core memory array.
+    pub fn core(&self) -> &Core {
+        &self.core
+    }
+
+    /// Mutable access to the core. Use this to load initial cells before
+    /// stepping the simulation; do *not* use it to bypass `step()` once
+    /// a battle is in progress.
+    pub fn core_mut(&mut self) -> &mut Core {
+        &mut self.core
+    }
+
+    /// Read access to the warrior list as a slice — external code can
+    /// inspect every warrior's state but cannot push, pop, or replace.
+    pub fn warriors(&self) -> &[Warrior] {
+        &self.warriors
+    }
+
+    /// Number of process-steps that have been executed so far.
+    pub fn steps(&self) -> u64 {
+        self.steps
+    }
+
+    /// The configured step limit for this match.
+    pub fn max_steps(&self) -> u64 {
+        self.max_steps
     }
 
     /// Advance the simulation by one process-step (one instruction for one
@@ -398,8 +466,8 @@ mod tests {
     #[test]
     fn imp_propagates_one_cell_per_step() {
         let mut state = MatchState::new(8000, 100);
-        state.warriors.push(Warrior::new(0, 0));
-        state.core.set(0, imp());
+        state.add_warrior(Warrior::new(0, 0));
+        state.core_mut().set(0, imp());
 
         // After N steps, cells [0..=N] should all contain the imp:
         // step 1 writes cell 1, step 2 writes cell 2, etc.
@@ -407,23 +475,23 @@ mod tests {
             state.step();
             for cell in 0..=n {
                 assert_eq!(
-                    state.core.get(cell as i32),
+                    state.core().get(cell as i32),
                     imp(),
                     "after {n} steps, cell {cell} should be the imp",
                 );
             }
         }
 
-        assert!(state.warriors[0].is_alive(), "imp should still be running");
-        assert_eq!(state.steps, 5);
+        assert!(state.warriors()[0].is_alive(), "imp should still be running");
+        assert_eq!(state.steps(), 5);
     }
 
     #[test]
     fn imp_wraps_around_core() {
         // Tiny core to make the wrap fast.
         let mut state = MatchState::new(4, 100);
-        state.warriors.push(Warrior::new(0, 0));
-        state.core.set(0, imp());
+        state.add_warrior(Warrior::new(0, 0));
+        state.core_mut().set(0, imp());
 
         // Step enough times to walk past the end of the core. The imp should
         // still be alive (wraparound semantics) and every cell should be imp.
@@ -432,21 +500,21 @@ mod tests {
         }
 
         for cell in 0..4 {
-            assert_eq!(state.core.get(cell), imp(), "cell {cell} should be the imp");
+            assert_eq!(state.core().get(cell), imp(), "cell {cell} should be the imp");
         }
-        assert!(state.warriors[0].is_alive());
+        assert!(state.warriors()[0].is_alive());
     }
 
     #[test]
     fn dat_kills_process() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
         // Cell 0 is already DAT.F #0, #0 from Core::new — execute it.
 
         state.step();
 
         assert!(
-            !state.warriors[0].is_alive(),
+            !state.warriors()[0].is_alive(),
             "executing DAT should have killed the only process",
         );
     }
@@ -454,7 +522,7 @@ mod tests {
     #[test]
     fn match_ends_when_all_warriors_dead() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         // First step executes DAT and kills the warrior.
         assert!(state.step());
@@ -468,17 +536,17 @@ mod tests {
         //                   immediate is just the literal value) to the
         //                   destination cell's B-field.
         let mut state = MatchState::new(16, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
-        state.core.set(0, instr(Opcode::Add, Modifier::AB, imm(7), dir(1)));
+        state.core_mut().set(0, instr(Opcode::Add, Modifier::AB, imm(7), dir(1)));
         // Cell 1 starts as DAT.F #0, #5 — we'll watch its B-field grow to 12.
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
 
         state.step();
 
-        let cell1 = state.core.get(1);
+        let cell1 = state.core().get(1);
         assert_eq!(cell1.b.value, 12, "5 + 7 should be 12");
         assert_eq!(cell1.a.value, 0, ".AB must not touch the destination's A field");
     }
@@ -490,23 +558,23 @@ mod tests {
         //   - dest:   @1 — B-indirect: intermediate = PC+1 = cell 1, then
         //                  add cell 1's B-field (5) to that, giving target 6.
         let mut state = MatchState::new(16, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(1)));
         // Cell 1 — the "pointer". Its B-field of 5 is what makes @1 land on cell 6.
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
         // Cell 2 — a recognizable source instruction we expect to see at cell 6.
         let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
-        state.core.set(2, marker);
+        state.core_mut().set(2, marker);
 
         state.step();
 
         assert_eq!(
-            state.core.get(6),
+            state.core().get(6),
             marker,
             "B-indirect destination should have landed on cell 1+5=6",
         );
@@ -527,16 +595,16 @@ mod tests {
     #[test]
     fn dwarf_bombs_core_at_intervals_of_four() {
         let mut state = MatchState::new(64, 100);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Add, Modifier::AB, imm(4), dir(3)));
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(2)));
         state
-            .core
+            .core_mut()
             .set(2, instr(Opcode::Jmp, Modifier::B, dir(-2), dir(0)));
         // Cell 3 is already DAT.F #0, #0 from Core::new — that's the bomb.
 
@@ -546,14 +614,14 @@ mod tests {
         }
 
         // Bomb pointer (cell 3's B-field) advanced 5 times by 4.
-        assert_eq!(state.core.get(3).b.value, 20);
-        assert_eq!(state.core.get(3).opcode, Opcode::Dat);
+        assert_eq!(state.core().get(3).b.value, 20);
+        assert_eq!(state.core().get(3).opcode, Opcode::Dat);
 
         // One bomb per iteration, at the bomb pointer's value-at-time-of-MOV.
         // Each bomb is a snapshot of cell 3 with the B-field it had then.
         let expected = [(7, 4), (11, 8), (15, 12), (19, 16), (23, 20)];
         for (addr, expected_b) in expected {
-            let cell = state.core.get(addr);
+            let cell = state.core().get(addr);
             assert_eq!(cell.opcode, Opcode::Dat, "cell {addr} should be a DAT bomb");
             assert_eq!(
                 cell.b.value, expected_b,
@@ -562,12 +630,12 @@ mod tests {
         }
 
         // The dwarf's program code itself must be untouched.
-        assert_eq!(state.core.get(0).opcode, Opcode::Add);
-        assert_eq!(state.core.get(1).opcode, Opcode::Mov);
-        assert_eq!(state.core.get(2).opcode, Opcode::Jmp);
+        assert_eq!(state.core().get(0).opcode, Opcode::Add);
+        assert_eq!(state.core().get(1).opcode, Opcode::Mov);
+        assert_eq!(state.core().get(2).opcode, Opcode::Jmp);
 
         // And the dwarf is still going.
-        assert!(state.warriors[0].is_alive());
+        assert!(state.warriors()[0].is_alive());
     }
 
     #[test]
@@ -576,17 +644,17 @@ mod tests {
         // process is spawned at PC+5. Both end up in the queue, with the
         // continuing process ahead of the spawned one (per ICWS '94).
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Spl, Modifier::B, dir(5), dir(0)));
 
-        assert_eq!(state.warriors[0].processes.len(), 1);
+        assert_eq!(state.warriors()[0].process_count(), 1);
 
         state.step();
 
-        assert_eq!(state.warriors[0].processes.len(), 2);
-        let pcs: Vec<usize> = state.warriors[0].processes.iter().copied().collect();
+        assert_eq!(state.warriors()[0].process_count(), 2);
+        let pcs: Vec<usize> = state.warriors()[0].process_pcs().collect();
         assert_eq!(
             pcs,
             vec![1, 5],
@@ -617,13 +685,13 @@ mod tests {
     #[test]
     fn spl_creates_two_imps_walking_in_alternation() {
         let mut state = MatchState::new(32, 100);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Spl, Modifier::B, dir(10), dir(0)));
-        state.core.set(1, imp());
-        state.core.set(10, imp());
+        state.core_mut().set(1, imp());
+        state.core_mut().set(10, imp());
 
         for _ in 0..11 {
             assert!(state.step(), "neither imp should die");
@@ -631,14 +699,14 @@ mod tests {
 
         for cell in 1..=6 {
             assert_eq!(
-                state.core.get(cell),
+                state.core().get(cell),
                 imp(),
                 "imp_a trail: cell {cell} should be the imp",
             );
         }
         for cell in 10..=15 {
             assert_eq!(
-                state.core.get(cell),
+                state.core().get(cell),
                 imp(),
                 "imp_b trail: cell {cell} should be the imp",
             );
@@ -649,15 +717,15 @@ mod tests {
         // last cell.
         for cell in 7..=9 {
             assert_eq!(
-                state.core.get(cell).opcode,
+                state.core().get(cell).opcode,
                 Opcode::Dat,
                 "gap cell {cell} should still be empty",
             );
         }
 
         // Both processes alive, in the expected positions.
-        assert_eq!(state.warriors[0].processes.len(), 2);
-        let pcs: Vec<usize> = state.warriors[0].processes.iter().copied().collect();
+        assert_eq!(state.warriors()[0].process_count(), 2);
+        let pcs: Vec<usize> = state.warriors()[0].process_pcs().collect();
         assert_eq!(
             pcs,
             vec![6, 15],
@@ -671,51 +739,51 @@ mod tests {
         // Cell 1: DJN.B $0, $-1   — A=0 jumps back to itself, B=-1 targets cell 0.
         // Each execution: counter.B--, then jump to self if non-zero.
         let mut state = MatchState::new(8, 20);
-        state.warriors.push(Warrior::new(0, 1));
+        state.add_warrior(Warrior::new(0, 1));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Djn, Modifier::B, dir(0), dir(-1)));
 
         // Step 1: counter 3 → 2, jump to cell 1.
         state.step();
-        assert_eq!(state.core.get(0).b.value, 2);
-        assert_eq!(state.warriors[0].processes.front(), Some(&1));
+        assert_eq!(state.core().get(0).b.value, 2);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
 
         // Step 2: counter 2 → 1, jump.
         state.step();
-        assert_eq!(state.core.get(0).b.value, 1);
-        assert_eq!(state.warriors[0].processes.front(), Some(&1));
+        assert_eq!(state.core().get(0).b.value, 1);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
 
         // Step 3: counter 1 → 0, fall through to cell 2.
         state.step();
-        assert_eq!(state.core.get(0).b.value, 0);
-        assert_eq!(state.warriors[0].processes.front(), Some(&2));
+        assert_eq!(state.core().get(0).b.value, 0);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(2));
 
         // Step 4: cell 2 is the default DAT.F #0, #0 — process dies.
         state.step();
-        assert!(!state.warriors[0].is_alive());
+        assert!(!state.warriors()[0].is_alive());
     }
 
     #[test]
     fn jmz_b_jumps_when_destination_b_is_zero() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         // JMZ.B $3, $1  — if cell 1's B == 0, jump to cell 3.
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Jmz, Modifier::B, dir(3), dir(1)));
         // Cell 1 is the default DAT.F #0, #0 — its B is already zero.
 
         state.step();
 
         assert_eq!(
-            state.warriors[0].processes.front(),
-            Some(&3),
+            state.warriors()[0].next_process_pc(),
+            Some(3),
             "JMZ should have jumped to its A operand because dest.B was zero",
         );
     }
@@ -723,21 +791,21 @@ mod tests {
     #[test]
     fn jmz_b_falls_through_when_destination_b_is_nonzero() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Jmz, Modifier::B, dir(3), dir(1)));
         // Cell 1: DAT.F #0, #5 — B-field is non-zero so JMZ should NOT jump.
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
 
         state.step();
 
         assert_eq!(
-            state.warriors[0].processes.front(),
-            Some(&1),
+            state.warriors()[0].next_process_pc(),
+            Some(1),
             "JMZ should have fallen through to PC+1 because dest.B was non-zero",
         );
     }
@@ -745,34 +813,34 @@ mod tests {
     #[test]
     fn b_predecrement_decrements_intermediate_b_then_resolves() {
         let mut state = MatchState::new(16, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         // MOV.I $5, <1
         //   - source: $5     — direct, effective = PC+5 = 5
         //   - dest:   <1     — predec B-indirect: intermediate at PC+1 = cell 1,
         //                      decrement its B (4 → 3), target = 1 + 3 = 4.
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Mov, Modifier::I, dir(5), b_predec(1)));
         // Cell 1 — the pointer cell. Its B field starts at 4 and gets decremented.
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(4)));
         // Cell 5 — recognizable marker we expect to land at cell 4.
         let marker = instr(Opcode::Jmp, Modifier::B, dir(99), dir(0));
-        state.core.set(5, marker);
+        state.core_mut().set(5, marker);
 
         state.step();
 
         // The intermediate cell's B was decremented in place.
         assert_eq!(
-            state.core.get(1).b.value,
+            state.core().get(1).b.value,
             3,
             "predecrement should have written 3 back to cell 1",
         );
         // And the resolved destination (1 + 3 = 4) received the source.
         assert_eq!(
-            state.core.get(4),
+            state.core().get(4),
             marker,
             "MOV destination should have used the post-decrement B value",
         );
@@ -809,22 +877,22 @@ mod tests {
     #[test]
     fn mice_lite_replicator_copies_marker_three_times() {
         let mut state = MatchState::new(32, 50);
-        state.warriors.push(Warrior::new(0, 3));
+        state.add_warrior(Warrior::new(0, 3));
 
         let template = imp();
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(8)));
-        state.core.set(2, template);
+        state.core_mut().set(2, template);
         state
-            .core
+            .core_mut()
             .set(3, instr(Opcode::Mov, Modifier::I, dir(-1), b_predec(-2)));
         state
-            .core
+            .core_mut()
             .set(4, instr(Opcode::Djn, Modifier::B, dir(-1), dir(-4)));
         // Cell 5 stays as default DAT — the post-loop landing pad.
 
@@ -835,28 +903,28 @@ mod tests {
         // Three copies of the imp template, walking backwards from cell 8.
         for cell in [6, 7, 8] {
             assert_eq!(
-                state.core.get(cell),
+                state.core().get(cell),
                 template,
                 "cell {cell} should hold a copy of the marker",
             );
         }
 
         // The counter and dest pointer ended in their expected exhausted state.
-        assert_eq!(state.core.get(0).b.value, 0, "counter should be exhausted");
+        assert_eq!(state.core().get(0).b.value, 0, "counter should be exhausted");
         assert_eq!(
-            state.core.get(1).b.value,
+            state.core().get(1).b.value,
             5,
             "dest pointer should have decremented 8 → 5",
         );
 
         // Program code untouched.
-        assert_eq!(state.core.get(2), template, "template cell intact");
-        assert_eq!(state.core.get(3).opcode, Opcode::Mov, "loop body intact");
-        assert_eq!(state.core.get(4).opcode, Opcode::Djn, "DJN body intact");
+        assert_eq!(state.core().get(2), template, "template cell intact");
+        assert_eq!(state.core().get(3).opcode, Opcode::Mov, "loop body intact");
+        assert_eq!(state.core().get(4).opcode, Opcode::Djn, "DJN body intact");
 
         // Process fell into the DAT landing pad and died.
         assert!(
-            !state.warriors[0].is_alive(),
+            !state.warriors()[0].is_alive(),
             "process should have died on the cell-5 DAT",
         );
     }
@@ -864,20 +932,20 @@ mod tests {
     #[test]
     fn seq_i_skips_next_when_full_cells_are_equal() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         // SEQ.I $1, $2  — compare cells 1 and 2. Both are default DAT.F #0 #0
         // (untouched by Core::new) so they're equal as full instructions.
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Seq, Modifier::I, dir(1), dir(2)));
 
         state.step();
 
         // PC should have advanced by 2 (skipping cell 1) instead of by 1.
         assert_eq!(
-            state.warriors[0].processes.front(),
-            Some(&2),
+            state.warriors()[0].next_process_pc(),
+            Some(2),
             "SEQ with equal source/dest should set PC to PC+2",
         );
     }
@@ -885,21 +953,21 @@ mod tests {
     #[test]
     fn seq_i_falls_through_when_full_cells_differ() {
         let mut state = MatchState::new(8, 10);
-        state.warriors.push(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0));
 
         // SEQ.I $1, $2 — but plant an imp at cell 1 so it differs from
         // cell 2's default DAT.
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Seq, Modifier::I, dir(1), dir(2)));
-        state.core.set(1, imp());
+        state.core_mut().set(1, imp());
 
         state.step();
 
         // PC should have advanced by 1 (no skip).
         assert_eq!(
-            state.warriors[0].processes.front(),
-            Some(&1),
+            state.warriors()[0].next_process_pc(),
+            Some(1),
             "SEQ with differing source/dest should set PC to PC+1",
         );
     }
@@ -937,45 +1005,45 @@ mod tests {
     #[test]
     fn simple_scanner_finds_and_bombs_planted_marker() {
         let mut state = MatchState::new(32, 100);
-        state.warriors.push(Warrior::new(0, 3));
+        state.add_warrior(Warrior::new(0, 3));
 
         state
-            .core
+            .core_mut()
             .set(0, instr(Opcode::Dat, Modifier::F, imm(0), imm(9)));
         state
-            .core
+            .core_mut()
             .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(0)));
         state
-            .core
+            .core_mut()
             .set(2, instr(Opcode::Dat, Modifier::F, imm(0), imm(99)));
         state
-            .core
+            .core_mut()
             .set(3, instr(Opcode::Add, Modifier::AB, imm(1), dir(-3)));
         state
-            .core
+            .core_mut()
             .set(4, instr(Opcode::Seq, Modifier::I, b_ind(-4), dir(-3)));
         state
-            .core
+            .core_mut()
             .set(5, instr(Opcode::Jmp, Modifier::B, dir(2), dir(0)));
         state
-            .core
+            .core_mut()
             .set(6, instr(Opcode::Jmp, Modifier::B, dir(-3), dir(0)));
         state
-            .core
+            .core_mut()
             .set(7, instr(Opcode::Mov, Modifier::I, dir(-5), b_ind(-7)));
         // Cell 8 stays as default DAT.F #0 #0 — the landing pad.
 
         // The marker we expect the scanner to find. Anything that's not a
         // default DAT.F #0 #0 will trigger SEQ to fall through.
         let marker = instr(Opcode::Jmp, Modifier::B, dir(123), dir(456));
-        state.core.set(12, marker);
+        state.core_mut().set(12, marker);
 
         for _ in 0..11 {
             state.step();
         }
 
         // The marker at cell 12 should have been replaced by the bomb.
-        let bombed = state.core.get(12);
+        let bombed = state.core().get(12);
         assert_eq!(
             bombed.opcode,
             Opcode::Dat,
@@ -988,7 +1056,7 @@ mod tests {
 
         // The scan pointer should have stopped exactly at the marker's address.
         assert_eq!(
-            state.core.get(0).b.value,
+            state.core().get(0).b.value,
             12,
             "scan pointer should have stopped at 12",
         );
@@ -996,27 +1064,27 @@ mod tests {
         // The cells the scanner scanned past must be untouched.
         for cell in [10, 11] {
             assert_eq!(
-                state.core.get(cell).opcode,
+                state.core().get(cell).opcode,
                 Opcode::Dat,
                 "scanned-past cell {cell} should still be empty",
             );
             assert_eq!(
-                state.core.get(cell).b.value,
+                state.core().get(cell).b.value,
                 0,
                 "scanned-past cell {cell} should still have B=0",
             );
         }
 
         // The scanner program code itself must be untouched.
-        assert_eq!(state.core.get(3).opcode, Opcode::Add);
-        assert_eq!(state.core.get(4).opcode, Opcode::Seq);
-        assert_eq!(state.core.get(5).opcode, Opcode::Jmp);
-        assert_eq!(state.core.get(6).opcode, Opcode::Jmp);
-        assert_eq!(state.core.get(7).opcode, Opcode::Mov);
+        assert_eq!(state.core().get(3).opcode, Opcode::Add);
+        assert_eq!(state.core().get(4).opcode, Opcode::Seq);
+        assert_eq!(state.core().get(5).opcode, Opcode::Jmp);
+        assert_eq!(state.core().get(6).opcode, Opcode::Jmp);
+        assert_eq!(state.core().get(7).opcode, Opcode::Mov);
 
         // Process died on the cell-8 DAT landing pad.
         assert!(
-            !state.warriors[0].is_alive(),
+            !state.warriors()[0].is_alive(),
             "scanner should have died on the cell-8 DAT after bombing",
         );
     }

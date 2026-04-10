@@ -109,6 +109,7 @@ export default function App() {
 
   const gridRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const hoveredAddrRef = useRef(-1);
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
@@ -135,9 +136,11 @@ export default function App() {
 
       if (addr < 0) {
         tip.style.display = 'none';
+        hoveredAddrRef.current = -1;
         return;
       }
 
+      hoveredAddrRef.current = addr;
       tip.textContent = formatCellTooltip(m, addr);
       tip.style.display = 'block';
 
@@ -152,6 +155,7 @@ export default function App() {
   );
 
   const handleGridMouseLeave = useCallback(() => {
+    hoveredAddrRef.current = -1;
     const tip = tooltipRef.current;
     if (tip) tip.style.display = 'none';
   }, []);
@@ -253,6 +257,12 @@ export default function App() {
 
     m.stepN(spfRef.current);
     r.update(m.coreOwnership());
+
+    // Live-refresh the tooltip if the mouse is hovering over a cell.
+    // Cost: 6 wasm array lookups + 1 textContent write — negligible.
+    if (hoveredAddrRef.current >= 0 && tooltipRef.current) {
+      tooltipRef.current.textContent = formatCellTooltip(m, hoveredAddrRef.current);
+    }
 
     // Throttle React state updates to every 6 frames (~10Hz at 60fps).
     frameCountRef.current++;

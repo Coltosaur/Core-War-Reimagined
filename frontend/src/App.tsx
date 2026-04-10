@@ -107,6 +107,7 @@ export default function App() {
   const gridRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
+  const warriorNamesRef = useRef<string[]>([]);
   const rafRef = useRef(0);
   const frameCountRef = useRef(0);
   const spfRef = useRef(stepsPerFrame);
@@ -160,6 +161,10 @@ export default function App() {
     match.loadWarrior(0, w1, 0);
     match.loadWarrior(1, w2, Math.floor(CORE_SIZE / 2));
     matchRef.current = match;
+    warriorNamesRef.current = [
+      w1.name() ?? 'Warrior 0',
+      w2.name() ?? 'Warrior 1',
+    ];
 
     // Show the initial (empty) core
     if (rendererRef.current) {
@@ -190,9 +195,10 @@ export default function App() {
     setResultCode(code);
     setResultWinner(m.resultWinnerId());
     const ws: { name: string; alive: boolean; procs: number }[] = [];
+    const names = warriorNamesRef.current;
     for (let i = 0; i < m.warriorCount(); i++) {
       ws.push({
-        name: `Warrior ${m.warriorId(i)}`,
+        name: names[i] ?? `Warrior ${m.warriorId(i)}`,
         alive: m.warriorIsAlive(i),
         procs: m.warriorProcessCount(i),
       });
@@ -206,7 +212,7 @@ export default function App() {
     if (!m || !r) return;
 
     m.stepN(spfRef.current);
-    r.update(m.coreOpcodes());
+    r.update(m.coreOwnership());
 
     // Throttle React state updates to every 6 frames (~10Hz at 60fps).
     frameCountRef.current++;
@@ -243,7 +249,7 @@ export default function App() {
     const r = rendererRef.current;
     if (!m || !r || m.resultCode() !== ONGOING) return;
     m.stepN(1);
-    r.update(m.coreOpcodes());
+    r.update(m.coreOwnership());
     syncUiState();
   }, [syncUiState]);
 
@@ -252,7 +258,7 @@ export default function App() {
     const r = rendererRef.current;
     if (!m || !r || m.resultCode() !== ONGOING) return;
     m.stepN(100);
-    r.update(m.coreOpcodes());
+    r.update(m.coreOwnership());
     syncUiState();
   }, [syncUiState]);
 

@@ -123,10 +123,14 @@ pub struct WasmMatchState {
 #[wasm_bindgen(js_class = "MatchState")]
 impl WasmMatchState {
     /// Create a new match with the given core size and step limit.
+    /// `max_steps` is `f64` at the wasm boundary so JS callers use plain
+    /// `number` instead of `BigInt`. `f64` has 53 bits of exact integer
+    /// precision — enough for any realistic step count — while the
+    /// internal engine keeps `u64` for full range.
     #[wasm_bindgen(constructor)]
-    pub fn new(core_size: usize, max_steps: u64) -> Self {
+    pub fn new(core_size: usize, max_steps: f64) -> Self {
         Self {
-            inner: MatchState::new(core_size, max_steps),
+            inner: MatchState::new(core_size, max_steps as u64),
         }
     }
 
@@ -168,14 +172,14 @@ impl WasmMatchState {
     }
 
     /// Number of process-steps that have been executed so far.
-    pub fn steps(&self) -> u64 {
-        self.inner.steps()
+    pub fn steps(&self) -> f64 {
+        self.inner.steps() as f64
     }
 
     /// The configured step limit for this match.
     #[wasm_bindgen(js_name = "maxSteps")]
-    pub fn max_steps(&self) -> u64 {
-        self.inner.max_steps()
+    pub fn max_steps(&self) -> f64 {
+        self.inner.max_steps() as f64
     }
 
     /// The size of the core memory array (number of cells).

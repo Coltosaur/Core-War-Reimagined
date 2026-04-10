@@ -112,6 +112,7 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
     let mut name: Option<String> = None;
     let mut author: Option<String> = None;
     let mut start_label: Option<String> = None;
+    let mut equ_table: HashMap<String, String> = HashMap::new();
     let mut instr_lines: Vec<InstructionLine> = Vec::new();
 
     'lines: for (idx, raw) in source.lines().enumerate() {
@@ -143,6 +144,35 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
             break 'lines;
         }
 
+        // EQU pseudo-op: "name EQU value". Must be checked before
+        // parse_label_and_body because EQU lines are not instructions —
+        // they define text substitutions consumed during operand parsing.
+        {
+            let first_end = code
+                .char_indices()
+                .find(|(_, c)| c.is_whitespace())
+                .map(|(i, _)| i)
+                .unwrap_or(code.len());
+            let after_first = code[first_end..].trim_start();
+            if let Some(rest) = strip_keyword_ci(after_first, "EQU") {
+                let equ_name = code[..first_end].trim_end_matches(':').to_string();
+                let equ_value = rest.trim().to_string();
+                if equ_value.is_empty() {
+                    return Err(ParseError::SyntaxError {
+                        line: line_no,
+                        message: "EQU requires a value".to_string(),
+                    });
+                }
+                if equ_table.insert(equ_name.clone(), equ_value).is_some() {
+                    return Err(ParseError::DuplicateLabel {
+                        line: line_no,
+                        label: equ_name,
+                    });
+                }
+                continue 'lines;
+            }
+        }
+
         // Otherwise, it's a (possibly labeled) instruction line.
         instr_lines.push(parse_label_and_body(code, line_no)?);
     }
@@ -169,7 +199,7 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
     // ─── Pass 2: parse instruction bodies, resolving labels ───
     let mut instructions = Vec::with_capacity(instr_lines.len());
     for (offset, il) in instr_lines.iter().enumerate() {
-        let instr = parse_instruction_body(&il.body, offset, il.line_no, &label_table)?;
+        let instr = parse_instruction_body(&il.body, offset, il.line_no, &label_table, &equ_table)?;
         instructions.push(instr);
     }
 
@@ -313,6 +343,7 @@ fn parse_instruction_body(
     offset: usize,
     line_no: usize,
     labels: &HashMap<String, usize>,
+    equ_table: &HashMap<String, String>,
 ) -> Result<Instruction, ParseError> {
     // Split into the opcode-token (with optional .modifier) and the rest.
     let mut parts = body.splitn(2, char::is_whitespace);
@@ -348,7 +379,7 @@ fn parse_instruction_body(
             },
         ),
         (Opcode::Dat | Opcode::Nop, [single]) => {
-            let b = parse_operand(single, offset, line_no, labels)?;
+            let b = parse_operand(single, offset, line_no, labels, equ_table)?;
             let a = Operand {
                 mode: AddressMode::Immediate,
                 value: 0,
@@ -362,7 +393,7 @@ fn parse_instruction_body(
             });
         }
         (_, [a_str]) => {
-            let a = parse_operand(a_str, offset, line_no, labels)?;
+            let a = parse_operand(a_str, offset, line_no, labels, equ_table)?;
             let b = Operand {
                 mode: AddressMode::Direct,
                 value: 0,
@@ -370,8 +401,8 @@ fn parse_instruction_body(
             (a, b)
         }
         (_, [a_str, b_str]) => {
-            let a = parse_operand(a_str, offset, line_no, labels)?;
-            let b = parse_operand(b_str, offset, line_no, labels)?;
+            let a = parse_operand(a_str, offset, line_no, labels, equ_table)?;
+            let b = parse_operand(b_str, offset, line_no, labels, equ_table)?;
             (a, b)
         }
         _ => {
@@ -421,6 +452,7 @@ fn parse_operand(
     offset: usize,
     line_no: usize,
     labels: &HashMap<String, usize>,
+    equ_table: &HashMap<String, String>,
 ) -> Result<Operand, ParseError> {
     let text = text.trim();
     let (mode, value_text) = match text.chars().next() {
@@ -436,17 +468,18 @@ fn parse_operand(
         _ => (AddressMode::Direct, text),
     };
 
-    let value = parse_value(value_text.trim(), offset, line_no, labels)?;
+    let value = parse_value(value_text.trim(), offset, line_no, labels, equ_table)?;
     Ok(Operand { mode, value })
 }
 
-/// Parse an operand value: a signed integer literal OR a label resolved to
-/// its offset relative to the executing instruction.
+/// Parse an operand value: a signed integer literal, an EQU constant,
+/// or a label resolved to its offset relative to the executing instruction.
 fn parse_value(
     text: &str,
     offset: usize,
     line_no: usize,
     labels: &HashMap<String, usize>,
+    equ_table: &HashMap<String, String>,
 ) -> Result<i32, ParseError> {
     if text.is_empty() {
         return Err(ParseError::SyntaxError {
@@ -455,13 +488,18 @@ fn parse_value(
         });
     }
 
+    // Try as a numeric literal first.
     if let Ok(n) = text.parse::<i32>() {
         return Ok(n);
     }
 
+    // Try as an EQU constant (text substitution, then re-parse).
+    if let Some(replacement) = equ_table.get(text) {
+        return parse_value(replacement, offset, line_no, labels, equ_table);
+    }
+
+    // Try as a label reference (resolved to relative offset).
     if let Some(&label_offset) = labels.get(text) {
-        // Label values are stored as offsets *relative to the executing
-        // instruction*, matching the convention used throughout the engine.
         return Ok(label_offset as i32 - offset as i32);
     }
 
@@ -943,5 +981,72 @@ bomb    DAT.F  #0, #0
 
         // The dwarf should still be running after 15 steps.
         assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });
+    }
+
+    // ── EQU constant tests ──────────────────────────────────────────
+
+    #[test]
+    fn equ_substitutes_constant_in_operand() {
+        let source = "
+step    EQU 4
+        ADD #step, $1
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        // #step should resolve to #4; default modifier for ADD with #A is .AB.
+        assert_eq!(parsed.instructions()[0].a, imm(4));
+        assert_eq!(parsed.instructions()[0].modifier, Modifier::AB);
+    }
+
+    #[test]
+    fn equ_works_in_b_operand() {
+        let source = "
+size    EQU 10
+        DAT #0, #size
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(10));
+    }
+
+    #[test]
+    fn equ_does_not_count_as_instruction() {
+        let err = parse_warrior("step EQU 4").unwrap_err();
+        assert_eq!(err, ParseError::EmptyWarrior);
+    }
+
+    #[test]
+    fn equ_duplicate_name_errors() {
+        let source = "
+step    EQU 4
+step    EQU 5
+        DAT #0, #0
+        ";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::DuplicateLabel { .. }));
+    }
+
+    #[test]
+    fn equ_missing_value_errors() {
+        let source = "
+step    EQU
+        DAT #0, #0
+        ";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn equ_used_in_dwarf_with_parameterized_step() {
+        // A real-world use: parameterize the Dwarf's bomb interval.
+        let source = "
+step    EQU 8
+        ORG start
+start   ADD.AB #step, bomb
+        MOV.I  bomb, @bomb
+        JMP    start
+bomb    DAT.F  #0, #0
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        // The ADD's A-operand should be #8 (from EQU).
+        assert_eq!(parsed.instructions()[0].a, imm(8));
     }
 }

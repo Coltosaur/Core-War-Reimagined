@@ -6,6 +6,7 @@ import init, {
   type ParsedWarrior,
 } from 'core-war-engine';
 import { createCoreRenderer, type CoreRenderer } from './core/coreRenderer';
+import { cellAddressAtPixel, formatCellTooltip } from './core/redcodeFormat';
 import { CORE_SIZE } from './core/constants';
 
 // ─── Built-in warrior sources for the demo battle ───────────────────
@@ -42,6 +43,8 @@ const ROOT_STYLE: React.CSSProperties = {
 const GRID_CONTAINER_STYLE: React.CSSProperties = {
   border: '1px solid #333',
   lineHeight: 0,
+  position: 'relative',
+  cursor: 'crosshair',
 };
 
 const CONTROLS_STYLE: React.CSSProperties = {
@@ -105,6 +108,7 @@ export default function App() {
   >([]);
 
   const gridRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
@@ -115,6 +119,42 @@ export default function App() {
   // Keep the ref in sync so the rAF callback sees the latest value
   // without needing to be recreated.
   spfRef.current = stepsPerFrame;
+
+  // ── Cell tooltip (imperative — no React re-renders on mousemove) ──
+
+  const handleGridMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const m = matchRef.current;
+      const tip = tooltipRef.current;
+      if (!m || !tip) return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const addr = cellAddressAtPixel(x, y);
+
+      if (addr < 0) {
+        tip.style.display = 'none';
+        return;
+      }
+
+      tip.textContent = formatCellTooltip(m, addr);
+      tip.style.display = 'block';
+
+      // Position the tooltip near the cursor, offset slightly so it
+      // doesn't occlude the cell or fight the pointer.
+      const tipX = Math.min(x + 12, rect.width - tip.offsetWidth - 4);
+      const tipY = y > 40 ? y - 32 : y + 20;
+      tip.style.left = `${tipX}px`;
+      tip.style.top = `${tipY}px`;
+    },
+    [],
+  );
+
+  const handleGridMouseLeave = useCallback(() => {
+    const tip = tooltipRef.current;
+    if (tip) tip.style.display = 'none';
+  }, []);
 
   // ── Init wasm + PixiJS ────────────────────────────────────────────
 
@@ -276,7 +316,30 @@ export default function App() {
         CORE WAR
       </h1>
 
-      <div ref={gridRef} style={GRID_CONTAINER_STYLE} />
+      <div
+        ref={gridRef}
+        style={GRID_CONTAINER_STYLE}
+        onMouseMove={handleGridMouseMove}
+        onMouseLeave={handleGridMouseLeave}
+      >
+        <div
+          ref={tooltipRef}
+          style={{
+            display: 'none',
+            position: 'absolute',
+            pointerEvents: 'none',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            color: '#e0e0e0',
+            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+            fontSize: '0.75rem',
+            padding: '0.25rem 0.5rem',
+            borderRadius: '3px',
+            border: '1px solid #444',
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+          }}
+        />
+      </div>
 
       <div style={CONTROLS_STYLE}>
         {!running ? (

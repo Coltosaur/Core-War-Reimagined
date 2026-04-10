@@ -195,6 +195,27 @@ impl MatchState {
         self.warriors.push(warrior);
     }
 
+    /// Load a parsed warrior into core at `base_address` and add it to the
+    /// match. Instructions are written sequentially starting at
+    /// `base_address`; a new warrior with id `id` is added with its first
+    /// process pointing at `base_address + parsed.start_offset()`.
+    ///
+    /// This is the bridge between the parser and the executor — once a
+    /// warrior has been parsed from text via `parse_warrior`, this is how
+    /// you get it into a battle.
+    pub fn load_warrior(
+        &mut self,
+        id: usize,
+        parsed: &crate::parser::ParsedWarrior,
+        base_address: usize,
+    ) {
+        for (i, &instr) in parsed.instructions().iter().enumerate() {
+            self.core_mut().set((base_address + i) as i32, instr);
+        }
+        let start_pc = base_address + parsed.start_offset();
+        self.add_warrior(Warrior::new(id, start_pc));
+    }
+
     /// Read access to the core memory array.
     pub fn core(&self) -> &Core {
         &self.core

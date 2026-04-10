@@ -14,9 +14,11 @@
 //! New opcodes are intended to be added one at a time, each with a unit test.
 
 pub mod instruction;
+pub mod parser;
 pub mod vm;
 
 pub use instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
+pub use parser::{parse_warrior, ParseError, ParsedWarrior};
 pub use vm::{Core, MatchResult, MatchState, Warrior};
 
 use wasm_bindgen::prelude::*;

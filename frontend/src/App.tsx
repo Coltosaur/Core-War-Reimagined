@@ -9,22 +9,54 @@ import { createCoreRenderer, type CoreRenderer } from './core/coreRenderer';
 import { cellAddressAtPixel, formatCellTooltip } from './core/redcodeFormat';
 import { CORE_SIZE } from './core/constants';
 
-// ─── Built-in warrior sources for the demo battle ───────────────────
+// ─── Built-in warrior library ────────────────────────────────────────
 
-const IMP_SOURCE = `
-;name Imp
-        MOV.I $0, $1
-`;
-
-const DWARF_SOURCE = `
-;name Dwarf
+const WARRIOR_LIST: { label: string; source: string }[] = [
+  {
+    label: 'Imp',
+    source: `;name Imp
+        MOV.I $0, $1`,
+  },
+  {
+    label: 'Dwarf',
+    source: `;name Dwarf
 ;author A.K. Dewdney
         ORG    start
 start   ADD.AB #4, bomb
         MOV.I  bomb, @bomb
         JMP    start
-bomb    DAT.F  #0, #0
-`;
+bomb    DAT.F  #0, #0`,
+  },
+  {
+    label: 'Mice-Lite',
+    source: `;name Mice-Lite
+        ORG    loop
+counter DAT.F  #0, #3
+dest    DAT.F  #0, #8
+imp     MOV.I  $0, $1
+loop    MOV.I  imp, <dest
+        DJN.B  loop, counter
+landing DAT.F  #0, #0`,
+  },
+  {
+    label: 'Scanner',
+    source: `;name Scanner
+        ORG    loop
+ptr     DAT.F  #0, #9
+blank   DAT.F  #0, #0
+bomb    DAT.F  #0, #99
+loop    ADD.AB #1, ptr
+        SEQ.I  @ptr, blank
+        JMP    found
+        JMP    loop
+found   MOV.I  bomb, @ptr
+        JMP    loop`,
+  },
+];
+
+// Warrior grid colors — must match WARRIOR_COLORS in coreRenderer.ts.
+// Index = owner value (0 = unowned, 1 = warrior 0, 2 = warrior 1).
+const WARRIOR_HEX = ['#888888', '#e94560', '#4fc3f7', '#4caf50', '#ffab00'];
 
 // ─── Styles (inline for now — extract to CSS when the UI grows) ─────
 
@@ -103,6 +135,8 @@ export default function App() {
   const [resultCode, setResultCode] = useState(ONGOING);
   const [resultWinner, setResultWinner] = useState(-1);
   const [stepsPerFrame, setStepsPerFrame] = useState(50);
+  const [pick0, setPick0] = useState(0); // index into WARRIOR_LIST
+  const [pick1, setPick1] = useState(1);
   const [warriors, setWarriors] = useState<
     { name: string; alive: boolean; procs: number }[]
   >([]);
@@ -113,13 +147,17 @@ export default function App() {
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
+  const pick0Ref = useRef(pick0);
+  const pick1Ref = useRef(pick1);
   const rafRef = useRef(0);
   const frameCountRef = useRef(0);
   const spfRef = useRef(stepsPerFrame);
 
-  // Keep the ref in sync so the rAF callback sees the latest value
-  // without needing to be recreated.
+  // Keep refs in sync so callbacks see the latest values without
+  // needing to be recreated.
   spfRef.current = stepsPerFrame;
+  pick0Ref.current = pick0;
+  pick1Ref.current = pick1;
 
   // ── Cell tooltip (imperative — no React re-renders on mousemove) ──
 
@@ -193,10 +231,13 @@ export default function App() {
 
     const match = new MatchState(CORE_SIZE, 80_000);
 
+    const src0 = WARRIOR_LIST[pick0Ref.current].source;
+    const src1 = WARRIOR_LIST[pick1Ref.current].source;
+
     let w1: ParsedWarrior, w2: ParsedWarrior;
     try {
-      w1 = parseWarrior(IMP_SOURCE);
-      w2 = parseWarrior(DWARF_SOURCE);
+      w1 = parseWarrior(src0);
+      w2 = parseWarrior(src1);
     } catch (e) {
       console.error('Parse error:', e);
       return;
@@ -206,11 +247,11 @@ export default function App() {
     match.loadWarrior(1, w2, Math.floor(CORE_SIZE / 2));
     matchRef.current = match;
     warriorNamesRef.current = [
-      w1.name() ?? 'Warrior 0',
-      w2.name() ?? 'Warrior 1',
+      w1.name() ?? WARRIOR_LIST[pick0Ref.current].label,
+      w2.name() ?? WARRIOR_LIST[pick1Ref.current].label,
     ];
 
-    // Show the initial (empty) core
+    // Show the initial core
     if (rendererRef.current) {
       rendererRef.current.update(match.coreOwnership());
     }
@@ -219,8 +260,8 @@ export default function App() {
     setResultCode(ONGOING);
     setResultWinner(-1);
     setWarriors([
-      { name: w1.name() ?? 'Warrior 0', alive: true, procs: 1 },
-      { name: w2.name() ?? 'Warrior 1', alive: true, procs: 1 },
+      { name: warriorNamesRef.current[0], alive: true, procs: 1 },
+      { name: warriorNamesRef.current[1], alive: true, procs: 1 },
     ]);
   }, [ready]);
 
@@ -318,7 +359,33 @@ export default function App() {
     loadBattle();
   }, [loadBattle]);
 
+  // ── Warrior picker change handler ───────────────────────────────
+
+  const handlePickChange = useCallback(
+    (side: 0 | 1, idx: number) => {
+      if (side === 0) setPick0(idx);
+      else setPick1(idx);
+      // Reset battle with the new warrior on next frame (refs are
+      // updated synchronously by the render that follows setState).
+      cancelAnimationFrame(rafRef.current);
+      setRunning(false);
+      // Use setTimeout(0) so the ref sync happens before loadBattle reads it.
+      setTimeout(() => loadBattle(), 0);
+    },
+    [loadBattle],
+  );
+
   // ── Render ────────────────────────────────────────────────────────
+
+  const selectStyle: React.CSSProperties = {
+    fontFamily: 'inherit',
+    fontSize: '0.85rem',
+    backgroundColor: '#1e1e1e',
+    color: '#e0e0e0',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    padding: '0.3rem 0.5rem',
+  };
 
   return (
     <div style={ROOT_STYLE}>
@@ -326,6 +393,40 @@ export default function App() {
         CORE WAR
       </h1>
 
+      {/* ── Warrior picker ─────────────────────────────────────── */}
+      <div style={{ ...CONTROLS_STYLE, gap: '0.75rem' }}>
+        <label style={{ color: WARRIOR_HEX[1], fontSize: '0.85rem' }}>
+          Red:{' '}
+          <select
+            style={selectStyle}
+            value={pick0}
+            onChange={(e) => handlePickChange(0, Number(e.target.value))}
+          >
+            {WARRIOR_LIST.map((w, i) => (
+              <option key={i} value={i}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span style={{ color: '#555' }}>vs</span>
+        <label style={{ color: WARRIOR_HEX[2], fontSize: '0.85rem' }}>
+          Blue:{' '}
+          <select
+            style={selectStyle}
+            value={pick1}
+            onChange={(e) => handlePickChange(1, Number(e.target.value))}
+          >
+            {WARRIOR_LIST.map((w, i) => (
+              <option key={i} value={i}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* ── Core grid + tooltip ────────────────────────────────── */}
       <div
         ref={gridRef}
         style={GRID_CONTAINER_STYLE}
@@ -351,6 +452,7 @@ export default function App() {
         />
       </div>
 
+      {/* ── Battle controls ────────────────────────────────────── */}
       <div style={CONTROLS_STYLE}>
         {!running ? (
           <button style={BUTTON_STYLE} onClick={play}>
@@ -378,20 +480,42 @@ export default function App() {
         <button style={BUTTON_STYLE} onClick={reset}>
           Reset
         </button>
-        <label style={{ fontSize: '0.8rem', color: '#888' }}>
-          Speed:{' '}
+        <label style={{ fontSize: '0.8rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          Speed:
           <input
             type="range"
             min={1}
             max={500}
             value={stepsPerFrame}
             onChange={(e) => setStepsPerFrame(Number(e.target.value))}
-            style={{ verticalAlign: 'middle', width: '120px' }}
+            style={{ verticalAlign: 'middle', width: '100px' }}
           />
-          {' '}{stepsPerFrame}/frame
+          <input
+            type="number"
+            min={1}
+            max={500}
+            value={stepsPerFrame}
+            onChange={(e) => {
+              const v = Math.max(1, Math.min(500, Number(e.target.value) || 1));
+              setStepsPerFrame(v);
+            }}
+            style={{
+              width: '3.5rem',
+              fontFamily: 'inherit',
+              fontSize: '0.8rem',
+              backgroundColor: '#1e1e1e',
+              color: '#e0e0e0',
+              border: '1px solid #444',
+              borderRadius: '3px',
+              padding: '0.15rem 0.3rem',
+              textAlign: 'right',
+            }}
+          />
+          /frame
         </label>
       </div>
 
+      {/* ── Status bar ─────────────────────────────────────────── */}
       <div style={STATUS_STYLE}>
         {ready ? (
           <>
@@ -401,12 +525,27 @@ export default function App() {
             </div>
             <div style={{ marginTop: '0.3rem' }}>
               {warriors.map((w, i) => (
-                <span key={i} style={{ marginRight: '1.5rem' }}>
-                  {w.name}: {w.alive ? `alive (${w.procs} proc${w.procs !== 1 ? 's' : ''})` : 'dead'}
+                <span
+                  key={i}
+                  style={{
+                    marginRight: '1.5rem',
+                    color: WARRIOR_HEX[i + 1],
+                  }}
+                >
+                  {w.name}:{' '}
+                  {w.alive
+                    ? `alive (${w.procs} proc${w.procs !== 1 ? 's' : ''})`
+                    : 'dead'}
                 </span>
               ))}
             </div>
-            <div style={{ marginTop: '0.3rem', fontSize: '0.75rem', color: '#555' }}>
+            <div
+              style={{
+                marginTop: '0.3rem',
+                fontSize: '0.75rem',
+                color: '#555',
+              }}
+            >
               Engine v{engineVersion()}
             </div>
           </>

@@ -13,13 +13,19 @@ The repo is early-stage. The frontend is a stub (`<h1>Core War</h1>`); the backe
 - **All 8 ICWS '94 addressing modes** implemented: `Immediate`, `Direct`, `AIndirect`, `BIndirect`, `APredecrement`, `BPredecrement`, `APostincrement`, `BPostincrement`.
 - The opcode and addressing-mode matches in `execute()` and `resolve()` are both **exhaustive** (no catch-all arm). Adding a new variant to either enum will fail to build until it's handled — this is deliberate, and replaced the earlier "panic on unimplemented" catch-all now that nothing is unimplemented.
 - Modifiers for `MOV` / `ADD` / `SUB` / `MUL` / `DIV` / `MOD`: all seven (`A`, `B`, `AB`, `BA`, `F`, `X`, `I`) via the shared `arithmetic_op` + `modifier_field_pairs` helpers. The five arithmetic opcodes share a single closure-driven helper so each match arm is essentially `arithmetic_op(..., |d, s| Some(d OP s))`.
-- Modifiers for `DJN` / `JMZ` / `JMN` / `SLT`: only `.A` / `.B` / `.AB` / `.BA` (multi-field variants panic — they need a separate semantics decision about how the "jump/skip" condition applies when both fields are involved).
-- Modifiers for `SEQ` / `SNE`: only `.I` (full-instruction comparison). Field-wise variants panic. (Note: `SLT` cannot use `.I` because there's no defined ordering for full instructions, so `SLT` is single-field-only.)
+- Modifiers for `DJN` / `JMZ` / `JMN`: **all seven**. `.F`/`.X`/`.I` operate on both fields — DJN decrements both and jumps if either is nonzero; JMZ jumps only when both are zero; JMN jumps when either is nonzero.
+- Modifiers for `SEQ` / `SNE`: **all seven**. `.F` requires both field-pairs to match/differ; `.X` uses cross-field pairing; `.I` is whole-instruction equality. SNE uses OR (skip if ANY pair differs), the De Morgan inverse of SEQ's AND.
+- Modifiers for `SLT`: **all seven**. `.F`/`.I` require both pairs to satisfy `<`; `.X` uses cross-field pairing. `.I` is treated as `.F` (no ordering defined for full instructions).
+- **No `unimplemented!()` calls remain in the engine.** Every opcode × modifier × addressing-mode combination is handled.
 - The opcode `Seq` was renamed from the older `Cmp` (ICWS '88 name) to align with ICWS '94. There is no longer an `Opcode::Cmp` variant.
 - `SEQ` / `SNE` / `SLT` introduce the **skip-next-instruction** primitive — a conditional that advances PC by 2 instead of 1, distinct from a JMP because there's no target operand.
 - `DIV` and `MOD` introduce the **only opcode-internal failure mode**: a divide-by-zero kills the executing process exactly as if it had executed a `DAT`. Implemented by having `arithmetic_op`'s closure return `Option<i32>` — `None` aborts the operation without writing back, and the opcode arm skips enqueueing the next PC.
 - The four side-effecting addressing modes (`{ } < >`) all share the same shape: read the intermediate cell, mutate the selected field (decrement before address calc OR increment after), write the intermediate back. This is why `resolve()` takes `&mut Core` rather than `&Core`.
-- Modifier variants that aren't yet implemented panic with a clear "not yet implemented" message rather than silently no-op-ing. New modifiers should be added one at a time, each with a focused unit test, plus a full-warrior integration test when a new canonical warrior becomes runnable.
+- **Process count limit:** `MatchState` has a `max_processes` field (default 8000, configurable via `set_max_processes`). SPL silently refuses to spawn a new process when the warrior is at the limit — the continuing process still runs.
+
+Deferred features: `EQU` constants, arithmetic expressions in operand values, multiple warriors per file. Load a parsed warrior into a battle via `MatchState::load_warrior(id, &parsed, base_address)`.
+
+**Parser EQU support:** The parser now handles `name EQU value` pseudo-ops. EQU defines a text substitution consumed during operand value parsing. EQU names are case-sensitive (like labels), checked before labels in the resolution chain, and do not count as instructions. Duplicate EQU names produce a `DuplicateLabel` error.
 
 The `resolve()` function takes `&mut Core` rather than `&Core` so that addressing modes with side effects (predecrement, postincrement) can mutate the intermediate cell during resolution. All four side-effecting modes (`{ } < >`) follow the same pattern: read the intermediate, mutate the selected field, write back.
 

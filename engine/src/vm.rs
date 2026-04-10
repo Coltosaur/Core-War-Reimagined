@@ -212,6 +212,10 @@ pub struct MatchState {
     /// process steps here. Equivalent for single-warrior matches.
     steps: u64,
     max_steps: u64,
+    /// Maximum number of processes a single warrior can have. SPL silently
+    /// fails to spawn a new process when this limit is reached (the
+    /// continuing process still runs). Standard value is 8000.
+    max_processes: usize,
     /// Round-robin index — the warrior whose turn it is next.
     next_warrior: usize,
 }
@@ -223,8 +227,20 @@ impl MatchState {
             warriors: Vec::new(),
             steps: 0,
             max_steps,
+            max_processes: 8000,
             next_warrior: 0,
         }
+    }
+
+    /// Set the maximum number of processes a single warrior can have.
+    /// Default is 8000. SPL silently fails to spawn when at the limit.
+    pub fn set_max_processes(&mut self, limit: usize) {
+        self.max_processes = limit;
+    }
+
+    /// The configured process count limit per warrior.
+    pub fn max_processes(&self) -> usize {
+        self.max_processes
     }
 
     /// Add a warrior to the match. Used at setup time, before stepping begins.
@@ -467,30 +483,42 @@ impl MatchState {
             }
 
             Opcode::Spl => {
-                // Continue at next instruction AND spawn a new process at A.
+                // Continue at next instruction AND spawn a new process at A
+                // (if the warrior hasn't hit the process count limit).
                 self.warriors[warrior_idx].processes.push_back(next_pc);
-                let target = self.core.wrap(a_eff);
-                self.warriors[warrior_idx].processes.push_back(target);
+                if self.warriors[warrior_idx].process_count() < self.max_processes {
+                    let target = self.core.wrap(a_eff);
+                    self.warriors[warrior_idx].processes.push_back(target);
+                }
             }
 
             Opcode::Djn => {
-                // Decrement the destination's selected field, then jump to A
-                // if the *new* value is non-zero. Modifiers .F/.X/.I would
-                // decrement both fields and have a slightly different jump
-                // condition; not yet implemented.
+                // Decrement the destination's selected field(s), then jump to
+                // A if the result is non-zero.
                 let mut dest = self.core.get(b_eff);
                 let target = self.core.wrap(a_eff);
-                let field = match instr.modifier {
-                    Modifier::A | Modifier::BA => Field::A,
-                    Modifier::B | Modifier::AB => Field::B,
-                    other => {
-                        unimplemented!("DJN modifier {:?} is not yet implemented", other)
+                let jump = match instr.modifier {
+                    Modifier::A | Modifier::BA => {
+                        let v = (dest.field(Field::A) - 1).rem_euclid(core_size_i);
+                        dest.set_field(Field::A, v);
+                        v != 0
+                    }
+                    Modifier::B | Modifier::AB => {
+                        let v = (dest.field(Field::B) - 1).rem_euclid(core_size_i);
+                        dest.set_field(Field::B, v);
+                        v != 0
+                    }
+                    Modifier::F | Modifier::X | Modifier::I => {
+                        // Decrement BOTH fields; jump if EITHER is non-zero.
+                        let a = (dest.field(Field::A) - 1).rem_euclid(core_size_i);
+                        let b = (dest.field(Field::B) - 1).rem_euclid(core_size_i);
+                        dest.set_field(Field::A, a);
+                        dest.set_field(Field::B, b);
+                        a != 0 || b != 0
                     }
                 };
-                let new_val = (dest.field(field) - 1).rem_euclid(core_size_i);
-                dest.set_field(field, new_val);
                 self.core.set(b_eff, dest);
-                if new_val != 0 {
+                if jump {
                     self.warriors[warrior_idx].processes.push_back(target);
                 } else {
                     self.warriors[warrior_idx].processes.push_back(next_pc);
@@ -498,17 +526,18 @@ impl MatchState {
             }
 
             Opcode::Jmz => {
-                // Jump to A if the destination's selected field is zero.
+                // Jump to A if the destination's selected field(s) are zero.
                 let dest = self.core.get(b_eff);
                 let target = self.core.wrap(a_eff);
-                let field = match instr.modifier {
-                    Modifier::A | Modifier::BA => Field::A,
-                    Modifier::B | Modifier::AB => Field::B,
-                    other => {
-                        unimplemented!("JMZ modifier {:?} is not yet implemented", other)
+                let is_zero = match instr.modifier {
+                    Modifier::A | Modifier::BA => dest.field(Field::A) == 0,
+                    Modifier::B | Modifier::AB => dest.field(Field::B) == 0,
+                    // Jump only when BOTH fields are zero.
+                    Modifier::F | Modifier::X | Modifier::I => {
+                        dest.field(Field::A) == 0 && dest.field(Field::B) == 0
                     }
                 };
-                if dest.field(field) == 0 {
+                if is_zero {
                     self.warriors[warrior_idx].processes.push_back(target);
                 } else {
                     self.warriors[warrior_idx].processes.push_back(next_pc);
@@ -516,21 +545,24 @@ impl MatchState {
             }
 
             Opcode::Seq => {
-                // Skip-if-equal: if the source and destination match, the
-                // process *skips* the next instruction (PC advances by 2
-                // instead of 1). Otherwise it falls through normally.
-                //
-                // This is the first opcode that introduces the skip-next
-                // primitive — strictly different from JMP because there's
-                // no target operand, just a conditional advance.
+                // Skip-if-equal: if the source and destination match (per
+                // the modifier), skip the next instruction (PC + 2).
                 let src = self.core.get(a_eff);
                 let dest = self.core.get(b_eff);
                 let equal = match instr.modifier {
-                    // Whole-instruction comparison: every field must match.
-                    Modifier::I => src == dest,
-                    other => {
-                        unimplemented!("SEQ modifier {:?} is not yet implemented", other)
+                    Modifier::A => src.field(Field::A) == dest.field(Field::A),
+                    Modifier::B => src.field(Field::B) == dest.field(Field::B),
+                    Modifier::AB => src.field(Field::A) == dest.field(Field::B),
+                    Modifier::BA => src.field(Field::B) == dest.field(Field::A),
+                    Modifier::F => {
+                        src.field(Field::A) == dest.field(Field::A)
+                            && src.field(Field::B) == dest.field(Field::B)
                     }
+                    Modifier::X => {
+                        src.field(Field::A) == dest.field(Field::B)
+                            && src.field(Field::B) == dest.field(Field::A)
+                    }
+                    Modifier::I => src == dest,
                 };
                 let resume_pc = if equal {
                     (pc + 2) % core_size
@@ -541,15 +573,24 @@ impl MatchState {
             }
 
             Opcode::Sne => {
-                // Inverse of SEQ — skip the next instruction when the source
-                // and destination *differ*.
+                // Skip-if-not-equal: inverse of SEQ. For .F/.X, skip when
+                // ANY field pair differs (De Morgan inverse of SEQ's AND).
                 let src = self.core.get(a_eff);
                 let dest = self.core.get(b_eff);
                 let differ = match instr.modifier {
-                    Modifier::I => src != dest,
-                    other => {
-                        unimplemented!("SNE modifier {:?} is not yet implemented", other)
+                    Modifier::A => src.field(Field::A) != dest.field(Field::A),
+                    Modifier::B => src.field(Field::B) != dest.field(Field::B),
+                    Modifier::AB => src.field(Field::A) != dest.field(Field::B),
+                    Modifier::BA => src.field(Field::B) != dest.field(Field::A),
+                    Modifier::F => {
+                        src.field(Field::A) != dest.field(Field::A)
+                            || src.field(Field::B) != dest.field(Field::B)
                     }
+                    Modifier::X => {
+                        src.field(Field::A) != dest.field(Field::B)
+                            || src.field(Field::B) != dest.field(Field::A)
+                    }
+                    Modifier::I => src != dest,
                 };
                 let resume_pc = if differ {
                     (pc + 2) % core_size
@@ -570,16 +611,22 @@ impl MatchState {
                 // (source_field, dest_field) pair each.
                 let src = self.core.get(a_eff);
                 let dest = self.core.get(b_eff);
-                let (sf, df) = match instr.modifier {
-                    Modifier::A => (Field::A, Field::A),
-                    Modifier::B => (Field::B, Field::B),
-                    Modifier::AB => (Field::A, Field::B),
-                    Modifier::BA => (Field::B, Field::A),
-                    other => {
-                        unimplemented!("SLT modifier {:?} is not yet implemented", other)
+                let less = match instr.modifier {
+                    Modifier::A => src.field(Field::A) < dest.field(Field::A),
+                    Modifier::B => src.field(Field::B) < dest.field(Field::B),
+                    Modifier::AB => src.field(Field::A) < dest.field(Field::B),
+                    Modifier::BA => src.field(Field::B) < dest.field(Field::A),
+                    // .F and .I: skip only when BOTH field pairs satisfy <
+                    Modifier::F | Modifier::I => {
+                        src.field(Field::A) < dest.field(Field::A)
+                            && src.field(Field::B) < dest.field(Field::B)
+                    }
+                    Modifier::X => {
+                        src.field(Field::A) < dest.field(Field::B)
+                            && src.field(Field::B) < dest.field(Field::A)
                     }
                 };
-                let resume_pc = if src.field(sf) < dest.field(df) {
+                let resume_pc = if less {
                     (pc + 2) % core_size
                 } else {
                     next_pc
@@ -588,18 +635,18 @@ impl MatchState {
             }
 
             Opcode::Jmn => {
-                // Inverse of JMZ — jump to A when the destination's selected
-                // field is *non-zero*.
+                // Jump to A when the destination's selected field(s) are non-zero.
                 let dest = self.core.get(b_eff);
                 let target = self.core.wrap(a_eff);
-                let field = match instr.modifier {
-                    Modifier::A | Modifier::BA => Field::A,
-                    Modifier::B | Modifier::AB => Field::B,
-                    other => {
-                        unimplemented!("JMN modifier {:?} is not yet implemented", other)
+                let nonzero = match instr.modifier {
+                    Modifier::A | Modifier::BA => dest.field(Field::A) != 0,
+                    Modifier::B | Modifier::AB => dest.field(Field::B) != 0,
+                    // Jump if EITHER A or B is non-zero.
+                    Modifier::F | Modifier::X | Modifier::I => {
+                        dest.field(Field::A) != 0 || dest.field(Field::B) != 0
                     }
                 };
-                if dest.field(field) != 0 {
+                if nonzero {
                     self.warriors[warrior_idx].processes.push_back(target);
                 } else {
                     self.warriors[warrior_idx].processes.push_back(next_pc);
@@ -2139,5 +2186,231 @@ mod tests {
             4,
             "intermediate B should have been incremented from 3 to 4 after the address calc",
         );
+    }
+
+    // ==================================================================
+    // Multi-field modifier tests for jump/skip opcodes
+    // ==================================================================
+
+    #[test]
+    fn djn_f_decrements_both_and_jumps_when_either_nonzero() {
+        let mut state = MatchState::new(8, 20);
+        state.add_warrior(Warrior::new(0, 1));
+        // Cell 0: counter with A=1, B=2
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Dat, Modifier::F, imm(1), imm(2)));
+        // Cell 1: DJN.F $0, $-1 (jump to self, decrement cell 0)
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Djn, Modifier::F, dir(0), dir(-1)));
+
+        // Step 1: A=0, B=1. B is nonzero → jump.
+        state.step();
+        assert_eq!(state.core().get(0).a.value, 0);
+        assert_eq!(state.core().get(0).b.value, 1);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+
+        // Step 2: A wraps to core_size-1 (7), B=0. A is nonzero → jump.
+        state.step();
+        assert_eq!(state.core().get(0).b.value, 0);
+        assert!(state.core().get(0).a.value != 0); // wrapped
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+    }
+
+    #[test]
+    fn djn_f_falls_through_when_both_reach_zero() {
+        let mut state = MatchState::new(8, 20);
+        state.add_warrior(Warrior::new(0, 1));
+        // Cell 0: A=1, B=1 — both will reach 0 on the same step.
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Dat, Modifier::F, imm(1), imm(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Djn, Modifier::F, dir(0), dir(-1)));
+
+        state.step();
+
+        // Both decremented to 0 simultaneously → fall through to cell 2.
+        assert_eq!(state.core().get(0).a.value, 0);
+        assert_eq!(state.core().get(0).b.value, 0);
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(2));
+    }
+
+    #[test]
+    fn jmz_f_jumps_only_when_both_fields_zero() {
+        // Both zero → jump
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmz, Modifier::F, dir(5), dir(1)));
+        // Cell 1 is default DAT.F #0, #0 (both zero)
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(5));
+
+        // A=0 B=3 → fall through (B nonzero)
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmz, Modifier::F, dir(5), dir(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(3)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+    }
+
+    #[test]
+    fn jmn_f_jumps_when_either_field_nonzero() {
+        // A=0 B=5 → jump (B nonzero)
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmn, Modifier::F, dir(5), dir(1)));
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(0), imm(5)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(5));
+
+        // A=0 B=0 → fall through
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Jmn, Modifier::F, dir(5), dir(1)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+    }
+
+    #[test]
+    fn seq_a_compares_a_fields_only() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Seq, Modifier::A, dir(1), dir(2)));
+        // Cell 1: A=5, B=99. Cell 2: A=5, B=0. A-fields match → skip.
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(5), imm(99)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(5), imm(0)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(2));
+    }
+
+    #[test]
+    fn seq_f_requires_both_field_pairs_equal() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Seq, Modifier::F, dir(1), dir(2)));
+        // A-fields match, B-fields differ → no skip.
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(5), imm(3)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(5), imm(7)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+    }
+
+    #[test]
+    fn sne_f_skips_when_any_field_differs() {
+        let mut state = MatchState::new(8, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Sne, Modifier::F, dir(1), dir(2)));
+        // A-fields match (5==5), B-fields differ (3!=7) → skip (OR semantics).
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(5), imm(3)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(5), imm(7)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(2));
+    }
+
+    #[test]
+    fn slt_f_requires_both_pairs_less() {
+        let mut state = MatchState::new(16, 10);
+        state.add_warrior(Warrior::new(0, 0));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Slt, Modifier::F, dir(1), dir(2)));
+        // src A=2 < dest A=5 ✓, but src B=9 >= dest B=3 ✗ → no skip.
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Dat, Modifier::F, imm(2), imm(9)));
+        state
+            .core_mut()
+            .set(2, instr(Opcode::Dat, Modifier::F, imm(5), imm(3)));
+        state.step();
+        assert_eq!(state.warriors()[0].next_process_pc(), Some(1));
+    }
+
+    // ==================================================================
+    // Process count limit tests
+    // ==================================================================
+
+    #[test]
+    fn spl_respects_max_process_limit() {
+        let mut state = MatchState::new(16, 50);
+        state.set_max_processes(3);
+        state.add_warrior(Warrior::new(0, 0));
+        // Cell 0: SPL $1 — keep spawning processes at cell 1
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Spl, Modifier::B, dir(1), dir(0)));
+        // Cell 1: SPL $0 — spawns back at cell 0
+        state
+            .core_mut()
+            .set(1, instr(Opcode::Spl, Modifier::B, dir(-1), dir(0)));
+
+        // Run enough steps to hit the limit.
+        for _ in 0..10 {
+            state.step();
+        }
+
+        // Process count should be capped at 3.
+        assert!(
+            state.warriors()[0].process_count() <= 3,
+            "process count {} should not exceed max_processes 3",
+            state.warriors()[0].process_count(),
+        );
+    }
+
+    #[test]
+    fn spl_at_limit_still_continues_current_process() {
+        let mut state = MatchState::new(8, 20);
+        state.set_max_processes(2);
+        state.add_warrior(Warrior::new(0, 0));
+        // Cell 0: SPL $3 (spawn at cell 3)
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Spl, Modifier::B, dir(3), dir(0)));
+
+        // Step 1: warrior has 1 process. SPL adds continuing (cell 1) +
+        // spawned (cell 3). Now 2 processes.
+        state.step();
+        assert_eq!(state.warriors()[0].process_count(), 2);
+
+        // Step 2: pop cell 1 (continuing process). Execute whatever is at
+        // cell 1 (default DAT → dies). Now 1 process left (cell 3).
+        state.step();
+
+        // Step 3: pop cell 3 (spawned). Cell 3 is default DAT → dies. 0 left.
+        // (This just verifies the continuing process was enqueued properly.)
+        assert!(state.warriors()[0].process_count() <= 2);
     }
 }

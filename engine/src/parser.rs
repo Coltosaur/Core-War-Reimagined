@@ -203,11 +203,26 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
         instructions.push(instr);
     }
 
-    // Resolve start_offset from the (optional) ORG / END label.
+    // Resolve start_offset from the (optional) ORG / END target. The target
+    // can be a label name, an EQU constant (resolved to a number), or a
+    // direct numeric literal.
     let start_offset = match start_label {
-        Some(label) => *label_table
-            .get(&label)
-            .ok_or_else(|| ParseError::UnknownLabel { line: 0, label })?,
+        Some(target) => {
+            if let Some(&offset) = label_table.get(&target) {
+                offset
+            } else if let Some(value) = equ_table.get(&target) {
+                value
+                    .parse::<usize>()
+                    .map_err(|_| ParseError::UnknownLabel {
+                        line: 0,
+                        label: target.clone(),
+                    })?
+            } else if let Ok(n) = target.parse::<usize>() {
+                n
+            } else {
+                return Err(ParseError::UnknownLabel { line: 0, label: target });
+            }
+        }
         None => 0,
     };
 
@@ -1048,5 +1063,65 @@ bomb    DAT.F  #0, #0
         let parsed = parse_warrior(source).unwrap();
         // The ADD's A-operand should be #8 (from EQU).
         assert_eq!(parsed.instructions()[0].a, imm(8));
+    }
+
+    // ── Label-with-colon syntax ─────────────────────────────────────
+
+    #[test]
+    fn parses_label_with_colon_suffix() {
+        let source = "
+start:  ADD.AB #4, bomb
+        JMP    start
+bomb:   DAT.F  #0, #0
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 3);
+        // JMP at offset 1 references `start` at offset 0 → relative -1.
+        assert_eq!(parsed.instructions()[1].a.value, -1);
+    }
+
+    // ── ORG with numeric literal and EQU constant ───────────────────
+
+    #[test]
+    fn org_with_numeric_literal() {
+        let source = "
+        ORG 1
+        MOV.I $0, $1
+        MOV.I $0, $2
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.start_offset(), 1);
+    }
+
+    #[test]
+    fn org_with_equ_constant() {
+        let source = "
+entry   EQU 1
+        ORG entry
+        MOV.I $0, $1
+        MOV.I $0, $2
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.start_offset(), 1);
+    }
+
+    // ── Malformed input error coverage ──────────────────────────────
+
+    #[test]
+    fn missing_operand_for_non_dat_opcode_errors() {
+        let err = parse_warrior("ADD").unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn too_many_operands_errors() {
+        let err = parse_warrior("MOV.I $0, $1, $2").unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn numeric_overflow_in_operand_errors() {
+        let err = parse_warrior("MOV.I $99999999999999999, $0").unwrap_err();
+        assert!(matches!(err, ParseError::InvalidNumber { .. }));
     }
 }

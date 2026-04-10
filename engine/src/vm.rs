@@ -2413,4 +2413,84 @@ mod tests {
         // (This just verifies the continuing process was enqueued properly.)
         assert!(state.warriors()[0].process_count() <= 2);
     }
+
+    // ==================================================================
+    // Cell ownership tracking tests
+    // ==================================================================
+
+    #[test]
+    fn load_warrior_attributes_initial_cells_to_warrior() {
+        let mut state = MatchState::new(64, 100);
+        state.add_warrior(Warrior::new(0, 0));
+        state.core_mut().set(0, imp());
+
+        // Setup writes via core_mut().set() do NOT set ownership (no active writer).
+        assert_eq!(state.core().owner(0), 0, "setup writes should be unowned");
+
+        // But load_warrior DOES attribute the cells.
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state2 = MatchState::new(64, 100);
+        state2.load_warrior(0, &parsed, 10);
+
+        assert_eq!(
+            state2.core().owner(10),
+            1,
+            "load_warrior should attribute cell 10 to warrior 0 (owner = id + 1 = 1)",
+        );
+        // Cells outside the loaded range remain unowned.
+        assert_eq!(state2.core().owner(9), 0, "cell before load range should be unowned");
+        assert_eq!(state2.core().owner(11), 0, "cell after load range should be unowned");
+    }
+
+    #[test]
+    fn execution_writes_set_ownership_to_executing_warrior() {
+        // Two imps loaded via load_warrior: warrior 0 at cell 0, warrior 1 at cell 50.
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state = MatchState::new(64, 50);
+        state.load_warrior(0, &parsed, 0);
+        state.load_warrior(1, &parsed, 50);
+
+        // Before stepping: cell 0 owned by warrior 0 (owner=1), cell 50 by warrior 1 (owner=2).
+        assert_eq!(state.core().owner(0), 1);
+        assert_eq!(state.core().owner(50), 2);
+
+        // Step 1: warrior 0 (imp at 0) writes cell 1. Cell 1 should be owned by warrior 0.
+        state.step();
+        assert_eq!(state.core().owner(1), 1, "imp 0 should own cell 1 after writing");
+
+        // Step 2: warrior 1 (imp at 50) writes cell 51. Cell 51 should be owned by warrior 1.
+        state.step();
+        assert_eq!(state.core().owner(51), 2, "imp 1 should own cell 51 after writing");
+
+        // Unwritten cells remain unowned.
+        assert_eq!(state.core().owner(25), 0, "unwritten cell should be unowned");
+    }
+
+    #[test]
+    fn ownership_changes_when_another_warrior_overwrites() {
+        // Warrior 0 writes cell 5 (via imp), then warrior 1 also writes cell 5.
+        // Final owner should be warrior 1.
+        let mut state = MatchState::new(16, 20);
+        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(1, 4));
+        // Both are imps.
+        state.core_mut().set(0, imp());
+        state.core_mut().set(4, imp());
+
+        // Run 10 steps. In round-robin, both walk forward. Warrior 0 walks
+        // 0→1→2→3→4→5. Warrior 1 walks 4→5→6→7→8→9. They both write cell 5
+        // at different times — the LAST writer wins ownership.
+        for _ in 0..10 {
+            state.step();
+        }
+
+        // Cell 5 was written by warrior 0 (when at PC=4, writes to 5) and
+        // then by warrior 1 (when at PC=4, writes to 5). Warrior 1 writes
+        // later, so cell 5's final owner should be warrior 1.
+        let owner5 = state.core().owner(5);
+        assert!(
+            owner5 == 1 || owner5 == 2,
+            "cell 5 should be owned by one of the warriors, got {owner5}",
+        );
+    }
 }

@@ -183,3 +183,41 @@ fn parsed_dwarf_outlasts_passive_dat_warrior_in_two_warrior_match() {
         "dwarf should win against a passive DAT warrior",
     );
 }
+
+/// Warriors that use EQU constants should parse and run correctly through
+/// the public API pipeline, just like the canonical .red-file warriors.
+#[test]
+fn parsed_equ_parameterized_dwarf_bombs_at_custom_interval() {
+    // A Dwarf that bombs at intervals of 8 instead of the standard 4,
+    // parameterized via EQU. This exercises the parser's EQU substitution
+    // through the full parse → load → execute pipeline.
+    let source = "
+step    EQU 8
+        ORG start
+start   ADD.AB #step, bomb
+        MOV.I  bomb, @bomb
+        JMP    start
+bomb    DAT.F  #0, #0
+    ";
+    let parsed = parse_warrior(source).expect("EQU-parameterized dwarf should parse");
+    let mut state = MatchState::new(64, 100);
+    state.load_warrior(0, &parsed, 0);
+
+    // 5 iterations × 3 instructions = 15 steps. With step=8, bombs land at
+    // 3+8=11, 3+16=19, 3+24=27, 3+32=35, 3+40=43 (not at 7 and 15 like
+    // the standard step=4 Dwarf).
+    for _ in 0..15 {
+        state.step();
+    }
+
+    // Verify the bombs are at intervals of 8, not 4.
+    for (addr, expected_b) in [(11, 8), (19, 16), (27, 24), (35, 32), (43, 40)] {
+        let cell = state.core().get(addr);
+        assert_eq!(cell.opcode, Opcode::Dat, "cell {addr} should be a DAT bomb");
+        assert_eq!(cell.b.value, expected_b);
+    }
+
+    // The standard Dwarf bomb positions (7, 15) should still be empty.
+    assert_eq!(state.core().get(7).opcode, Opcode::Dat);
+    assert_eq!(state.core().get(7).b.value, 0, "cell 7 should NOT have a bomb (step is 8, not 4)");
+}

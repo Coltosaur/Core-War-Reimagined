@@ -163,7 +163,7 @@ export default function App() {
 
     // Show the initial (empty) core
     if (rendererRef.current) {
-      rendererRef.current.update(match.coreOpcodes());
+      rendererRef.current.update(match.coreOwnership());
     }
 
     setStepCount(0);

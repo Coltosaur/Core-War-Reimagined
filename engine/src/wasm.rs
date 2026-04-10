@@ -298,6 +298,20 @@ impl WasmMatchState {
 
     // ── Bulk core reads for the visualizer ──────────────────────────
 
+    /// A `Uint8Array` of cell ownership values, one per cell, in address
+    /// order. Values: 0 = unowned (no warrior has written here),
+    /// 1 = warrior 0, 2 = warrior 1, etc.
+    ///
+    /// This is the primary coloring signal for the visualizer — standard
+    /// Core War displays color cells by which warrior last wrote to them,
+    /// not by what opcode they contain.
+    #[wasm_bindgen(js_name = "coreOwnership")]
+    pub fn core_ownership(&self) -> Vec<u8> {
+        let core = self.inner.core();
+        let size = core.size();
+        (0..size).map(|i| core.owner(i as i32)).collect()
+    }
+
     /// A `Uint8Array` of opcode bytes, one per cell, in address order.
     /// This is the fast path for coloring the PixiJS grid — one byte per
     /// cell, no decoding needed on the JS side.

@@ -46,9 +46,23 @@ use std::collections::VecDeque;
 use crate::instruction::{AddressMode, Field, Instruction, Modifier, Opcode, Operand};
 
 /// The shared memory array. Indexing is circular modulo `size()`.
+///
+/// Tracks **cell ownership**: each cell records which warrior (if any)
+/// last wrote to it. Ownership is set automatically by `set()` whenever
+/// `current_writer` is active (non-zero). The executor calls
+/// `begin_write` / `end_write` around each instruction execution so that
+/// all writes — including addressing-mode side effects in `resolve()` —
+/// are attributed to the correct warrior. Setup writes (via `core_mut()`)
+/// happen with no active writer and therefore don't set ownership.
 #[derive(Debug, Clone)]
 pub struct Core {
     cells: Vec<Instruction>,
+    /// Per-cell ownership: 0 = unowned, N = warrior id (N - 1) + 1.
+    /// The +1 offset lets 0 serve as "no one has written here."
+    owners: Vec<u8>,
+    /// The warrior id (+1) currently being attributed for writes, or 0
+    /// when no attribution is active (e.g., during setup).
+    current_writer: u8,
 }
 
 impl Core {
@@ -56,6 +70,8 @@ impl Core {
         assert!(size > 0, "core size must be positive");
         Self {
             cells: vec![Instruction::dat_zero(); size],
+            owners: vec![0; size],
+            current_writer: 0,
         }
     }
 
@@ -69,9 +85,30 @@ impl Core {
     }
 
     /// Write a cell at an arbitrary signed address, wrapping modulo size.
+    /// If a writer is active (via `begin_write`), the cell's ownership is
+    /// updated to that writer.
     pub fn set(&mut self, addr: i32, instr: Instruction) {
         let idx = self.wrap(addr);
         self.cells[idx] = instr;
+        if self.current_writer > 0 {
+            self.owners[idx] = self.current_writer;
+        }
+    }
+
+    /// Read the owner of a cell: 0 = unowned, 1 = warrior 0, 2 = warrior 1, etc.
+    pub fn owner(&self, addr: i32) -> u8 {
+        self.owners[self.wrap(addr)]
+    }
+
+    /// Mark subsequent `set()` calls as belonging to the given warrior.
+    /// Called by the executor at the start of each instruction execution.
+    pub(crate) fn begin_write(&mut self, warrior_id: usize) {
+        self.current_writer = warrior_id as u8 + 1;
+    }
+
+    /// Clear the active writer. Called after instruction execution completes.
+    pub(crate) fn end_write(&mut self) {
+        self.current_writer = 0;
     }
 
     /// Reduce an arbitrary signed address into a valid core index.
@@ -209,9 +246,13 @@ impl MatchState {
         parsed: &crate::parser::ParsedWarrior,
         base_address: usize,
     ) {
+        // Attribute the initial load to this warrior so the visualizer
+        // shows the starting code in the warrior's color.
+        self.core.begin_write(id);
         for (i, &instr) in parsed.instructions().iter().enumerate() {
-            self.core_mut().set((base_address + i) as i32, instr);
+            self.core.set((base_address + i) as i32, instr);
         }
+        self.core.end_write();
         let start_pc = base_address + parsed.start_offset();
         self.add_warrior(Warrior::new(id, start_pc));
     }
@@ -312,6 +353,11 @@ impl MatchState {
     }
 
     fn execute(&mut self, warrior_idx: usize, pc: usize, instr: Instruction) {
+        // Attribute all core writes during this instruction (including
+        // predecrement/postincrement side effects in resolve()) to the
+        // executing warrior.
+        self.core.begin_write(warrior_idx);
+
         let pc_i = pc as i32;
         let core_size = self.core.size();
         let core_size_i = core_size as i32;
@@ -567,6 +613,8 @@ impl MatchState {
                 self.warriors[warrior_idx].processes.push_back(next_pc);
             }
         }
+
+        self.core.end_write();
     }
 }
 

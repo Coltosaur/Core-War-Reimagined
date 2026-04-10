@@ -52,7 +52,18 @@ backend/   Rust (axum + socketioxide + tokio). Postgres + Redis (planned).
 
 **Future backend deps (add when first used, not preemptively):** `sqlx` (Postgres, with compile-time-checked queries), `redis` with `tokio-comp` (Redis), `apalis` (Redis-backed job queue, equivalent to Python's `arq`), `jsonwebtoken` (JWT), `argon2` (password hashing).
 
-**Frontend ↔ Engine:** Frontend imports the wasm-pack output as a JS module (`--target web`). The visualizer plan is PixiJS for the 8000-cell memory grid; code editor is Monaco with custom Redcode syntax.
+**Frontend ↔ Engine:** Frontend imports the wasm-pack output as a JS module (`--target web`). The engine's `wasm` module (`engine/src/wasm.rs`, compiled only on `wasm32`) provides `#[wasm_bindgen]` wrapper types (`MatchState`, `ParsedWarrior`) and free functions (`parseWarrior`, `engineVersion`) that adapt the native Rust API for JS consumption. Key methods:
+- `parseWarrior(source)` → `ParsedWarrior` (or throws a JS error string on parse failure)
+- `new MatchState(coreSize, maxSteps)` → `MatchState`
+- `matchState.loadWarrior(id, warrior, baseAddress)` — bridge from parser to executor
+- `matchState.step()` / `matchState.stepN(n)` — advance the simulation (use `stepN` to avoid N individual wasm boundary crossings per frame)
+- `matchState.resultCode()` → `0=Ongoing, 1=Victory, 2=Tie, 3=AllDead`; `resultWinnerId()` → winner id or -1
+- `matchState.coreOpcodes()` → `Uint8Array` of opcode bytes (fast render path for the PixiJS grid)
+- `matchState.coreSnapshot()` → `Uint32Array` with two words per cell (packed metadata + signed i16 field values for the detail/inspector view)
+- Individual cell reads: `cellOpcode(addr)`, `cellModifier(addr)`, `cellAMode(addr)`, `cellAValue(addr)`, `cellBMode(addr)`, `cellBValue(addr)`
+- Warrior queries: `warriorCount()`, `warriorIsAlive(idx)`, `warriorProcessCount(idx)`, `warriorProcessPcs(idx)` → `Uint32Array`
+
+The visualizer plan is PixiJS for the 8000-cell memory grid; code editor is Monaco with custom Redcode syntax. Enums are encoded as `u8` discriminants (all three — `Opcode`, `Modifier`, `AddressMode` — have `#[repr(u8)]` for zero-cost casting).
 
 **Frontend ↔ Backend:** Socket.IO over WebSockets for live battle streaming, plus REST for auth/leaderboards. CORS is keyed off `FRONTEND_URL` (defaults to `http://localhost:5173`).
 

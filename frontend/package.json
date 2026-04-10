@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.0.0",
+    "core-war-engine": "file:../engine/pkg",
     "pixi.js": "^7.0.0",
     "react": "^18.0.0",
     "react-dom": "^18.0.0",

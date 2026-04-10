@@ -80,8 +80,13 @@ wasm-pack build --target web
 # or: cargo watch -s 'wasm-pack build --target web'
 
 # 3. Frontend dev server (from frontend/) — Vite on http://localhost:5173
-npm install   # first time
+npm install   # first time, OR after wasm-pack rebuild
 npm run dev
+# NOTE: The frontend depends on `core-war-engine` via `"file:../engine/pkg"`.
+# You must run `wasm-pack build --target web` in engine/ BEFORE `npm install`
+# in frontend/, otherwise npm will fail because `../engine/pkg` doesn't exist.
+# After any engine Rust change, re-run wasm-pack and then `npm install` to
+# pick up the new wasm output (the file: dep is a copy, not a live symlink).
 
 # 4. Backend API (from backend/) — axum on http://localhost:3001
 cargo run

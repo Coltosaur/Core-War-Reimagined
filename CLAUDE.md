@@ -25,6 +25,15 @@ The `resolve()` function takes `&mut Core` rather than `&Core` so that addressin
 
 **Parser** (`engine/src/parser.rs`): converts Redcode text source into a `ParsedWarrior` (instructions + start offset + name/author metadata) via `parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError>`. Two-pass for forward-label support: pass 1 walks lines and assigns each instruction a sequential offset while building a label → offset map; pass 2 parses operand bodies and resolves labels to relative offsets. Implements default modifier inference per ICWS '94 §A.2.1, single-operand `DAT`/`NOP` (becomes `(#0, #operand)`), single-operand jumps (becomes `(operand, $0)`), comments and metadata extraction (`;name`, `;author`), and `ORG` / `END` pseudo-ops. Deferred features: `EQU` constants, arithmetic expressions in operand values, multiple warriors per file. Load a parsed warrior into a battle via `MatchState::load_warrior(id, &parsed, base_address)`.
 
+## Engine tests
+
+Two layers, deliberately:
+
+- **Unit tests** in `engine/src/vm.rs` and `engine/src/parser.rs` (`#[cfg(test)] mod tests`). These can see private items and test internal correctness — invariants of `step()`, the side effects in `resolve()`, modifier dispatch tables, parser pass internals. The `vm.rs` tests are also where the canonical warriors live in their hand-built `Instruction`-literal form, which is the source of truth that the parser tests check against.
+- **Integration tests** in `engine/tests/canonical_warriors.rs` with `.red` warrior files in `engine/tests/warriors/`. Each `.rs` file in `tests/` is compiled as a *separate binary* that links against `core_war_engine` as a downstream consumer would and can only use items that are `pub use`'d from `lib.rs` — these tests catch any "I forgot to make this public" bugs the in-crate unit tests can't. The convention here is that **none of these tests construct an `Instruction` literal directly**; every warrior, including markers planted into core, comes through `parse_warrior`. That makes the file a clean usage example for the eventual frontend and backend code.
+
+To add a new canonical warrior: drop the `.red` file in `engine/tests/warriors/`, add a `const NAME: &str = include_str!("warriors/name.red");` line at the top of `canonical_warriors.rs`, and write a `#[test]` that loads it via `parse_warrior` and `MatchState::load_warrior`.
+
 `MatchState::result()` returns a `MatchResult` enum (`Ongoing` / `Victory { winner_id }` / `Tie` / `AllDead`) for queries about who's won. It is purely a query — calling `result()` does not stop the simulation, and `step()` will keep executing the surviving warrior even after `Victory` is reported. The `Tie` and `AllDead` variants are kept distinct because they encode different end-state diagnostics (step limit hit vs. mutual death) even though both are "no winner" for scoring purposes.
 
 ## Architecture

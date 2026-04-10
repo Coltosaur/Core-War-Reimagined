@@ -7,6 +7,7 @@
 /// Every Redcode opcode. Not all of these are executed yet — see `vm::execute`
 /// for the currently-implemented subset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Opcode {
     /// Data — kills the executing process when reached.
     Dat,
@@ -47,6 +48,7 @@ pub enum Opcode {
 /// Instruction modifier — controls *which* fields the opcode operates on.
 /// `.I` ("instruction") is the most common for `Mov` and means "the whole cell".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Modifier {
     A,
     B,
@@ -59,6 +61,7 @@ pub enum Modifier {
 
 /// How an operand's value is interpreted to find an effective core address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum AddressMode {
     /// `#N` — the literal value N. Operand "points at" the executing instruction.
     Immediate,

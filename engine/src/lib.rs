@@ -4,29 +4,23 @@
 //! battles in a circular memory array, and emits state for visualization.
 //!
 //! It is designed to compile to two targets from a single source:
-//!   - **wasm32-unknown-unknown** via `wasm-pack` — consumed by the frontend
-//!     visualizer running in the browser.
+//!   - **wasm32-unknown-unknown** via `wasm-pack` — the `wasm` module
+//!     (conditionally compiled only on this target) provides
+//!     `#[wasm_bindgen]` wrappers consumed by the frontend visualizer.
 //!   - **native** — consumed directly as a Rust crate dependency by the
 //!     `core-war-backend` workspace for server-side ranked-match validation.
 //!
-//! Implementation status: the type model is complete; the executor currently
-//! supports only the opcodes/addressing modes needed to run an Imp warrior.
-//! New opcodes are intended to be added one at a time, each with a unit test.
+//! The native public API is re-exported at the crate root below. The wasm
+//! public API lives in `wasm.rs` and is only compiled when
+//! `target_arch = "wasm32"`.
 
 pub mod instruction;
 pub mod parser;
 pub mod vm;
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 pub use instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
 pub use parser::{parse_warrior, ParseError, ParsedWarrior};
 pub use vm::{Core, MatchResult, MatchState, Warrior};
-
-use wasm_bindgen::prelude::*;
-
-/// Stub wasm-bindgen export so `wasm-pack build` continues to produce a
-/// usable JS module while the real public API is still being designed.
-/// Returns the engine crate version string.
-#[wasm_bindgen]
-pub fn engine_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}

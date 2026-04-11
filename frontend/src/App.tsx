@@ -39,6 +39,20 @@ loop    MOV.I  imp, <dest
 landing DAT.F  #0, #0`,
   },
   {
+    label: 'Mice',
+    source: `;name Mice
+;author Chip Wendell
+        ORG    start
+ptr     DAT.F  #0, #0
+start   MOV.AB #8, ptr
+loop    MOV.I  @ptr, <copy
+        DJN.B  loop, ptr
+        SPL    @copy, #0
+        ADD.AB #653, copy
+        JMZ.B  start, ptr
+copy    DAT.F  #0, #833`,
+  },
+  {
     label: 'Scanner',
     source: `;name Scanner
         ORG    loop

@@ -25,6 +25,7 @@ use core_war_engine::{parse_warrior, MatchResult, MatchState, Opcode};
 
 const IMP: &str = include_str!("warriors/imp.red");
 const DWARF: &str = include_str!("warriors/dwarf.red");
+const MICE: &str = include_str!("warriors/mice.red");
 const MICE_LITE: &str = include_str!("warriors/mice_lite.red");
 const SCANNER: &str = include_str!("warriors/scanner.red");
 
@@ -220,4 +221,52 @@ bomb    DAT.F  #0, #0
     // The standard Dwarf bomb positions (7, 15) should still be empty.
     assert_eq!(state.core().get(7).opcode, Opcode::Dat);
     assert_eq!(state.core().get(7).b.value, 0, "cell 7 should NOT have a bomb (step is 8, not 4)");
+}
+
+/// The real Mice replicator. After one copy cycle (8 MOV iterations via
+/// DJN + 1 SPL + 1 ADD + 1 JMZ = 11 instructions), Mice should have:
+///   - written a copy of itself to a remote core region
+///   - spawned a new process at the remote copy via SPL
+///   - advanced the copy pointer for the next cycle
+///   - looped back to start another copy
+///
+/// We verify replication by checking that the warrior has more than 1
+/// process after enough steps (SPL succeeded), and that some cells in
+/// the remote region were modified (the copy landed).
+#[test]
+fn parsed_mice_replicates_itself_to_remote_location() {
+    let parsed = parse_warrior(MICE).expect("mice.red should parse");
+    let mut state = MatchState::new(8000, 500);
+    state.load_warrior(0, &parsed, 0);
+
+    // Run enough steps for at least one full copy cycle + SPL.
+    // One cycle: MOV.AB(1) + 8×MOV.I(8) + 8×DJN(8) + SPL(1) + ADD(1) + JMZ(1) = ~28 steps.
+    // Run 100 to be safe and allow the remote copy to start its own cycle.
+    for _ in 0..100 {
+        state.step();
+    }
+
+    // Mice should have spawned at least one additional process via SPL.
+    assert!(
+        state.warriors()[0].process_count() > 1,
+        "Mice should have spawned remote processes via SPL, but has only {} process(es)",
+        state.warriors()[0].process_count(),
+    );
+
+    // The remote copy region (around cell 833, based on copy.B=833) should
+    // have been written to. Check that at least some cells in that region
+    // are no longer the default DAT.F #0, #0.
+    let mut non_dat_count = 0;
+    for addr in 825..845 {
+        if state.core().get(addr).opcode != Opcode::Dat {
+            non_dat_count += 1;
+        }
+    }
+    assert!(
+        non_dat_count > 0,
+        "Mice should have copied its code to the remote region near cell 833",
+    );
+
+    // Warrior should still be alive (Mice never executes a DAT in its loop).
+    assert!(state.warriors()[0].is_alive());
 }

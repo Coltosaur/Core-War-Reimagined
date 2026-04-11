@@ -125,18 +125,23 @@ const VICTORY = 1;
 const TIE = 2;
 const ALL_DEAD = 3;
 
-function resultText(code: number, winnerId: number): string {
+function resultBanner(
+  code: number,
+  winnerId: number,
+  names: string[],
+): { text: string; color: string } | null {
   switch (code) {
-    case ONGOING:
-      return 'Battle in progress';
-    case VICTORY:
-      return `Warrior ${winnerId} wins!`;
+    case VICTORY: {
+      const name = names[winnerId] ?? `Warrior ${winnerId}`;
+      const color = WARRIOR_HEX[winnerId + 1] ?? '#e0e0e0';
+      return { text: `${name} wins!`, color };
+    }
     case TIE:
-      return 'Tie — step limit reached';
+      return { text: 'Tie — step limit reached', color: '#f0c040' };
     case ALL_DEAD:
-      return 'All warriors dead';
+      return { text: 'All warriors eliminated — no winner', color: '#888' };
     default:
-      return '';
+      return null;
   }
 }
 
@@ -534,8 +539,7 @@ export default function App() {
         {ready ? (
           <>
             <div>
-              Steps: {stepCount.toLocaleString()} / 80,000 —{' '}
-              {resultText(resultCode, resultWinner)}
+              Steps: {stepCount.toLocaleString()} / 80,000
             </div>
             <div style={{ marginTop: '0.3rem' }}>
               {warriors.map((w, i) => (
@@ -553,9 +557,35 @@ export default function App() {
                 </span>
               ))}
             </div>
+            {(() => {
+              const banner = resultBanner(
+                resultCode,
+                resultWinner,
+                warriorNamesRef.current,
+              );
+              if (!banner) return null;
+              return (
+                <div
+                  style={{
+                    marginTop: '0.75rem',
+                    padding: '0.5rem 1.5rem',
+                    fontSize: '1.1rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.05em',
+                    color: banner.color,
+                    border: `1px solid ${banner.color}44`,
+                    borderRadius: '6px',
+                    backgroundColor: `${banner.color}11`,
+                    textShadow: `0 0 12px ${banner.color}66`,
+                  }}
+                >
+                  {banner.text}
+                </div>
+              );
+            })()}
             <div
               style={{
-                marginTop: '0.3rem',
+                marginTop: '0.5rem',
                 fontSize: '0.75rem',
                 color: '#555',
               }}

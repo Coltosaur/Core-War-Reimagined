@@ -21,7 +21,7 @@
 //!   - Arithmetic expressions in operand values (`label + 1` etc.)
 //!   - Multiple warriors per source file (`FOR` loops)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
 
@@ -487,8 +487,11 @@ fn parse_operand(
     Ok(Operand { mode, value })
 }
 
-/// Parse an operand value: a signed integer literal, an EQU constant,
-/// or a label resolved to its offset relative to the executing instruction.
+/// Parse an operand value into a signed integer. Accepts full arithmetic
+/// expressions over integer literals, labels (resolved to their offset
+/// relative to the executing instruction), and EQU constants (evaluated
+/// recursively with cycle detection). Operators: `+ - * / %` with standard
+/// precedence, unary `+ -`, and parenthesized sub-expressions.
 fn parse_value(
     text: &str,
     offset: usize,
@@ -496,45 +499,267 @@ fn parse_value(
     labels: &HashMap<String, usize>,
     equ_table: &HashMap<String, String>,
 ) -> Result<i32, ParseError> {
-    if text.is_empty() {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         return Err(ParseError::SyntaxError {
             line: line_no,
             message: "operand has no value".to_string(),
         });
     }
 
-    // Try as a numeric literal first.
-    if let Ok(n) = text.parse::<i32>() {
-        return Ok(n);
-    }
-
-    // Try as an EQU constant (text substitution, then re-parse).
-    if let Some(replacement) = equ_table.get(text) {
-        return parse_value(replacement, offset, line_no, labels, equ_table);
-    }
-
-    // Try as a label reference (resolved to relative offset).
-    if let Some(&label_offset) = labels.get(text) {
-        return Ok(label_offset as i32 - offset as i32);
-    }
-
-    // Last possibility: maybe it looked like a number but failed to parse
-    // (e.g. overflow, leading zeros, malformed). Distinguish that from a
-    // genuinely unknown label by whether it starts with a digit or sign.
-    let starts_numeric = text
-        .chars()
-        .next()
-        .map(|c| c == '-' || c == '+' || c.is_ascii_digit())
-        .unwrap_or(false);
-    if starts_numeric {
-        Err(ParseError::InvalidNumber {
+    let tokens = tokenize_expr(trimmed, line_no)?;
+    let mut cursor = ExprCursor { tokens: &tokens, pos: 0 };
+    let mut visiting = HashSet::new();
+    let value = cursor.parse_expr(offset, line_no, labels, equ_table, &mut visiting)?;
+    if cursor.pos < tokens.len() {
+        return Err(ParseError::SyntaxError {
             line: line_no,
-            text: text.to_string(),
-        })
-    } else {
+            message: format!("trailing tokens in operand expression: {trimmed:?}"),
+        });
+    }
+    Ok(value)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Tok {
+    Num(i32),
+    Ident(String),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    LParen,
+    RParen,
+}
+
+fn tokenize_expr(text: &str, line_no: usize) -> Result<Vec<Tok>, ParseError> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if b.is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let slice = &text[start..i];
+            let n = slice.parse::<i32>().map_err(|_| ParseError::InvalidNumber {
+                line: line_no,
+                text: slice.to_string(),
+            })?;
+            tokens.push(Tok::Num(n));
+            continue;
+        }
+        if b == b'_' || b.is_ascii_alphabetic() {
+            let start = i;
+            while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+                i += 1;
+            }
+            tokens.push(Tok::Ident(text[start..i].to_string()));
+            continue;
+        }
+        let tok = match b {
+            b'+' => Tok::Plus,
+            b'-' => Tok::Minus,
+            b'*' => Tok::Star,
+            b'/' => Tok::Slash,
+            b'%' => Tok::Percent,
+            b'(' => Tok::LParen,
+            b')' => Tok::RParen,
+            _ => {
+                return Err(ParseError::SyntaxError {
+                    line: line_no,
+                    message: format!("unexpected character {:?} in operand value", b as char),
+                });
+            }
+        };
+        tokens.push(tok);
+        i += 1;
+    }
+    Ok(tokens)
+}
+
+struct ExprCursor<'a> {
+    tokens: &'a [Tok],
+    pos: usize,
+}
+
+impl<'a> ExprCursor<'a> {
+    fn peek(&self) -> Option<&Tok> {
+        self.tokens.get(self.pos)
+    }
+
+    fn parse_expr(
+        &mut self,
+        offset: usize,
+        line_no: usize,
+        labels: &HashMap<String, usize>,
+        equ_table: &HashMap<String, String>,
+        visiting: &mut HashSet<String>,
+    ) -> Result<i32, ParseError> {
+        let mut lhs = self.parse_term(offset, line_no, labels, equ_table, visiting)?;
+        loop {
+            let add = match self.peek() {
+                Some(Tok::Plus) => true,
+                Some(Tok::Minus) => false,
+                _ => break,
+            };
+            self.pos += 1;
+            let rhs = self.parse_term(offset, line_no, labels, equ_table, visiting)?;
+            lhs = if add {
+                lhs.wrapping_add(rhs)
+            } else {
+                lhs.wrapping_sub(rhs)
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_term(
+        &mut self,
+        offset: usize,
+        line_no: usize,
+        labels: &HashMap<String, usize>,
+        equ_table: &HashMap<String, String>,
+        visiting: &mut HashSet<String>,
+    ) -> Result<i32, ParseError> {
+        let mut lhs = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+        loop {
+            enum MulOp {
+                Mul,
+                Div,
+                Rem,
+            }
+            let op = match self.peek() {
+                Some(Tok::Star) => MulOp::Mul,
+                Some(Tok::Slash) => MulOp::Div,
+                Some(Tok::Percent) => MulOp::Rem,
+                _ => break,
+            };
+            self.pos += 1;
+            let rhs = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+            lhs = match op {
+                MulOp::Mul => lhs.wrapping_mul(rhs),
+                MulOp::Div => {
+                    if rhs == 0 {
+                        return Err(ParseError::SyntaxError {
+                            line: line_no,
+                            message: "division by zero in operand expression".to_string(),
+                        });
+                    }
+                    lhs.wrapping_div(rhs)
+                }
+                MulOp::Rem => {
+                    if rhs == 0 {
+                        return Err(ParseError::SyntaxError {
+                            line: line_no,
+                            message: "modulo by zero in operand expression".to_string(),
+                        });
+                    }
+                    lhs.wrapping_rem(rhs)
+                }
+            };
+        }
+        Ok(lhs)
+    }
+
+    fn parse_factor(
+        &mut self,
+        offset: usize,
+        line_no: usize,
+        labels: &HashMap<String, usize>,
+        equ_table: &HashMap<String, String>,
+        visiting: &mut HashSet<String>,
+    ) -> Result<i32, ParseError> {
+        match self.peek() {
+            Some(Tok::Plus) => {
+                self.pos += 1;
+                self.parse_factor(offset, line_no, labels, equ_table, visiting)
+            }
+            Some(Tok::Minus) => {
+                self.pos += 1;
+                let v = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+                Ok(v.wrapping_neg())
+            }
+            Some(Tok::LParen) => {
+                self.pos += 1;
+                let v = self.parse_expr(offset, line_no, labels, equ_table, visiting)?;
+                match self.tokens.get(self.pos) {
+                    Some(Tok::RParen) => {
+                        self.pos += 1;
+                        Ok(v)
+                    }
+                    _ => Err(ParseError::SyntaxError {
+                        line: line_no,
+                        message: "unmatched '(' in operand expression".to_string(),
+                    }),
+                }
+            }
+            Some(Tok::Num(n)) => {
+                let n = *n;
+                self.pos += 1;
+                Ok(n)
+            }
+            Some(Tok::Ident(name)) => {
+                let name = name.clone();
+                self.pos += 1;
+                self.resolve_ident(&name, offset, line_no, labels, equ_table, visiting)
+            }
+            _ => Err(ParseError::SyntaxError {
+                line: line_no,
+                message: "expected value in operand expression".to_string(),
+            }),
+        }
+    }
+
+    fn resolve_ident(
+        &mut self,
+        name: &str,
+        offset: usize,
+        line_no: usize,
+        labels: &HashMap<String, usize>,
+        equ_table: &HashMap<String, String>,
+        visiting: &mut HashSet<String>,
+    ) -> Result<i32, ParseError> {
+        // EQU takes precedence over labels. Recursively evaluate the
+        // substitution text as its own expression so EQU values can
+        // themselves be expressions (e.g. `foo EQU bar + 1`).
+        if let Some(replacement) = equ_table.get(name) {
+            if !visiting.insert(name.to_string()) {
+                return Err(ParseError::SyntaxError {
+                    line: line_no,
+                    message: format!("circular EQU reference involving {name:?}"),
+                });
+            }
+            let sub_tokens = tokenize_expr(replacement.trim(), line_no)?;
+            let mut sub = ExprCursor {
+                tokens: &sub_tokens,
+                pos: 0,
+            };
+            let value = sub.parse_expr(offset, line_no, labels, equ_table, visiting)?;
+            visiting.remove(name);
+            if sub.pos < sub_tokens.len() {
+                return Err(ParseError::SyntaxError {
+                    line: line_no,
+                    message: format!("malformed EQU value for {name:?}: {replacement:?}"),
+                });
+            }
+            return Ok(value);
+        }
+
+        if let Some(&label_offset) = labels.get(name) {
+            return Ok(label_offset as i32 - offset as i32);
+        }
+
         Err(ParseError::UnknownLabel {
             line: line_no,
-            label: text.to_string(),
+            label: name.to_string(),
         })
     }
 }
@@ -1117,6 +1342,107 @@ entry   EQU 1
     fn too_many_operands_errors() {
         let err = parse_warrior("MOV.I $0, $1, $2").unwrap_err();
         assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    // ── Arithmetic expression tests ─────────────────────────────────
+
+    #[test]
+    fn expr_adds_constants_in_operand() {
+        let parsed = parse_warrior("DAT #0, #5 + 3").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(8));
+    }
+
+    #[test]
+    fn expr_subtracts_and_negates() {
+        let parsed = parse_warrior("DAT #0, #10-3").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(7));
+        let parsed = parse_warrior("DAT #0, #-5").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(-5));
+    }
+
+    #[test]
+    fn expr_respects_precedence_and_parens() {
+        let parsed = parse_warrior("DAT #0, #2 + 3 * 4").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(14));
+        let parsed = parse_warrior("DAT #0, #(2 + 3) * 4").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(20));
+    }
+
+    #[test]
+    fn expr_handles_div_and_mod() {
+        let parsed = parse_warrior("DAT #0, #20 / 3").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(6));
+        let parsed = parse_warrior("DAT #0, #20 % 3").unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(2));
+    }
+
+    #[test]
+    fn expr_div_by_zero_errors() {
+        let err = parse_warrior("DAT #0, #5 / 0").unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+        let err = parse_warrior("DAT #0, #5 % 0").unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn expr_label_plus_offset() {
+        // `target + 2` at offset 0 where target is at offset 3 → 3 - 0 + 2 = 5.
+        let source = "
+        DAT #0, target + 2
+        DAT #0, #0
+        DAT #0, #0
+target  DAT #0, #99
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions()[0].b.value, 5);
+    }
+
+    #[test]
+    fn expr_label_minus_label_is_distance() {
+        // tail - head should resolve to the constant distance (2),
+        // independent of the executing PC. (Avoiding the label name `end`
+        // which collides with the END pseudo-op.)
+        let source = "
+head    DAT #0, #0
+        DAT #0, #0
+tail    DAT #0, tail - head
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions()[2].b.value, 2);
+    }
+
+    #[test]
+    fn expr_equ_with_expression_value() {
+        let source = "
+base    EQU 4
+step    EQU base + 1
+        DAT #0, #step * 2
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(10));
+    }
+
+    #[test]
+    fn expr_circular_equ_errors() {
+        let source = "
+a       EQU b + 1
+b       EQU a + 1
+        DAT #0, #a
+        ";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn expr_unmatched_paren_errors() {
+        let err = parse_warrior("DAT #0, #(5 + 3").unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn expr_unknown_ident_errors() {
+        let err = parse_warrior("DAT #0, #5 + nope").unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { .. }));
     }
 
     #[test]

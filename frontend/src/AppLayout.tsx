@@ -2,7 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 
 const SHELL_STYLE: React.CSSProperties = {
   display: 'flex',
-  minHeight: '100vh',
+  height: '100vh',
   fontFamily: '"JetBrains Mono", "Fira Code", monospace',
   backgroundColor: '#0a0a0a',
   color: '#e0e0e0',

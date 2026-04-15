@@ -303,24 +303,24 @@ start   MOV.I  $0, $1
             placeholder="Warrior name"
             disabled={!selected || selected.isPreset}
           />
-          <button
-            style={PRIMARY_BUTTON_STYLE}
-            onClick={handleSave}
-            disabled={!canSave}
-            title={selected?.isPreset ? 'Saves as a new warrior' : 'Save changes'}
-          >
-            {selected?.isPreset ? 'Save as new' : 'Save'}
-          </button>
+          {selected && !selected.isPreset && (
+            <button
+              style={PRIMARY_BUTTON_STYLE}
+              onClick={handleSave}
+              disabled={!canSave}
+              title="Save changes"
+            >
+              Save
+            </button>
+          )}
           <button style={BUTTON_STYLE} onClick={handleDuplicate} disabled={!selected}>
             Duplicate
           </button>
-          <button
-            style={DANGER_BUTTON_STYLE}
-            onClick={handleDelete}
-            disabled={!canDelete}
-          >
-            Delete
-          </button>
+          {selected && !selected.isPreset && (
+            <button style={DANGER_BUTTON_STYLE} onClick={handleDelete}>
+              Delete
+            </button>
+          )}
           <button style={BUTTON_STYLE} onClick={handleTestInBattle} disabled={!selected}>
             Test in Battlefield →
           </button>

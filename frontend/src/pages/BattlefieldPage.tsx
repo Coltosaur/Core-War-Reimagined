@@ -1,83 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import init, {
   parseWarrior,
   MatchState,
   engineVersion,
   type ParsedWarrior,
 } from 'core-war-engine';
-import { createCoreRenderer, type CoreRenderer } from './core/coreRenderer';
-import { cellAddressAtPixel, formatCellTooltip } from './core/redcodeFormat';
-import { CORE_SIZE } from './core/constants';
+import { createCoreRenderer, type CoreRenderer } from '../core/coreRenderer';
+import { cellAddressAtPixel, formatCellTooltip } from '../core/redcodeFormat';
+import { CORE_SIZE } from '../core/constants';
+import { useWarriorLibrary, type Warrior } from '../warriors/library';
 
-// ─── Built-in warrior library ────────────────────────────────────────
-
-const WARRIOR_LIST: { label: string; source: string }[] = [
-  {
-    label: 'Imp',
-    source: `;name Imp
-        MOV.I $0, $1`,
-  },
-  {
-    label: 'Dwarf',
-    source: `;name Dwarf
-;author A.K. Dewdney
-        ORG    start
-start   ADD.AB #4, bomb
-        MOV.I  bomb, @bomb
-        JMP    start
-bomb    DAT.F  #0, #0`,
-  },
-  {
-    label: 'Mice-Lite',
-    source: `;name Mice-Lite
-        ORG    loop
-counter DAT.F  #0, #3
-dest    DAT.F  #0, #8
-imp     MOV.I  $0, $1
-loop    MOV.I  imp, <dest
-        DJN.B  loop, counter
-landing DAT.F  #0, #0`,
-  },
-  {
-    label: 'Mice',
-    source: `;name Mice
-;author Chip Wendell
-        ORG    start
-ptr     DAT.F  #0, #0
-start   MOV.AB #8, ptr
-loop    MOV.I  @ptr, <copy
-        DJN.B  loop, ptr
-        SPL    @copy, #0
-        ADD.AB #653, copy
-        JMZ.B  start, ptr
-copy    DAT.F  #0, #833`,
-  },
-  {
-    label: 'Scanner',
-    source: `;name Scanner
-        ORG    loop
-ptr     DAT.F  #0, #9
-blank   DAT.F  #0, #0
-bomb    DAT.F  #0, #99
-loop    ADD.AB #1, ptr
-        SEQ.I  @ptr, blank
-        JMP    found
-        JMP    loop
-found   MOV.I  bomb, @ptr
-        JMP    loop`,
-  },
-];
-
-// Warrior grid colors — must match WARRIOR_COLORS in coreRenderer.ts.
-// Index = owner value (0 = unowned, 1 = warrior 0, 2 = warrior 1).
 const WARRIOR_HEX = ['#888888', '#e94560', '#4fc3f7', '#4caf50', '#ffab00'];
 
-// ─── Styles (inline for now — extract to CSS when the UI grows) ─────
-
 const ROOT_STYLE: React.CSSProperties = {
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-  backgroundColor: '#0a0a0a',
-  color: '#e0e0e0',
   minHeight: '100vh',
   display: 'flex',
   flexDirection: 'column',
@@ -118,8 +54,6 @@ const STATUS_STYLE: React.CSSProperties = {
   textAlign: 'center',
 };
 
-// ─── Result code constants (match the wasm API) ─────────────────────
-
 const ONGOING = 0;
 const VICTORY = 1;
 const TIE = 2;
@@ -145,20 +79,31 @@ function resultBanner(
   }
 }
 
-// ─── App ─────────────────────────────────────────────────────────────
+function pickInitial(library: Warrior[], queryId: string | null, fallbackIdx: number): string {
+  if (queryId && library.some((w) => w.id === queryId)) return queryId;
+  return library[fallbackIdx]?.id ?? library[0]?.id ?? '';
+}
 
-export default function App() {
+export default function BattlefieldPage() {
+  const library = useWarriorLibrary();
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [stepCount, setStepCount] = useState(0);
   const [resultCode, setResultCode] = useState(ONGOING);
   const [resultWinner, setResultWinner] = useState(-1);
   const [stepsPerFrame, setStepsPerFrame] = useState(50);
-  const [pick0, setPick0] = useState(0); // index into WARRIOR_LIST
-  const [pick1, setPick1] = useState(1);
+  const [redId, setRedId] = useState(() =>
+    pickInitial(library, searchParams.get('red'), 0),
+  );
+  const [blueId, setBlueId] = useState(() =>
+    pickInitial(library, searchParams.get('blue'), 1),
+  );
   const [warriors, setWarriors] = useState<
     { name: string; alive: boolean; procs: number }[]
   >([]);
+  const [parseError, setParseError] = useState<string | null>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -166,19 +111,31 @@ export default function App() {
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
-  const pick0Ref = useRef(pick0);
-  const pick1Ref = useRef(pick1);
+  const redIdRef = useRef(redId);
+  const blueIdRef = useRef(blueId);
   const rafRef = useRef(0);
   const frameCountRef = useRef(0);
   const spfRef = useRef(stepsPerFrame);
 
-  // Keep refs in sync so callbacks see the latest values without
-  // needing to be recreated.
   spfRef.current = stepsPerFrame;
-  pick0Ref.current = pick0;
-  pick1Ref.current = pick1;
+  redIdRef.current = redId;
+  blueIdRef.current = blueId;
 
-  // ── Cell tooltip (imperative — no React re-renders on mousemove) ──
+  // Keep the URL in sync with current selection so handoff from the builder is linkable.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    next.set('red', redId);
+    next.set('blue', blueId);
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [redId, blueId, searchParams, setSearchParams]);
+
+  const libraryById = useMemo(() => {
+    const map = new Map<string, Warrior>();
+    library.forEach((w) => map.set(w.id, w));
+    return map;
+  }, [library]);
 
   const handleGridMouseMove = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
@@ -201,8 +158,6 @@ export default function App() {
       tip.textContent = formatCellTooltip(m, addr);
       tip.style.display = 'block';
 
-      // Position the tooltip near the cursor, offset slightly so it
-      // doesn't occlude the cell or fight the pointer.
       const tipX = Math.min(x + 12, rect.width - tip.offsetWidth - 4);
       const tipY = y > 40 ? y - 32 : y + 20;
       tip.style.left = `${tipX}px`;
@@ -216,8 +171,6 @@ export default function App() {
     const tip = tooltipRef.current;
     if (tip) tip.style.display = 'none';
   }, []);
-
-  // ── Init wasm + PixiJS ────────────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false;
@@ -239,38 +192,39 @@ export default function App() {
     };
   }, []);
 
-  // ── Battle lifecycle ──────────────────────────────────────────────
-
   const loadBattle = useCallback(() => {
     if (!ready) return;
 
-    // Clean up previous battle
     cancelAnimationFrame(rafRef.current);
     setRunning(false);
 
-    const match = new MatchState(CORE_SIZE, 80_000);
-
-    const src0 = WARRIOR_LIST[pick0Ref.current].source;
-    const src1 = WARRIOR_LIST[pick1Ref.current].source;
-
-    let w1: ParsedWarrior, w2: ParsedWarrior;
-    try {
-      w1 = parseWarrior(src0);
-      w2 = parseWarrior(src1);
-    } catch (e) {
-      console.error('Parse error:', e);
+    const red = libraryById.get(redIdRef.current);
+    const blue = libraryById.get(blueIdRef.current);
+    if (!red || !blue) {
+      setParseError('Selected warrior not found in library.');
       return;
     }
 
+    let w1: ParsedWarrior, w2: ParsedWarrior;
+    try {
+      w1 = parseWarrior(red.source);
+      w2 = parseWarrior(blue.source);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setParseError(`Parse error: ${msg}`);
+      return;
+    }
+    setParseError(null);
+
+    const match = new MatchState(CORE_SIZE, 80_000);
     match.loadWarrior(0, w1, 0);
     match.loadWarrior(1, w2, Math.floor(CORE_SIZE / 2));
     matchRef.current = match;
     warriorNamesRef.current = [
-      w1.name() ?? WARRIOR_LIST[pick0Ref.current].label,
-      w2.name() ?? WARRIOR_LIST[pick1Ref.current].label,
+      w1.name() ?? red.label,
+      w2.name() ?? blue.label,
     ];
 
-    // Show the initial core
     if (rendererRef.current) {
       rendererRef.current.update(match.coreOwnership());
     }
@@ -282,14 +236,11 @@ export default function App() {
       { name: warriorNamesRef.current[0], alive: true, procs: 1 },
       { name: warriorNamesRef.current[1], alive: true, procs: 1 },
     ]);
-  }, [ready]);
+  }, [ready, libraryById]);
 
-  // Load the default battle once wasm is ready.
   useEffect(() => {
     if (ready) loadBattle();
   }, [ready, loadBattle]);
-
-  // ── Animation loop ────────────────────────────────────────────────
 
   const syncUiState = useCallback(() => {
     const m = matchRef.current;
@@ -318,13 +269,10 @@ export default function App() {
     m.stepN(spfRef.current);
     r.update(m.coreOwnership());
 
-    // Live-refresh the tooltip if the mouse is hovering over a cell.
-    // Cost: 6 wasm array lookups + 1 textContent write — negligible.
     if (hoveredAddrRef.current >= 0 && tooltipRef.current) {
       tooltipRef.current.textContent = formatCellTooltip(m, hoveredAddrRef.current);
     }
 
-    // Throttle React state updates to every 6 frames (~10Hz at 60fps).
     frameCountRef.current++;
     if (frameCountRef.current % 6 === 0) {
       syncUiState();
@@ -337,8 +285,6 @@ export default function App() {
       setRunning(false);
     }
   }, [syncUiState]);
-
-  // ── Controls ──────────────────────────────────────────────────────
 
   const play = useCallback(() => {
     if (!matchRef.current) return;
@@ -378,23 +324,16 @@ export default function App() {
     loadBattle();
   }, [loadBattle]);
 
-  // ── Warrior picker change handler ───────────────────────────────
-
   const handlePickChange = useCallback(
-    (side: 0 | 1, idx: number) => {
-      if (side === 0) setPick0(idx);
-      else setPick1(idx);
-      // Reset battle with the new warrior on next frame (refs are
-      // updated synchronously by the render that follows setState).
+    (side: 0 | 1, id: string) => {
+      if (side === 0) setRedId(id);
+      else setBlueId(id);
       cancelAnimationFrame(rafRef.current);
       setRunning(false);
-      // Use setTimeout(0) so the ref sync happens before loadBattle reads it.
       setTimeout(() => loadBattle(), 0);
     },
     [loadBattle],
   );
-
-  // ── Render ────────────────────────────────────────────────────────
 
   const selectStyle: React.CSSProperties = {
     fontFamily: 'inherit',
@@ -406,26 +345,39 @@ export default function App() {
     padding: '0.3rem 0.5rem',
   };
 
+  const presets = library.filter((w) => w.isPreset);
+  const userWarriors = library.filter((w) => !w.isPreset);
+
   return (
     <div style={ROOT_STYLE}>
       <h1 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '0.1em' }}>
         CORE WAR
       </h1>
 
-      {/* ── Warrior picker ─────────────────────────────────────── */}
       <div style={{ ...CONTROLS_STYLE, gap: '0.75rem' }}>
         <label style={{ color: WARRIOR_HEX[1], fontSize: '0.85rem' }}>
           Red:{' '}
           <select
             style={selectStyle}
-            value={pick0}
-            onChange={(e) => handlePickChange(0, Number(e.target.value))}
+            value={redId}
+            onChange={(e) => handlePickChange(0, e.target.value)}
           >
-            {WARRIOR_LIST.map((w, i) => (
-              <option key={i} value={i}>
-                {w.label}
-              </option>
-            ))}
+            <optgroup label="Classic">
+              {presets.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.label}
+                </option>
+              ))}
+            </optgroup>
+            {userWarriors.length > 0 && (
+              <optgroup label="My Warriors">
+                {userWarriors.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <span style={{ color: '#555' }}>vs</span>
@@ -433,19 +385,44 @@ export default function App() {
           Blue:{' '}
           <select
             style={selectStyle}
-            value={pick1}
-            onChange={(e) => handlePickChange(1, Number(e.target.value))}
+            value={blueId}
+            onChange={(e) => handlePickChange(1, e.target.value)}
           >
-            {WARRIOR_LIST.map((w, i) => (
-              <option key={i} value={i}>
-                {w.label}
-              </option>
-            ))}
+            <optgroup label="Classic">
+              {presets.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.label}
+                </option>
+              ))}
+            </optgroup>
+            {userWarriors.length > 0 && (
+              <optgroup label="My Warriors">
+                {userWarriors.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
       </div>
 
-      {/* ── Core grid + tooltip ────────────────────────────────── */}
+      {parseError && (
+        <div
+          style={{
+            padding: '0.5rem 1rem',
+            color: '#e94560',
+            border: '1px solid #e9456066',
+            borderRadius: '4px',
+            backgroundColor: '#e9456011',
+            fontSize: '0.85rem',
+          }}
+        >
+          {parseError}
+        </div>
+      )}
+
       <div
         ref={gridRef}
         style={GRID_CONTAINER_STYLE}
@@ -471,7 +448,6 @@ export default function App() {
         />
       </div>
 
-      {/* ── Battle controls ────────────────────────────────────── */}
       <div style={CONTROLS_STYLE}>
         {!running ? (
           <button style={BUTTON_STYLE} onClick={play}>
@@ -534,7 +510,6 @@ export default function App() {
         </label>
       </div>
 
-      {/* ── Status bar ─────────────────────────────────────────── */}
       <div style={STATUS_STYLE}>
         {ready ? (
           <>

@@ -112,8 +112,16 @@ fn parsed_mice_lite_replicates_imp_three_times() {
 
     // The counter (cell 0) and dest pointer (cell 1) ended in their
     // expected exhausted states.
-    assert_eq!(state.core().get(0).b.value, 0, "counter should be exhausted");
-    assert_eq!(state.core().get(1).b.value, 5, "dest should have decremented 8 → 5");
+    assert_eq!(
+        state.core().get(0).b.value,
+        0,
+        "counter should be exhausted"
+    );
+    assert_eq!(
+        state.core().get(1).b.value,
+        5,
+        "dest should have decremented 8 → 5"
+    );
 
     // Process died on the DAT landing pad.
     assert_eq!(state.result(), MatchResult::AllDead);
@@ -131,8 +139,7 @@ fn parsed_scanner_finds_and_bombs_planted_marker() {
     //
     // We construct the marker by parsing a tiny one-line "warrior", which
     // keeps the test 100% on the public API — no Instruction literals.
-    let marker_warrior =
-        parse_warrior("JMP.B $123, $456").expect("marker source should parse");
+    let marker_warrior = parse_warrior("JMP.B $123, $456").expect("marker source should parse");
     let marker = marker_warrior.instructions()[0];
     state.core_mut().set(12, marker);
 
@@ -165,8 +172,7 @@ fn parsed_dwarf_outlasts_passive_dat_warrior_in_two_warrior_match() {
     // A deliberately suicidal warrior: a single DAT cell. The first time
     // its process executes, it dies. (Parsed via the same public API, just
     // from an inline source string instead of an .red file.)
-    let suicide =
-        parse_warrior("DAT.F #0, #0").expect("suicide warrior should parse");
+    let suicide = parse_warrior("DAT.F #0, #0").expect("suicide warrior should parse");
 
     let mut state = MatchState::new(64, 50);
     state.load_warrior(0, &dwarf, 0);
@@ -220,7 +226,11 @@ bomb    DAT.F  #0, #0
 
     // The standard Dwarf bomb positions (7, 15) should still be empty.
     assert_eq!(state.core().get(7).opcode, Opcode::Dat);
-    assert_eq!(state.core().get(7).b.value, 0, "cell 7 should NOT have a bomb (step is 8, not 4)");
+    assert_eq!(
+        state.core().get(7).b.value,
+        0,
+        "cell 7 should NOT have a bomb (step is 8, not 4)"
+    );
 }
 
 /// The real Mice replicator. After one copy cycle (8 MOV iterations via

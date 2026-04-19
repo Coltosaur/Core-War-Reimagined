@@ -220,7 +220,10 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
             } else if let Ok(n) = target.parse::<usize>() {
                 n
             } else {
-                return Err(ParseError::UnknownLabel { line: 0, label: target });
+                return Err(ParseError::UnknownLabel {
+                    line: 0,
+                    label: target,
+                });
             }
         }
         None => 0,
@@ -438,7 +441,10 @@ fn parse_instruction_body(
     })
 }
 
-fn parse_opcode_token(token: &str, line_no: usize) -> Result<(Opcode, Option<Modifier>), ParseError> {
+fn parse_opcode_token(
+    token: &str,
+    line_no: usize,
+) -> Result<(Opcode, Option<Modifier>), ParseError> {
     let mut parts = token.splitn(2, '.');
     let opcode_str = parts.next().unwrap_or("");
     let modifier_str = parts.next();
@@ -508,7 +514,10 @@ fn parse_value(
     }
 
     let tokens = tokenize_expr(trimmed, line_no)?;
-    let mut cursor = ExprCursor { tokens: &tokens, pos: 0 };
+    let mut cursor = ExprCursor {
+        tokens: &tokens,
+        pos: 0,
+    };
     let mut visiting = HashSet::new();
     let value = cursor.parse_expr(offset, line_no, labels, equ_table, &mut visiting)?;
     if cursor.pos < tokens.len() {
@@ -549,10 +558,12 @@ fn tokenize_expr(text: &str, line_no: usize) -> Result<Vec<Tok>, ParseError> {
                 i += 1;
             }
             let slice = &text[start..i];
-            let n = slice.parse::<i32>().map_err(|_| ParseError::InvalidNumber {
-                line: line_no,
-                text: slice.to_string(),
-            })?;
+            let n = slice
+                .parse::<i32>()
+                .map_err(|_| ParseError::InvalidNumber {
+                    line: line_no,
+                    text: slice.to_string(),
+                })?;
             tokens.push(Tok::Num(n));
             continue;
         }
@@ -1175,11 +1186,7 @@ bomb    DAT.F  #0, #0
         ];
 
         for (i, exp) in expected.iter().enumerate() {
-            assert_eq!(
-                &parsed.instructions()[i],
-                exp,
-                "instruction {i} mismatch",
-            );
+            assert_eq!(&parsed.instructions()[i], exp, "instruction {i} mismatch",);
         }
     }
 

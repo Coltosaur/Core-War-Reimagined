@@ -564,11 +564,7 @@ impl MatchState {
                     }
                     Modifier::I => src == dest,
                 };
-                let resume_pc = if equal {
-                    (pc + 2) % core_size
-                } else {
-                    next_pc
-                };
+                let resume_pc = if equal { (pc + 2) % core_size } else { next_pc };
                 self.warriors[warrior_idx].processes.push_back(resume_pc);
             }
 
@@ -626,11 +622,7 @@ impl MatchState {
                             && src.field(Field::B) < dest.field(Field::A)
                     }
                 };
-                let resume_pc = if less {
-                    (pc + 2) % core_size
-                } else {
-                    next_pc
-                };
+                let resume_pc = if less { (pc + 2) % core_size } else { next_pc };
                 self.warriors[warrior_idx].processes.push_back(resume_pc);
             }
 
@@ -869,14 +861,17 @@ mod tests {
             state.step();
             for cell in 0..=n {
                 assert_eq!(
-                    state.core().get(cell as i32),
+                    state.core().get(cell),
                     imp(),
                     "after {n} steps, cell {cell} should be the imp",
                 );
             }
         }
 
-        assert!(state.warriors()[0].is_alive(), "imp should still be running");
+        assert!(
+            state.warriors()[0].is_alive(),
+            "imp should still be running"
+        );
         assert_eq!(state.steps(), 5);
     }
 
@@ -894,7 +889,11 @@ mod tests {
         }
 
         for cell in 0..4 {
-            assert_eq!(state.core().get(cell), imp(), "cell {cell} should be the imp");
+            assert_eq!(
+                state.core().get(cell),
+                imp(),
+                "cell {cell} should be the imp"
+            );
         }
         assert!(state.warriors()[0].is_alive());
     }
@@ -935,7 +934,9 @@ mod tests {
         let mut state = MatchState::new(16, 10);
         state.add_warrior(Warrior::new(0, 0));
 
-        state.core_mut().set(0, instr(Opcode::Add, Modifier::AB, imm(7), dir(1)));
+        state
+            .core_mut()
+            .set(0, instr(Opcode::Add, Modifier::AB, imm(7), dir(1)));
         // Cell 1 starts as DAT.F #0, #5 — we'll watch its B-field grow to 12.
         state
             .core_mut()
@@ -945,7 +946,10 @@ mod tests {
 
         let cell1 = state.core().get(1);
         assert_eq!(cell1.b.value, 12, "5 + 7 should be 12");
-        assert_eq!(cell1.a.value, 0, ".AB must not touch the destination's A field");
+        assert_eq!(
+            cell1.a.value, 0,
+            ".AB must not touch the destination's A field"
+        );
     }
 
     #[test]
@@ -1007,7 +1011,10 @@ mod tests {
 
         // 5 iterations × 3 instructions per iteration = 15 steps.
         for _ in 0..15 {
-            assert!(state.step(), "dwarf should never die — it has no DAT in its loop");
+            assert!(
+                state.step(),
+                "dwarf should never die — it has no DAT in its loop"
+            );
         }
 
         // Bomb pointer (cell 3's B-field) advanced 5 times by 4.
@@ -1307,7 +1314,11 @@ mod tests {
         }
 
         // The counter and dest pointer ended in their expected exhausted state.
-        assert_eq!(state.core().get(0).b.value, 0, "counter should be exhausted");
+        assert_eq!(
+            state.core().get(0).b.value,
+            0,
+            "counter should be exhausted"
+        );
         assert_eq!(
             state.core().get(1).b.value,
             5,
@@ -1813,7 +1824,11 @@ mod tests {
 
         // The destination cell must NOT have been modified (the operation
         // aborted before any write).
-        assert_eq!(state.core().get(2).b.value, 20, "DIV-by-zero must not write");
+        assert_eq!(
+            state.core().get(2).b.value,
+            20,
+            "DIV-by-zero must not write"
+        );
         // And the process is dead.
         assert_eq!(state.result(), MatchResult::AllDead);
     }
@@ -1998,7 +2013,10 @@ mod tests {
         );
         assert_eq!(state.steps(), 4);
         assert_eq!(state.max_steps(), 4);
-        assert!(!state.step(), "step() should refuse to advance past max_steps");
+        assert!(
+            !state.step(),
+            "step() should refuse to advance past max_steps"
+        );
     }
 
     // ==================================================================
@@ -2438,8 +2456,16 @@ mod tests {
             "load_warrior should attribute cell 10 to warrior 0 (owner = id + 1 = 1)",
         );
         // Cells outside the loaded range remain unowned.
-        assert_eq!(state2.core().owner(9), 0, "cell before load range should be unowned");
-        assert_eq!(state2.core().owner(11), 0, "cell after load range should be unowned");
+        assert_eq!(
+            state2.core().owner(9),
+            0,
+            "cell before load range should be unowned"
+        );
+        assert_eq!(
+            state2.core().owner(11),
+            0,
+            "cell after load range should be unowned"
+        );
     }
 
     #[test]
@@ -2456,14 +2482,26 @@ mod tests {
 
         // Step 1: warrior 0 (imp at 0) writes cell 1. Cell 1 should be owned by warrior 0.
         state.step();
-        assert_eq!(state.core().owner(1), 1, "imp 0 should own cell 1 after writing");
+        assert_eq!(
+            state.core().owner(1),
+            1,
+            "imp 0 should own cell 1 after writing"
+        );
 
         // Step 2: warrior 1 (imp at 50) writes cell 51. Cell 51 should be owned by warrior 1.
         state.step();
-        assert_eq!(state.core().owner(51), 2, "imp 1 should own cell 51 after writing");
+        assert_eq!(
+            state.core().owner(51),
+            2,
+            "imp 1 should own cell 51 after writing"
+        );
 
         // Unwritten cells remain unowned.
-        assert_eq!(state.core().owner(25), 0, "unwritten cell should be unowned");
+        assert_eq!(
+            state.core().owner(25),
+            0,
+            "unwritten cell should be unowned"
+        );
     }
 
     #[test]

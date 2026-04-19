@@ -4,6 +4,7 @@ use axum::Json;
 use serde_json::json;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AppError {
     BadRequest(String),
     Unauthorized(String),
@@ -61,16 +62,14 @@ mod tests {
 
     #[tokio::test]
     async fn unauthorized_returns_401() {
-        let (status, json) =
-            response_parts(AppError::Unauthorized("bad credentials".into())).await;
+        let (status, json) = response_parts(AppError::Unauthorized("bad credentials".into())).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(json["error"], "bad credentials");
     }
 
     #[tokio::test]
     async fn conflict_returns_409() {
-        let (status, json) =
-            response_parts(AppError::Conflict("username taken".into())).await;
+        let (status, json) = response_parts(AppError::Conflict("username taken".into())).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(json["error"], "username taken");
     }

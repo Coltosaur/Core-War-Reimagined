@@ -19,12 +19,9 @@ impl Config {
     {
         let database_url = get("DATABASE_URL").ok_or(ConfigError::Missing("DATABASE_URL"))?;
 
-        let frontend_url = get("FRONTEND_URL")
-            .unwrap_or_else(|| "http://localhost:5173".into());
+        let frontend_url = get("FRONTEND_URL").unwrap_or_else(|| "http://localhost:5173".into());
 
-        let port: u16 = get("PORT")
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3001);
+        let port: u16 = get("PORT").and_then(|p| p.parse().ok()).unwrap_or(3001);
 
         let jwt_secret_str = get("JWT_SECRET").ok_or(ConfigError::Missing("JWT_SECRET"))?;
         let jwt_secret = jwt_secret_str.into_bytes();
@@ -121,18 +118,14 @@ mod tests {
 
     #[test]
     fn missing_database_url() {
-        let lookup = make_lookup(&[
-            ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
-        ]);
+        let lookup = make_lookup(&[("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!")]);
         let err = Config::from_lookup(lookup).unwrap_err();
         assert!(matches!(err, ConfigError::Missing("DATABASE_URL")));
     }
 
     #[test]
     fn missing_jwt_secret() {
-        let lookup = make_lookup(&[
-            ("DATABASE_URL", "postgresql://localhost/test"),
-        ]);
+        let lookup = make_lookup(&[("DATABASE_URL", "postgresql://localhost/test")]);
         let err = Config::from_lookup(lookup).unwrap_err();
         assert!(matches!(err, ConfigError::Missing("JWT_SECRET")));
     }

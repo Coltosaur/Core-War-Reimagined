@@ -51,9 +51,8 @@ export default function HomePage() {
       <h1 style={TITLE_STYLE}>CORE WAR</h1>
       <p style={LEDE_STYLE}>
         A modernized rebuild of the 1984 programming game. Write programs in{' '}
-        <strong>Redcode</strong> assembly, load them into <strong>MARS</strong>{' '}
-        &mdash; the Memory Array Redcode Simulator &mdash; and watch your
-        warriors battle for control of the core.
+        <strong>Redcode</strong> assembly, load them into <strong>MARS</strong> &mdash; the Memory
+        Array Redcode Simulator &mdash; and watch your warriors battle for control of the core.
       </p>
       <div style={BUTTONS_STYLE}>
         <Link to="/battle" style={linkButton('#e94560')}>

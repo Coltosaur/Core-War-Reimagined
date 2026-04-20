@@ -1,11 +1,5 @@
 import { useState } from 'react';
-import {
-  OPCODES,
-  MODIFIERS,
-  ADDRESSING_MODES,
-  PSEUDO_OPS,
-  type CheatEntry,
-} from './cheatSheet';
+import { OPCODES, MODIFIERS, ADDRESSING_MODES, PSEUDO_OPS, type CheatEntry } from './cheatSheet';
 
 const PANEL_STYLE: React.CSSProperties = {
   flexShrink: 0,
@@ -106,7 +100,11 @@ export default function CheatSheetPanel() {
 
   if (!open) {
     return (
-      <div style={{ ...PANEL_STYLE, width: '36px', cursor: 'pointer' }} onClick={() => setOpen(true)} title="Show cheat sheet">
+      <div
+        style={{ ...PANEL_STYLE, width: '36px', cursor: 'pointer' }}
+        onClick={() => setOpen(true)}
+        title="Show cheat sheet"
+      >
         <div
           style={{
             writingMode: 'vertical-rl',

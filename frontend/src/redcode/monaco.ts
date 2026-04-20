@@ -3,9 +3,23 @@ import type * as MonacoNs from 'monaco-editor';
 export const REDCODE_LANGUAGE_ID = 'redcode';
 
 const OPCODES = [
-  'DAT', 'MOV', 'ADD', 'SUB', 'MUL', 'DIV', 'MOD',
-  'JMP', 'JMZ', 'JMN', 'DJN', 'SPL',
-  'SEQ', 'SNE', 'SLT', 'NOP', 'CMP',
+  'DAT',
+  'MOV',
+  'ADD',
+  'SUB',
+  'MUL',
+  'DIV',
+  'MOD',
+  'JMP',
+  'JMZ',
+  'JMN',
+  'DJN',
+  'SPL',
+  'SEQ',
+  'SNE',
+  'SLT',
+  'NOP',
+  'CMP',
 ];
 
 const PSEUDO = ['ORG', 'END', 'EQU'];
@@ -83,9 +97,7 @@ export function parseErrorToMarker(
   sourceLineCount: number,
 ): MonacoNs.editor.IMarkerData {
   const lineMatch = message.match(/line\s+(\d+)/i);
-  const line = lineMatch
-    ? Math.min(Math.max(parseInt(lineMatch[1], 10), 1), sourceLineCount)
-    : 1;
+  const line = lineMatch ? Math.min(Math.max(parseInt(lineMatch[1], 10), 1), sourceLineCount) : 1;
   return {
     severity: monaco.MarkerSeverity.Error,
     message,

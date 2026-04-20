@@ -194,13 +194,8 @@ export function createUserWarrior(label: string, source: string): Warrior {
   return w;
 }
 
-export function updateUserWarrior(
-  id: string,
-  patch: { label?: string; source?: string },
-): void {
-  userWarriors = userWarriors.map((w) =>
-    w.id === id && !w.isPreset ? { ...w, ...patch } : w,
-  );
+export function updateUserWarrior(id: string, patch: { label?: string; source?: string }): void {
+  userWarriors = userWarriors.map((w) => (w.id === id && !w.isPreset ? { ...w, ...patch } : w));
   emit();
 }
 

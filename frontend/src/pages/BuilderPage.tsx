@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor, { type Monaco, type OnMount } from '@monaco-editor/react';
 import init, { parseWarrior } from 'core-war-engine';
@@ -10,11 +10,7 @@ import {
   duplicateWarrior,
   type Warrior,
 } from '../warriors/library';
-import {
-  REDCODE_LANGUAGE_ID,
-  registerRedcode,
-  parseErrorToMarker,
-} from '../redcode/monaco';
+import { REDCODE_LANGUAGE_ID, registerRedcode, parseErrorToMarker } from '../redcode/monaco';
 import CheatSheetPanel from '../redcode/CheatSheetPanel';
 
 const PAGE_STYLE: React.CSSProperties = {
@@ -141,16 +137,13 @@ export default function BuilderPage() {
     };
   }, []);
 
-  // The Editor below uses `key={selectedId}` so it remounts cleanly per
-  // warrior. Pair that with `defaultValue` (uncontrolled) and `onChange`
-  // only fires on real keystrokes — never spuriously on warrior switch.
   const selected = library.find((w) => w.id === selectedId);
-  useEffect(() => {
-    if (!selected) return;
-    setSource(selected.source);
-    setLabel(selected.label);
+
+  const syncFromWarrior = useCallback((warrior: Warrior) => {
+    setSource(warrior.source);
+    setLabel(warrior.label);
     setDirty(false);
-  }, [selectedId, selected?.source, selected?.label]);
+  }, []);
 
   // Re-run parser whenever source or wasm readiness changes.
   useEffect(() => {
@@ -192,6 +185,8 @@ export default function BuilderPage() {
   const handleSelect = (id: string) => {
     if (dirty && !confirm('Discard unsaved changes?')) return;
     setSelectedId(id);
+    const warrior = library.find((w) => w.id === id);
+    if (warrior) syncFromWarrior(warrior);
   };
 
   const handleSave = () => {
@@ -199,7 +194,7 @@ export default function BuilderPage() {
     if (selected.isPreset) {
       const created = createUserWarrior(label || 'Untitled', source);
       setSelectedId(created.id);
-      setDirty(false);
+      syncFromWarrior(created);
       return;
     }
     updateUserWarrior(selected.id, { label: label || 'Untitled', source });
@@ -209,7 +204,10 @@ export default function BuilderPage() {
   const handleDuplicate = () => {
     if (!selected) return;
     const created = duplicateWarrior(selected.id);
-    if (created) setSelectedId(created.id);
+    if (created) {
+      setSelectedId(created.id);
+      syncFromWarrior(created);
+    }
   };
 
   const handleDelete = () => {
@@ -217,7 +215,10 @@ export default function BuilderPage() {
     if (!confirm(`Delete "${selected.label}"? This cannot be undone.`)) return;
     deleteUserWarrior(selected.id);
     const remaining = library.filter((w) => w.id !== selected.id);
-    setSelectedId(remaining[0]?.id ?? '');
+    const nextId = remaining[0]?.id ?? '';
+    setSelectedId(nextId);
+    const next = remaining[0];
+    if (next) syncFromWarrior(next);
   };
 
   const handleNew = () => {
@@ -228,6 +229,7 @@ start   MOV.I  $0, $1
 `;
     const created = createUserWarrior('New Warrior', template);
     setSelectedId(created.id);
+    syncFromWarrior(created);
   };
 
   const handleTestInBattle = () => {
@@ -246,8 +248,7 @@ start   MOV.I  $0, $1
     // Pick an opponent: first preset that isn't us, else first warrior that isn't us.
     const presets = library.filter((w) => w.isPreset);
     const opponent =
-      presets.find((w) => w.id !== targetId) ??
-      library.find((w) => w.id !== targetId);
+      presets.find((w) => w.id !== targetId) ?? library.find((w) => w.id !== targetId);
     const opponentId = opponent?.id ?? targetId;
     navigate(`/battle?red=${encodeURIComponent(targetId)}&blue=${encodeURIComponent(opponentId)}`);
   };
@@ -256,7 +257,6 @@ start   MOV.I  $0, $1
   const userWarriors = library.filter((w) => !w.isPreset);
 
   const canSave = !!selected && dirty;
-  const canDelete = !!selected && !selected.isPreset;
 
   return (
     <div style={PAGE_STYLE}>
@@ -272,7 +272,14 @@ start   MOV.I  $0, $1
         ))}
         <div style={LIST_HEADER_STYLE}>My Warriors</div>
         {userWarriors.length === 0 && (
-          <div style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', color: '#555', fontStyle: 'italic' }}>
+          <div
+            style={{
+              padding: '0.5rem 1rem',
+              fontSize: '0.8rem',
+              color: '#555',
+              fontStyle: 'italic',
+            }}
+          >
             None yet. Duplicate a classic or create a new one.
           </div>
         )}
@@ -390,16 +397,11 @@ function WarriorListItem({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div
-      style={listItemStyle(active, warrior.isPreset)}
-      onClick={() => onSelect(warrior.id)}
-    >
+    <div style={listItemStyle(active, warrior.isPreset)} onClick={() => onSelect(warrior.id)}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {warrior.label}
       </span>
-      {warrior.isPreset && (
-        <span style={{ fontSize: '0.65rem', color: '#666' }}>CLASSIC</span>
-      )}
+      {warrior.isPreset && <span style={{ fontSize: '0.65rem', color: '#666' }}>CLASSIC</span>}
     </div>
   );
 }

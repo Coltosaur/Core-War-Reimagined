@@ -9,10 +9,26 @@ export const OPCODES: CheatEntry[] = [
   { symbol: 'DIV', name: 'divide', desc: 'dst /= src. Divide-by-zero kills the process.' },
   { symbol: 'MOD', name: 'modulo', desc: 'dst %= src. Mod-by-zero kills the process.' },
   { symbol: 'JMP', name: 'jump', desc: 'Jump to the A operand address.' },
-  { symbol: 'JMZ', name: 'jump if zero', desc: 'Jump if the selected field(s) of B operand are zero.' },
-  { symbol: 'JMN', name: 'jump if non-zero', desc: 'Jump if any selected field of B operand is non-zero.' },
-  { symbol: 'DJN', name: 'decrement & jump if non-zero', desc: 'Decrement B operand field(s), then jump if non-zero.' },
-  { symbol: 'SPL', name: 'split', desc: 'Spawn a new process at the A operand address. Original continues.' },
+  {
+    symbol: 'JMZ',
+    name: 'jump if zero',
+    desc: 'Jump if the selected field(s) of B operand are zero.',
+  },
+  {
+    symbol: 'JMN',
+    name: 'jump if non-zero',
+    desc: 'Jump if any selected field of B operand is non-zero.',
+  },
+  {
+    symbol: 'DJN',
+    name: 'decrement & jump if non-zero',
+    desc: 'Decrement B operand field(s), then jump if non-zero.',
+  },
+  {
+    symbol: 'SPL',
+    name: 'split',
+    desc: 'Spawn a new process at the A operand address. Original continues.',
+  },
   { symbol: 'SEQ', name: 'skip if equal', desc: 'Skip the next instruction if A == B.' },
   { symbol: 'SNE', name: 'skip if not equal', desc: 'Skip the next instruction if A != B.' },
   { symbol: 'SLT', name: 'skip if less than', desc: 'Skip the next instruction if A < B.' },
@@ -20,13 +36,25 @@ export const OPCODES: CheatEntry[] = [
 ];
 
 export const MODIFIERS: CheatEntry[] = [
-  { symbol: '.A', name: 'A-field', desc: 'Operate on A-field of A operand → A-field of B operand.' },
-  { symbol: '.B', name: 'B-field', desc: 'Operate on B-field of A operand → B-field of B operand.' },
+  {
+    symbol: '.A',
+    name: 'A-field',
+    desc: 'Operate on A-field of A operand → A-field of B operand.',
+  },
+  {
+    symbol: '.B',
+    name: 'B-field',
+    desc: 'Operate on B-field of A operand → B-field of B operand.',
+  },
   { symbol: '.AB', name: 'A → B', desc: 'A-field of source into B-field of destination.' },
   { symbol: '.BA', name: 'B → A', desc: 'B-field of source into A-field of destination.' },
   { symbol: '.F', name: 'fields', desc: 'Both fields in parallel: A→A and B→B.' },
   { symbol: '.X', name: 'cross', desc: 'Both fields crossed: A→B and B→A.' },
-  { symbol: '.I', name: 'instruction', desc: 'Copy/compare the whole instruction, not just fields.' },
+  {
+    symbol: '.I',
+    name: 'instruction',
+    desc: 'Copy/compare the whole instruction, not just fields.',
+  },
 ];
 
 export const ADDRESSING_MODES: CheatEntry[] = [

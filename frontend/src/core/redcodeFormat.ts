@@ -5,8 +5,22 @@ import type { MatchState } from 'core-war-engine';
 import { GRID_COLS, CELL_SCALE } from './constants';
 
 const OPCODE_NAMES = [
-  'DAT', 'MOV', 'ADD', 'SUB', 'MUL', 'DIV', 'MOD',
-  'JMP', 'JMZ', 'JMN', 'DJN', 'SPL', 'SLT', 'SEQ', 'SNE', 'NOP',
+  'DAT',
+  'MOV',
+  'ADD',
+  'SUB',
+  'MUL',
+  'DIV',
+  'MOD',
+  'JMP',
+  'JMZ',
+  'JMN',
+  'DJN',
+  'SPL',
+  'SLT',
+  'SEQ',
+  'SNE',
+  'NOP',
 ];
 
 const MODIFIER_NAMES = ['A', 'B', 'AB', 'BA', 'F', 'X', 'I'];

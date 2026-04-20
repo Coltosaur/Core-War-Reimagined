@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import init, {
-  parseWarrior,
-  MatchState,
-  engineVersion,
-  type ParsedWarrior,
-} from 'core-war-engine';
+import init, { parseWarrior, MatchState, engineVersion, type ParsedWarrior } from 'core-war-engine';
 import { createCoreRenderer, type CoreRenderer } from '../core/coreRenderer';
 import { cellAddressAtPixel, formatCellTooltip } from '../core/redcodeFormat';
 import { CORE_SIZE } from '../core/constants';
@@ -94,15 +89,9 @@ export default function BattlefieldPage() {
   const [resultCode, setResultCode] = useState(ONGOING);
   const [resultWinner, setResultWinner] = useState(-1);
   const [stepsPerFrame, setStepsPerFrame] = useState(50);
-  const [redId, setRedId] = useState(() =>
-    pickInitial(library, searchParams.get('red'), 0),
-  );
-  const [blueId, setBlueId] = useState(() =>
-    pickInitial(library, searchParams.get('blue'), 1),
-  );
-  const [warriors, setWarriors] = useState<
-    { name: string; alive: boolean; procs: number }[]
-  >([]);
+  const [redId, setRedId] = useState(() => pickInitial(library, searchParams.get('red'), 0));
+  const [blueId, setBlueId] = useState(() => pickInitial(library, searchParams.get('blue'), 1));
+  const [warriors, setWarriors] = useState<{ name: string; alive: boolean; procs: number }[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
@@ -111,15 +100,9 @@ export default function BattlefieldPage() {
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
-  const redIdRef = useRef(redId);
-  const blueIdRef = useRef(blueId);
   const rafRef = useRef(0);
   const frameCountRef = useRef(0);
   const spfRef = useRef(stepsPerFrame);
-
-  spfRef.current = stepsPerFrame;
-  redIdRef.current = redId;
-  blueIdRef.current = blueId;
 
   // Keep the URL in sync with current selection so handoff from the builder is linkable.
   useEffect(() => {
@@ -137,34 +120,31 @@ export default function BattlefieldPage() {
     return map;
   }, [library]);
 
-  const handleGridMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const m = matchRef.current;
-      const tip = tooltipRef.current;
-      if (!m || !tip) return;
+  const handleGridMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const m = matchRef.current;
+    const tip = tooltipRef.current;
+    if (!m || !tip) return;
 
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const addr = cellAddressAtPixel(x, y);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const addr = cellAddressAtPixel(x, y);
 
-      if (addr < 0) {
-        tip.style.display = 'none';
-        hoveredAddrRef.current = -1;
-        return;
-      }
+    if (addr < 0) {
+      tip.style.display = 'none';
+      hoveredAddrRef.current = -1;
+      return;
+    }
 
-      hoveredAddrRef.current = addr;
-      tip.textContent = formatCellTooltip(m, addr);
-      tip.style.display = 'block';
+    hoveredAddrRef.current = addr;
+    tip.textContent = formatCellTooltip(m, addr);
+    tip.style.display = 'block';
 
-      const tipX = Math.min(x + 12, rect.width - tip.offsetWidth - 4);
-      const tipY = y > 40 ? y - 32 : y + 20;
-      tip.style.left = `${tipX}px`;
-      tip.style.top = `${tipY}px`;
-    },
-    [],
-  );
+    const tipX = Math.min(x + 12, rect.width - tip.offsetWidth - 4);
+    const tipY = y > 40 ? y - 32 : y + 20;
+    tip.style.left = `${tipX}px`;
+    tip.style.top = `${tipY}px`;
+  }, []);
 
   const handleGridMouseLeave = useCallback(() => {
     hoveredAddrRef.current = -1;
@@ -172,15 +152,7 @@ export default function BattlefieldPage() {
     if (tip) tip.style.display = 'none';
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    init().then(() => {
-      if (!cancelled) setReady(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const readyRef = useRef(false);
 
   useEffect(() => {
     if (!gridRef.current) return;
@@ -192,55 +164,66 @@ export default function BattlefieldPage() {
     };
   }, []);
 
-  const loadBattle = useCallback(() => {
-    if (!ready) return;
+  const loadBattle = useCallback(
+    (currentRedId: string, currentBlueId: string) => {
+      if (!readyRef.current) return;
 
-    cancelAnimationFrame(rafRef.current);
-    setRunning(false);
+      cancelAnimationFrame(rafRef.current);
+      setRunning(false);
 
-    const red = libraryById.get(redIdRef.current);
-    const blue = libraryById.get(blueIdRef.current);
-    if (!red || !blue) {
-      setParseError('Selected warrior not found in library.');
-      return;
-    }
+      const red = libraryById.get(currentRedId);
+      const blue = libraryById.get(currentBlueId);
+      if (!red || !blue) {
+        setParseError('Selected warrior not found in library.');
+        return;
+      }
 
-    let w1: ParsedWarrior, w2: ParsedWarrior;
-    try {
-      w1 = parseWarrior(red.source);
-      w2 = parseWarrior(blue.source);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setParseError(`Parse error: ${msg}`);
-      return;
-    }
-    setParseError(null);
+      let w1: ParsedWarrior, w2: ParsedWarrior;
+      try {
+        w1 = parseWarrior(red.source);
+        w2 = parseWarrior(blue.source);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setParseError(`Parse error: ${msg}`);
+        return;
+      }
+      setParseError(null);
 
-    const match = new MatchState(CORE_SIZE, 80_000);
-    match.loadWarrior(0, w1, 0);
-    match.loadWarrior(1, w2, Math.floor(CORE_SIZE / 2));
-    matchRef.current = match;
-    warriorNamesRef.current = [
-      w1.name() ?? red.label,
-      w2.name() ?? blue.label,
-    ];
+      const match = new MatchState(CORE_SIZE, 80_000);
+      match.loadWarrior(0, w1, 0);
+      match.loadWarrior(1, w2, Math.floor(CORE_SIZE / 2));
+      matchRef.current = match;
+      warriorNamesRef.current = [w1.name() ?? red.label, w2.name() ?? blue.label];
 
-    if (rendererRef.current) {
-      rendererRef.current.update(match.coreOwnership());
-    }
+      if (rendererRef.current) {
+        rendererRef.current.update(match.coreOwnership());
+      }
 
-    setStepCount(0);
-    setResultCode(ONGOING);
-    setResultWinner(-1);
-    setWarriors([
-      { name: warriorNamesRef.current[0], alive: true, procs: 1 },
-      { name: warriorNamesRef.current[1], alive: true, procs: 1 },
-    ]);
-  }, [ready, libraryById]);
+      setStepCount(0);
+      setResultCode(ONGOING);
+      setResultWinner(-1);
+      setWarriors([
+        { name: warriorNamesRef.current[0], alive: true, procs: 1 },
+        { name: warriorNamesRef.current[1], alive: true, procs: 1 },
+      ]);
+    },
+    [libraryById],
+  );
 
   useEffect(() => {
-    if (ready) loadBattle();
-  }, [ready, loadBattle]);
+    let cancelled = false;
+    init().then(() => {
+      if (cancelled) return;
+      readyRef.current = true;
+      setReady(true);
+      loadBattle(redId, blueId);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Only run once on mount — warrior changes are handled by event handlers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const syncUiState = useCallback(() => {
     const m = matchRef.current;
@@ -261,29 +244,32 @@ export default function BattlefieldPage() {
     setWarriors(ws);
   }, []);
 
-  const tick = useCallback(() => {
-    const m = matchRef.current;
-    const r = rendererRef.current;
-    if (!m || !r) return;
+  const tickRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    tickRef.current = () => {
+      const m = matchRef.current;
+      const r = rendererRef.current;
+      if (!m || !r) return;
 
-    m.stepN(spfRef.current);
-    r.update(m.coreOwnership());
+      m.stepN(spfRef.current);
+      r.update(m.coreOwnership());
 
-    if (hoveredAddrRef.current >= 0 && tooltipRef.current) {
-      tooltipRef.current.textContent = formatCellTooltip(m, hoveredAddrRef.current);
-    }
+      if (hoveredAddrRef.current >= 0 && tooltipRef.current) {
+        tooltipRef.current.textContent = formatCellTooltip(m, hoveredAddrRef.current);
+      }
 
-    frameCountRef.current++;
-    if (frameCountRef.current % 6 === 0) {
-      syncUiState();
-    }
+      frameCountRef.current++;
+      if (frameCountRef.current % 6 === 0) {
+        syncUiState();
+      }
 
-    if (m.resultCode() === ONGOING) {
-      rafRef.current = requestAnimationFrame(tick);
-    } else {
-      syncUiState();
-      setRunning(false);
-    }
+      if (m.resultCode() === ONGOING) {
+        rafRef.current = requestAnimationFrame(() => tickRef.current());
+      } else {
+        syncUiState();
+        setRunning(false);
+      }
+    };
   }, [syncUiState]);
 
   const play = useCallback(() => {
@@ -291,8 +277,8 @@ export default function BattlefieldPage() {
     if (matchRef.current.resultCode() !== ONGOING) return;
     setRunning(true);
     frameCountRef.current = 0;
-    rafRef.current = requestAnimationFrame(tick);
-  }, [tick]);
+    rafRef.current = requestAnimationFrame(() => tickRef.current());
+  }, []);
 
   const pause = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -321,18 +307,20 @@ export default function BattlefieldPage() {
   const reset = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     setRunning(false);
-    loadBattle();
-  }, [loadBattle]);
+    loadBattle(redId, blueId);
+  }, [loadBattle, redId, blueId]);
 
   const handlePickChange = useCallback(
     (side: 0 | 1, id: string) => {
+      const newRed = side === 0 ? id : redId;
+      const newBlue = side === 1 ? id : blueId;
       if (side === 0) setRedId(id);
       else setBlueId(id);
       cancelAnimationFrame(rafRef.current);
       setRunning(false);
-      setTimeout(() => loadBattle(), 0);
+      loadBattle(newRed, newBlue);
     },
-    [loadBattle],
+    [loadBattle, redId, blueId],
   );
 
   const selectStyle: React.CSSProperties = {
@@ -350,9 +338,7 @@ export default function BattlefieldPage() {
 
   return (
     <div style={ROOT_STYLE}>
-      <h1 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '0.1em' }}>
-        CORE WAR
-      </h1>
+      <h1 style={{ margin: 0, fontSize: '1.5rem', letterSpacing: '0.1em' }}>CORE WAR</h1>
 
       <div style={{ ...CONTROLS_STYLE, gap: '0.75rem' }}>
         <label style={{ color: WARRIOR_HEX[1], fontSize: '0.85rem' }}>
@@ -475,14 +461,26 @@ export default function BattlefieldPage() {
         <button style={BUTTON_STYLE} onClick={reset}>
           Reset
         </button>
-        <label style={{ fontSize: '0.8rem', color: '#888', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <label
+          style={{
+            fontSize: '0.8rem',
+            color: '#888',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+          }}
+        >
           Speed:
           <input
             type="range"
             min={1}
             max={500}
             value={stepsPerFrame}
-            onChange={(e) => setStepsPerFrame(Number(e.target.value))}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setStepsPerFrame(v);
+              spfRef.current = v;
+            }}
             style={{ verticalAlign: 'middle', width: '100px' }}
           />
           <input
@@ -493,6 +491,7 @@ export default function BattlefieldPage() {
             onChange={(e) => {
               const v = Math.max(1, Math.min(500, Number(e.target.value) || 1));
               setStepsPerFrame(v);
+              spfRef.current = v;
             }}
             style={{
               width: '3.5rem',
@@ -513,9 +512,7 @@ export default function BattlefieldPage() {
       <div style={STATUS_STYLE}>
         {ready ? (
           <>
-            <div>
-              Steps: {stepCount.toLocaleString()} / 80,000
-            </div>
+            <div>Steps: {stepCount.toLocaleString()} / 80,000</div>
             <div style={{ marginTop: '0.3rem' }}>
               {warriors.map((w, i) => (
                 <span
@@ -526,9 +523,7 @@ export default function BattlefieldPage() {
                   }}
                 >
                   {w.name}:{' '}
-                  {w.alive
-                    ? `alive (${w.procs} proc${w.procs !== 1 ? 's' : ''})`
-                    : 'dead'}
+                  {w.alive ? `alive (${w.procs} proc${w.procs !== 1 ? 's' : ''})` : 'dead'}
                 </span>
               ))}
             </div>
@@ -536,7 +531,7 @@ export default function BattlefieldPage() {
               const banner = resultBanner(
                 resultCode,
                 resultWinner,
-                warriorNamesRef.current,
+                warriors.map((w) => w.name),
               );
               if (!banner) return null;
               return (

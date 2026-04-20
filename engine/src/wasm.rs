@@ -139,12 +139,7 @@ impl WasmMatchState {
     /// written sequentially starting at `baseAddress`, and its first
     /// process starts at `baseAddress + warrior.startOffset()`.
     #[wasm_bindgen(js_name = "loadWarrior")]
-    pub fn load_warrior(
-        &mut self,
-        id: usize,
-        warrior: &WasmParsedWarrior,
-        base_address: usize,
-    ) {
+    pub fn load_warrior(&mut self, id: usize, warrior: &WasmParsedWarrior, base_address: usize) {
         self.inner.load_warrior(id, &warrior.inner, base_address);
     }
 
@@ -366,8 +361,8 @@ impl WasmMatchState {
                 | (instr.a.mode as u32) << 3
                 | instr.b.mode as u32;
             // Word 1: a_value(i16) in upper half, b_value(i16) in lower half
-            let w1 = ((instr.a.value as i16 as u16) as u32) << 16
-                | (instr.b.value as i16 as u16) as u32;
+            let w1 =
+                ((instr.a.value as i16 as u16) as u32) << 16 | (instr.b.value as i16 as u16) as u32;
             buf.push(w0);
             buf.push(w1);
         }

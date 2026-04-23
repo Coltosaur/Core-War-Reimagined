@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -17,5 +18,14 @@ export default defineConfig({
     // the engine package from pre-bundling to preserve the original URL
     // resolution at runtime.
     exclude: ['core-war-engine'],
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    alias: {
+      'core-war-engine': new URL('./src/test/__mocks__/core-war-engine.ts', import.meta.url)
+        .pathname,
+    },
   },
 });

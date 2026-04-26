@@ -101,6 +101,10 @@ const LINK_STYLE: React.CSSProperties = {
   borderBottom: '1px dashed #4fc3f766',
 };
 
+const FOOTER_STYLE: React.CSSProperties = {
+  marginTop: '2rem',
+};
+
 export default function LearnPage() {
   return (
     <div style={PAGE_STYLE}>
@@ -390,7 +394,7 @@ bomb    DAT.F  #0, #0`}</pre>
         The cheat sheet on the right of the builder has every opcode, modifier, and addressing mode
         on one scrollable list. Keep it open while you read code.
       </p>
-      <p style={{ marginTop: '2rem' }}>
+      <p style={FOOTER_STYLE}>
         <Link to="/builder" style={LINK_STYLE}>
           → Go to the Warrior Builder
         </Link>

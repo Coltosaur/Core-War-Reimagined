@@ -133,12 +133,19 @@ cd backend
 cargo test
 ```
 
+### Frontend tests
+
+```bash
+cd frontend
+npm test
+```
+
 ### Running all tests
 
 From the repo root:
 
 ```bash
-(cd engine && cargo test) && (cd backend && cargo test)
+(cd engine && cargo test) && (cd backend && cargo test) && (cd frontend && npm test)
 ```
 
 ## Development Workflow
@@ -174,9 +181,55 @@ cd backend && cargo build --release
 # Rust (works in both engine/ and backend/)
 cargo fmt
 cargo clippy --all-targets -- -D warnings
+
+# Frontend (from frontend/)
+npm run lint       # ESLint
+npm run format     # Prettier
+npm test           # Vitest (single run)
+npm run test:watch # Vitest (watch mode)
 ```
 
-No frontend linter is configured yet.
+## Playwright MCP (Browser Testing with Claude Code)
+
+The repo includes a `.mcp.json` that configures the [Playwright MCP server](https://github.com/anthropics/mcp-playwright), allowing Claude Code to launch a headless browser, navigate pages, interact with UI elements, and take accessibility snapshots of the running frontend.
+
+### Setup
+
+1. Install Playwright and its browsers:
+
+```bash
+npx playwright install chromium
+```
+
+2. Find the installed Chromium path:
+
+```bash
+ls ~/.cache/ms-playwright/
+```
+
+3. Update `.mcp.json` at the repo root with the correct path:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp@latest",
+        "--headless",
+        "--executable-path",
+        "<your-chromium-path>/chrome"
+      ]
+    }
+  }
+}
+```
+
+### Usage
+
+With the frontend dev server running (`npm run dev` in `frontend/`), Claude Code can use Playwright MCP tools to navigate to `http://localhost:5173`, click through pages, fill inputs, and verify UI state — useful for smoke-testing after refactors or visually verifying new features.
+
+Runtime artifacts are written to `.playwright-mcp/` (gitignored).
 
 ## License
 

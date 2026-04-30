@@ -113,6 +113,21 @@ node frontend/scripts/test-backend.mjs
 
 It exits 0 on success, 1 on any failure, and prints the assigned `sid` so you can cross-reference it against the backend's `client connected: <sid>` log line — matching SIDs prove you're talking to the process you think you are (this matters: a stale uvicorn from a previous session once silently answered this test).
 
+### Playwright MCP (browser testing from Claude Code)
+
+The repo includes a `.mcp.json` that configures the Playwright MCP server for headless Chromium. This lets Claude Code launch a browser, navigate pages, click elements, and take accessibility snapshots of the running frontend.
+
+**First-time setup:**
+
+```bash
+# Install Playwright browsers (only needed once)
+npx playwright install chromium
+```
+
+After install, update the `--executable-path` in `.mcp.json` to match the installed Chromium path (check `~/.cache/ms-playwright/` for the exact directory).
+
+**Usage:** Start the frontend dev server (`npm run dev` in `frontend/`), then use Playwright MCP tools (`browser_navigate`, `browser_snapshot`, `browser_click`, etc.) to interact with `http://localhost:5173`. Runtime artifacts are written to `.playwright-mcp/` (gitignored).
+
 Frontend production build: `npm run build` (outputs to `frontend/dist/`); preview with `npm run preview`.
 
 Engine release build: `wasm-pack build --target web --release` (uses `opt-level = "s"` for size).

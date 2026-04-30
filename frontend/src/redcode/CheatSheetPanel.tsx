@@ -11,6 +11,28 @@ const PANEL_STYLE: React.CSSProperties = {
   transition: 'width 0.15s',
 };
 
+const COLLAPSED_STYLE: React.CSSProperties = {
+  ...PANEL_STYLE,
+  width: '36px',
+  cursor: 'pointer',
+};
+
+const OPEN_STYLE: React.CSSProperties = {
+  ...PANEL_STYLE,
+  width: '320px',
+};
+
+const VERTICAL_TEXT_STYLE: React.CSSProperties = {
+  writingMode: 'vertical-rl',
+  transform: 'rotate(180deg)',
+  padding: '0.75rem 0',
+  fontSize: '0.7rem',
+  letterSpacing: '0.15em',
+  color: '#888',
+  textTransform: 'uppercase',
+  textAlign: 'center',
+};
+
 const HEADER_STYLE: React.CSSProperties = {
   padding: '0.6rem 0.9rem',
   fontSize: '0.75rem',
@@ -76,6 +98,11 @@ const TOGGLE_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
 };
 
+const SCROLL_STYLE: React.CSSProperties = {
+  overflowY: 'auto',
+  flex: 1,
+};
+
 type SectionProps = { title: string; entries: CheatEntry[] };
 
 function Section({ title, entries }: SectionProps) {
@@ -100,31 +127,14 @@ export default function CheatSheetPanel() {
 
   if (!open) {
     return (
-      <div
-        style={{ ...PANEL_STYLE, width: '36px', cursor: 'pointer' }}
-        onClick={() => setOpen(true)}
-        title="Show cheat sheet"
-      >
-        <div
-          style={{
-            writingMode: 'vertical-rl',
-            transform: 'rotate(180deg)',
-            padding: '0.75rem 0',
-            fontSize: '0.7rem',
-            letterSpacing: '0.15em',
-            color: '#888',
-            textTransform: 'uppercase',
-            textAlign: 'center',
-          }}
-        >
-          Cheat Sheet
-        </div>
+      <div style={COLLAPSED_STYLE} onClick={() => setOpen(true)} title="Show cheat sheet">
+        <div style={VERTICAL_TEXT_STYLE}>Cheat Sheet</div>
       </div>
     );
   }
 
   return (
-    <div style={{ ...PANEL_STYLE, width: '320px' }}>
+    <div style={OPEN_STYLE}>
       <div style={HEADER_STYLE} onClick={() => setOpen(false)}>
         <span>Redcode Cheat Sheet</span>
         <button
@@ -137,7 +147,7 @@ export default function CheatSheetPanel() {
           hide
         </button>
       </div>
-      <div style={{ overflowY: 'auto', flex: 1 }}>
+      <div style={SCROLL_STYLE}>
         <Section title="Opcodes" entries={OPCODES} />
         <Section title="Modifiers" entries={MODIFIERS} />
         <Section title="Addressing Modes" entries={ADDRESSING_MODES} />

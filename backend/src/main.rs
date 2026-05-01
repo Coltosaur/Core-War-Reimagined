@@ -1,4 +1,4 @@
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use sqlx::PgPool;
@@ -71,6 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/api/auth/register", post(auth::handlers::register))
+        .route("/api/auth/login", post(auth::handlers::login))
+        .route("/api/auth/refresh", post(auth::handlers::refresh))
+        .route("/api/auth/logout", post(auth::handlers::logout))
         .with_state(state)
         .layer(socket_layer)
         .layer(cors);

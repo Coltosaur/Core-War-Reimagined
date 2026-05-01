@@ -53,6 +53,23 @@ jobs:
   backend:
     name: Backend (test + clippy)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: corewar
+          POSTGRES_PASSWORD: corewar
+          POSTGRES_DB: corewar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://corewar:corewar@localhost:5432/corewar
+      JWT_SECRET: ci-test-secret-that-is-at-least-32-bytes!!
     defaults:
       run:
         working-directory: backend

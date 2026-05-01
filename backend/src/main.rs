@@ -1,4 +1,4 @@
-use axum::{routing::get, routing::post, Json, Router};
+use axum::{middleware, routing::get, routing::post, Json, Router};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use sqlx::PgPool;
@@ -75,6 +75,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/auth/login", post(auth::handlers::login))
         .route("/api/auth/refresh", post(auth::handlers::refresh))
         .route("/api/auth/logout", post(auth::handlers::logout))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::middleware::csrf_middleware,
+        ))
         .with_state(state)
         .layer(socket_layer)
         .layer(cors);

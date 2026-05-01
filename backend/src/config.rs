@@ -1,4 +1,5 @@
 use std::env;
+use std::net::IpAddr;
 
 #[derive(Debug)]
 pub struct Config {
@@ -6,6 +7,7 @@ pub struct Config {
     pub frontend_url: String,
     pub port: u16,
     pub jwt_secret: Vec<u8>,
+    pub trusted_proxies: Vec<IpAddr>,
 }
 
 impl Config {
@@ -29,11 +31,20 @@ impl Config {
             return Err(ConfigError::WeakJwtSecret);
         }
 
+        let trusted_proxies = get("TRUSTED_PROXIES")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|entry| entry.trim().parse::<IpAddr>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             database_url,
             frontend_url,
             port,
             jwt_secret,
+            trusted_proxies,
         })
     }
 }
@@ -103,6 +114,7 @@ mod tests {
 
         assert_eq!(config.frontend_url, "http://localhost:5173");
         assert_eq!(config.port, 3001);
+        assert!(config.trusted_proxies.is_empty());
     }
 
     #[test]
@@ -148,6 +160,34 @@ mod tests {
         ]);
         let config = Config::from_lookup(lookup).unwrap();
         assert_eq!(config.jwt_secret.len(), 32);
+    }
+
+    #[test]
+    fn trusted_proxies_parsed() {
+        let lookup = make_lookup(&[
+            ("DATABASE_URL", "postgresql://localhost/test"),
+            ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
+            ("TRUSTED_PROXIES", "10.0.0.1, 172.16.0.1"),
+        ]);
+        let config = Config::from_lookup(lookup).unwrap();
+        assert_eq!(
+            config.trusted_proxies,
+            vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([172, 16, 0, 1]),]
+        );
+    }
+
+    #[test]
+    fn trusted_proxies_skips_invalid_entries() {
+        let lookup = make_lookup(&[
+            ("DATABASE_URL", "postgresql://localhost/test"),
+            ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
+            ("TRUSTED_PROXIES", "10.0.0.1, not-an-ip, 192.168.1.1"),
+        ]);
+        let config = Config::from_lookup(lookup).unwrap();
+        assert_eq!(
+            config.trusted_proxies,
+            vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([192, 168, 1, 1]),]
+        );
     }
 
     #[test]

@@ -27,8 +27,12 @@ pub fn encode_access_token(
         exp: now + ACCESS_TOKEN_DURATION_SECS,
         iat: now,
     };
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
-        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret),
+    )
+    .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
 pub fn decode_access_token(token: &str, secret: &[u8]) -> Result<Claims, AppError> {

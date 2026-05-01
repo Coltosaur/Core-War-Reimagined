@@ -7,9 +7,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+pub mod auth;
 mod config;
 mod db;
-mod errors;
+pub mod errors;
 mod models;
 
 use config::Config;

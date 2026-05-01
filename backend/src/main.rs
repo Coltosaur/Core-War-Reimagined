@@ -31,14 +31,6 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
 }
 
-fn on_connect(socket: SocketRef) {
-    info!("client connected: {}", socket.id);
-
-    socket.on_disconnect(|socket: SocketRef| {
-        info!("client disconnected: {}", socket.id);
-    });
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -61,8 +53,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
+    let jwt_secret_for_socket = state.config.jwt_secret.clone();
     let (socket_layer, io) = SocketIo::new_layer();
-    io.ns("/", on_connect);
+    io.ns("/", move |socket: SocketRef| {
+        auth::socket::on_connect(socket, jwt_secret_for_socket.clone());
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(config.frontend_url.parse::<axum::http::HeaderValue>()?)

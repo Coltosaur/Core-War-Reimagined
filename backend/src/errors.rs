@@ -8,6 +8,7 @@ use serde_json::json;
 pub enum AppError {
     BadRequest(String),
     Unauthorized(String),
+    Forbidden(String),
     Conflict(String),
     Internal(String),
 }
@@ -17,6 +18,7 @@ impl IntoResponse for AppError {
         let (status, message) = match self {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Internal(msg) => {
                 tracing::error!("internal error: {msg}");
@@ -65,6 +67,13 @@ mod tests {
         let (status, json) = response_parts(AppError::Unauthorized("bad credentials".into())).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(json["error"], "bad credentials");
+    }
+
+    #[tokio::test]
+    async fn forbidden_returns_403() {
+        let (status, json) = response_parts(AppError::Forbidden("origin not allowed".into())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(json["error"], "origin not allowed");
     }
 
     #[tokio::test]

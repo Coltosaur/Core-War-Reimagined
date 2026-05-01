@@ -134,6 +134,7 @@ mod tests {
             config: crate::AppConfig {
                 frontend_url: "http://localhost:5173".into(),
                 jwt_secret: b"this-is-a-test-secret-at-least-32-bytes!".to_vec(),
+                trusted_proxies: vec![],
             },
         }
     }

@@ -1,32 +1,12 @@
+use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
+use core_war_backend::{auth, config::Config, db, AppConfig, AppState};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
-use sqlx::PgPool;
-use std::net::{IpAddr, SocketAddr};
-use tower_http::cors::{Any, CorsLayer};
+use std::net::SocketAddr;
+use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-
-pub mod auth;
-mod config;
-mod db;
-pub mod errors;
-mod models;
-
-use config::Config;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub db: PgPool,
-    pub config: AppConfig,
-}
-
-#[derive(Clone)]
-pub struct AppConfig {
-    pub frontend_url: String,
-    pub jwt_secret: Vec<u8>,
-    pub trusted_proxies: Vec<IpAddr>,
-}
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
@@ -63,8 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors = CorsLayer::new()
         .allow_origin(config.frontend_url.parse::<axum::http::HeaderValue>()?)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers([header::CONTENT_TYPE])
+        .allow_credentials(true);
 
     let proxies = state.config.trusted_proxies.clone();
     let login_limiter = auth::rate_limit::login_limiter(proxies.clone());

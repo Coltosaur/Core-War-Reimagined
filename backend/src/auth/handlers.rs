@@ -63,6 +63,11 @@ fn validate_password(password: &str) -> Result<(), AppError> {
             "Password must be at least 8 characters".into(),
         ));
     }
+    if password.len() > 1000 {
+        return Err(AppError::BadRequest(
+            "Password must not exceed 1000 characters".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -110,8 +115,11 @@ pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    validate_username(&body.username)?;
-    validate_email(&body.email)?;
+    let username = body.username.trim();
+    let email = body.email.trim().to_lowercase();
+
+    validate_username(username)?;
+    validate_email(&email)?;
     validate_password(&body.password)?;
 
     let password_hash = hash_password(&body.password)?;
@@ -119,8 +127,8 @@ pub async fn register(
     let row = sqlx::query_as::<_, (uuid::Uuid, String)>(
         "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username",
     )
-    .bind(&body.username)
-    .bind(&body.email)
+    .bind(username)
+    .bind(&email)
     .bind(&password_hash)
     .fetch_one(&state.db)
     .await
@@ -152,10 +160,14 @@ pub async fn login(
     jar: CookieJar,
     Json(body): Json<LoginRequest>,
 ) -> Result<(CookieJar, Json<AuthResponse>), AppError> {
+    let input = body.username_or_email.trim();
+    let email_input = input.to_lowercase();
+
     let user = sqlx::query_as::<_, (uuid::Uuid, String, String)>(
-        "SELECT id, username, password_hash FROM users WHERE username = $1 OR email = $1",
+        "SELECT id, username, password_hash FROM users WHERE username = $1 OR email = $2",
     )
-    .bind(&body.username_or_email)
+    .bind(input)
+    .bind(&email_input)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::Unauthorized("Invalid credentials".into()))?;
@@ -328,6 +340,18 @@ mod tests {
     #[test]
     fn password_too_short() {
         assert!(validate_password("1234567").is_err());
+    }
+
+    #[test]
+    fn password_too_long() {
+        let long = "a".repeat(1001);
+        assert!(validate_password(&long).is_err());
+    }
+
+    #[test]
+    fn password_at_max_length() {
+        let max = "a".repeat(1000);
+        assert!(validate_password(&max).is_ok());
     }
 
     #[test]

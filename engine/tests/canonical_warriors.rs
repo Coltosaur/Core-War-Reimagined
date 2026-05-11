@@ -28,6 +28,7 @@ const DWARF: &str = include_str!("warriors/dwarf.red");
 const MICE: &str = include_str!("warriors/mice.red");
 const MICE_LITE: &str = include_str!("warriors/mice_lite.red");
 const SCANNER: &str = include_str!("warriors/scanner.red");
+const GATE_BUILDER: &str = include_str!("warriors/gate_builder.red");
 
 #[test]
 fn parsed_imp_propagates_through_core() {
@@ -279,4 +280,95 @@ fn parsed_mice_replicates_itself_to_remote_location() {
 
     // Warrior should still be alive (Mice never executes a DAT in its loop).
     assert!(state.warriors()[0].is_alive());
+}
+
+/// A warrior that uses FOR/ROF to build a static gate (wall of DATs).
+/// This exercises the FOR/ROF preprocessor through the full parse → load →
+/// execute pipeline and confirms that:
+///   - The FOR loop expands the body the correct number of times
+///   - EQU-defined constants work in FOR count expressions
+///   - The expanded warrior actually runs (the JMP keeps it alive)
+#[test]
+fn parsed_gate_builder_creates_dat_wall_via_for_rof() {
+    let parsed = parse_warrior(GATE_BUILDER).expect("gate_builder.red should parse");
+
+    assert_eq!(parsed.name(), Some("Gate Builder"));
+    assert_eq!(parsed.author(), Some("Core War Reimagined"));
+
+    // The warrior should have 4 DATs (from FOR 4) + 1 JMP = 5 instructions.
+    assert_eq!(
+        parsed.instructions().len(),
+        5,
+        "gate_builder should expand to 5 instructions (4 DATs + 1 JMP)"
+    );
+
+    // First 4 instructions should be DAT.F #0, #0.
+    for i in 0..4 {
+        assert_eq!(
+            parsed.instructions()[i].opcode,
+            Opcode::Dat,
+            "instruction {i} should be DAT",
+        );
+    }
+
+    // The 5th instruction should be JMP (the infinite loop).
+    assert_eq!(parsed.instructions()[4].opcode, Opcode::Jmp);
+
+    // Load and run — the warrior should survive (JMP keeps it alive).
+    let mut state = MatchState::new(64, 50);
+    state.load_warrior(0, &parsed, 0);
+
+    for _ in 0..10 {
+        assert!(state.step(), "gate_builder should not die (JMP self-loop)");
+    }
+
+    assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });
+}
+
+/// Test that FOR/ROF works with an inline warrior source string, including
+/// labels inside the loop body that get unique suffixes per iteration.
+#[test]
+fn for_rof_with_labels_produces_correct_relative_offsets() {
+    let source = "
+        ORG start
+        FOR 3
+bomb    DAT.F #0, #0
+        ROF
+start   JMP   start
+    ";
+    let parsed = parse_warrior(source).expect("FOR/ROF with labels should parse");
+
+    // 3 DATs + 1 JMP = 4 instructions.
+    assert_eq!(parsed.instructions().len(), 4);
+
+    // ORG points to `start` which is at offset 3.
+    assert_eq!(parsed.start_offset(), 3);
+
+    // The JMP at offset 3 should reference itself (relative 0).
+    assert_eq!(parsed.instructions()[3].a.value, 0);
+}
+
+/// Test nested FOR/ROF through the integration pipeline.
+#[test]
+fn nested_for_rof_expands_multiplicatively() {
+    let source = "
+        FOR 2
+        FOR 3
+        DAT #0, #1
+        ROF
+        ROF
+        NOP $0, $0
+    ";
+    let parsed = parse_warrior(source).expect("nested FOR/ROF should parse");
+
+    // 2 * 3 = 6 DATs + 1 NOP = 7 instructions.
+    assert_eq!(parsed.instructions().len(), 7);
+    for i in 0..6 {
+        assert_eq!(
+            parsed.instructions()[i].opcode,
+            Opcode::Dat,
+            "instruction {i} should be DAT from nested FOR/ROF expansion",
+        );
+    }
+    assert_eq!(parsed.instructions()[6].opcode, Opcode::Nop);
 }

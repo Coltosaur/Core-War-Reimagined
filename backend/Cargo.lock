@@ -286,6 +286,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "chrono",
+ "core-war-engine",
  "dotenvy",
  "hex",
  "http-body-util",
@@ -303,6 +304,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "core-war-engine"
+version = "0.1.0"
+dependencies = [
+ "wasm-bindgen",
 ]
 
 [[package]]

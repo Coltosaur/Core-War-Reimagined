@@ -24,6 +24,7 @@ hex = "0.4"
 axum-extra = { version = "0.9", features = ["cookie"] }
 time = "0.3"
 async-trait = "0.1"
+core-war-engine = { path = "../engine" }
 
 [dev-dependencies]
 http-body-util = "0.1"

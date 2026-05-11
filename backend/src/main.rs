@@ -1,6 +1,6 @@
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
-use core_war_backend::{auth, config::Config, db, warriors, AppConfig, AppState};
+use core_war_backend::{auth, config::Config, db, profile, warriors, AppConfig, AppState};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;
@@ -92,6 +92,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(warriors::handlers::get)
                 .put(warriors::handlers::update)
                 .delete(warriors::handlers::delete),
+        )
+        .route("/api/profile", get(profile::handlers::me))
+        .route(
+            "/api/users/:username",
+            get(profile::handlers::public_profile),
         )
         .layer(middleware::from_fn_with_state(
             state.clone(),

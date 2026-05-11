@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod errors;
 mod models;
+pub mod warriors;
 
 use sqlx::PgPool;
 use std::net::IpAddr;

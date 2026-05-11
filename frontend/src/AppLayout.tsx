@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { useAuth } from './api/AuthContext';
+import AuthModal from './api/AuthModal';
 
 const SHELL_STYLE: React.CSSProperties = {
   display: 'flex',
@@ -55,13 +58,51 @@ const LABEL_STYLE: React.CSSProperties = {
 type Item = { to: string; label: string; icon: string };
 
 const ITEMS: Item[] = [
-  { to: '/', label: 'Home', icon: '\u2302' },
-  { to: '/battle', label: 'Battle', icon: '\u2694' },
-  { to: '/builder', label: 'Builder', icon: '\u270E' },
-  { to: '/learn', label: 'Learn', icon: '\u2139' },
+  { to: '/', label: 'Home', icon: '⌂' },
+  { to: '/battle', label: 'Battle', icon: '⚔' },
+  { to: '/builder', label: 'Builder', icon: '✎' },
+  { to: '/learn', label: 'Learn', icon: 'ℹ' },
 ];
 
+const AUTH_SECTION: React.CSSProperties = {
+  marginTop: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  gap: '0.25rem',
+  padding: '0.5rem 0',
+};
+
+const AUTH_BTN: React.CSSProperties = {
+  width: '64px',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '0.2rem',
+  padding: '0.5rem 0',
+  borderRadius: '6px',
+  color: '#888',
+  backgroundColor: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  transition: 'background-color 0.15s, color 0.15s',
+};
+
+const USERNAME_STYLE: React.CSSProperties = {
+  fontSize: '0.6rem',
+  color: '#4fc3f7',
+  textAlign: 'center',
+  wordBreak: 'break-all',
+  maxWidth: '70px',
+  lineHeight: 1.2,
+};
+
 export default function AppLayout() {
+  const { user, loading, logout } = useAuth();
+  const [showAuth, setShowAuth] = useState(false);
+
   return (
     <div style={SHELL_STYLE}>
       <nav style={SIDEBAR_STYLE}>
@@ -77,10 +118,36 @@ export default function AppLayout() {
             <span style={LABEL_STYLE}>{item.label}</span>
           </NavLink>
         ))}
+
+        <div style={AUTH_SECTION}>
+          {loading ? null : user ? (
+            <>
+              <span style={USERNAME_STYLE}>{user.username}</span>
+              <button
+                style={AUTH_BTN}
+                onClick={logout}
+                title="Log out"
+              >
+                <span style={ICON_STYLE}>{'←'}</span>
+                <span style={LABEL_STYLE}>Logout</span>
+              </button>
+            </>
+          ) : (
+            <button
+              style={AUTH_BTN}
+              onClick={() => setShowAuth(true)}
+              title="Log in or register"
+            >
+              <span style={ICON_STYLE}>{'→'}</span>
+              <span style={LABEL_STYLE}>Log In</span>
+            </button>
+          )}
+        </div>
       </nav>
       <main style={MAIN_STYLE}>
         <Outlet />
       </main>
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </div>
   );
 }

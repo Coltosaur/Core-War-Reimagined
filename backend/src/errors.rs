@@ -9,6 +9,7 @@ pub enum AppError {
     BadRequest(String),
     Unauthorized(String),
     Forbidden(String),
+    NotFound(String),
     Conflict(String),
     Internal(String),
 }
@@ -19,6 +20,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             Self::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
             Self::Internal(msg) => {
                 tracing::error!("internal error: {msg}");
@@ -74,6 +76,13 @@ mod tests {
         let (status, json) = response_parts(AppError::Forbidden("origin not allowed".into())).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(json["error"], "origin not allowed");
+    }
+
+    #[tokio::test]
+    async fn not_found_returns_404() {
+        let (status, json) = response_parts(AppError::NotFound("warrior not found".into())).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(json["error"], "warrior not found");
     }
 
     #[tokio::test]

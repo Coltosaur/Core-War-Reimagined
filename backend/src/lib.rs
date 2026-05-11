@@ -3,6 +3,8 @@ pub mod config;
 pub mod db;
 pub mod errors;
 pub mod leaderboard;
+pub mod matches;
+pub mod matchmaking;
 mod models;
 pub mod profile;
 pub mod warriors;

@@ -32,11 +32,14 @@ describe('cheatSheet data', () => {
     expect(symbols).toContain('>');
   });
 
-  it('has pseudo-ops', () => {
-    expect(PSEUDO_OPS.length).toBeGreaterThanOrEqual(2);
+  it('has pseudo-ops including FOR/ROF', () => {
+    expect(PSEUDO_OPS).toHaveLength(5);
     const symbols = PSEUDO_OPS.map((e) => e.symbol);
     expect(symbols).toContain('ORG');
     expect(symbols).toContain('END');
+    expect(symbols).toContain('EQU');
+    expect(symbols).toContain('FOR');
+    expect(symbols).toContain('ROF');
   });
 
   it('every entry has non-empty symbol, name, and desc', () => {

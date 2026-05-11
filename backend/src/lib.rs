@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod errors;
 mod models;
+pub mod profile;
 pub mod warriors;
 
 use sqlx::PgPool;

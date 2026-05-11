@@ -1,8 +1,7 @@
-import type { MatchState } from 'core-war-engine';
 import { formatInstruction } from '../../core/redcodeFormat';
 import { WARRIOR_HEX } from './styles';
 
-type CellInfo = {
+export type CellInfo = {
   addr: number;
   opcode: number;
   modifier: number;
@@ -21,8 +20,7 @@ type ProcessInfo = {
 };
 
 type Props = {
-  selectedCell: number | null;
-  match: MatchState | null;
+  cellInfo: CellInfo | null;
   warriors: ProcessInfo[];
   onCellSelect: (addr: number) => void;
   onClearCell: () => void;
@@ -128,19 +126,6 @@ const MODE_NAMES = [
   'B-Postinc (>)',
 ];
 
-function readCell(match: MatchState, addr: number): CellInfo {
-  return {
-    addr,
-    opcode: match.cellOpcode(addr),
-    modifier: match.cellModifier(addr),
-    aMode: match.cellAMode(addr),
-    aValue: match.cellAValue(addr),
-    bMode: match.cellBMode(addr),
-    bValue: match.cellBValue(addr),
-    owner: match.coreOwnership()[addr] ?? 0,
-  };
-}
-
 function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) {
   const ownerLabel = cell.owner === 0 ? 'None' : `Warrior ${cell.owner - 1}`;
   const ownerColor = WARRIOR_HEX[cell.owner] ?? '#888';
@@ -196,19 +181,16 @@ function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) 
 }
 
 export default function InspectorPanel({
-  selectedCell,
-  match,
+  cellInfo,
   warriors,
   onCellSelect,
   onClearCell,
 }: Props) {
-  const cell = selectedCell !== null && match ? readCell(match, selectedCell) : null;
-
   return (
     <aside style={PANEL_STYLE}>
       <div style={SECTION_HEADER_STYLE}>Cell Inspector</div>
-      {cell ? (
-        <CellDetail cell={cell} onClear={onClearCell} />
+      {cellInfo ? (
+        <CellDetail cell={cellInfo} onClear={onClearCell} />
       ) : (
         <div style={EMPTY_STYLE}>Click a cell in the grid to inspect it.</div>
       )}
@@ -233,8 +215,8 @@ export default function InspectorPanel({
                 key={i}
                 style={{
                   ...PROCESS_ITEM_STYLE,
-                  color: selectedCell === pc ? '#e0e0e0' : '#888',
-                  backgroundColor: selectedCell === pc ? '#1a1a1a' : 'transparent',
+                  color: cellInfo?.addr === pc ? '#e0e0e0' : '#888',
+                  backgroundColor: cellInfo?.addr === pc ? '#1a1a1a' : 'transparent',
                 }}
                 onClick={() => onCellSelect(pc)}
                 title={`Process ${i}: PC = ${pc}`}

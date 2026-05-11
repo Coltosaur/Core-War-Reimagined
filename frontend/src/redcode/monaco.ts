@@ -1,34 +1,20 @@
 import type * as MonacoNs from 'monaco-editor';
+import { OPCODES, MODIFIERS, ADDRESSING_MODES, PSEUDO_OPS, type CheatEntry } from './cheatSheet';
 
 export const REDCODE_LANGUAGE_ID = 'redcode';
 
-const OPCODES = [
-  'DAT',
-  'MOV',
-  'ADD',
-  'SUB',
-  'MUL',
-  'DIV',
-  'MOD',
-  'JMP',
-  'JMZ',
-  'JMN',
-  'DJN',
-  'SPL',
-  'SEQ',
-  'SNE',
-  'SLT',
-  'NOP',
-  'CMP',
-];
+const OPCODE_SYMBOLS = [...OPCODES.map((e) => e.symbol), 'CMP'];
+const PSEUDO_SYMBOLS = PSEUDO_OPS.map((e) => e.symbol);
 
-const PSEUDO = ['ORG', 'END', 'EQU'];
+let providersRegistered = false;
 
 export function registerRedcode(monaco: typeof MonacoNs): void {
   const langs = monaco.languages.getLanguages();
-  if (langs.some((l) => l.id === REDCODE_LANGUAGE_ID)) return;
+  const alreadyRegistered = langs.some((l) => l.id === REDCODE_LANGUAGE_ID);
 
-  monaco.languages.register({ id: REDCODE_LANGUAGE_ID });
+  if (!alreadyRegistered) {
+    monaco.languages.register({ id: REDCODE_LANGUAGE_ID });
+  }
 
   monaco.languages.setLanguageConfiguration(REDCODE_LANGUAGE_ID, {
     comments: { lineComment: ';' },
@@ -40,8 +26,8 @@ export function registerRedcode(monaco: typeof MonacoNs): void {
   monaco.languages.setMonarchTokensProvider(REDCODE_LANGUAGE_ID, {
     ignoreCase: true,
     defaultToken: '',
-    opcodes: OPCODES,
-    pseudo: PSEUDO,
+    opcodes: OPCODE_SYMBOLS,
+    pseudo: PSEUDO_SYMBOLS,
     tokenizer: {
       root: [
         [/;.*$/, 'comment'],
@@ -84,6 +70,131 @@ export function registerRedcode(monaco: typeof MonacoNs): void {
       'editorCursor.foreground': '#e94560',
       'editor.selectionBackground': '#4fc3f733',
       'editor.lineHighlightBackground': '#1a1a1a',
+    },
+  });
+
+  if (!providersRegistered) {
+    registerCompletionProvider(monaco);
+    registerHoverProvider(monaco);
+    providersRegistered = true;
+  }
+}
+
+function entryToCompletion(
+  monaco: typeof MonacoNs,
+  entry: CheatEntry,
+  kind: MonacoNs.languages.CompletionItemKind,
+  range: MonacoNs.IRange,
+): MonacoNs.languages.CompletionItem {
+  return {
+    label: entry.symbol,
+    kind,
+    detail: entry.name,
+    documentation: entry.desc,
+    insertText: entry.symbol,
+    range,
+  };
+}
+
+function registerCompletionProvider(monaco: typeof MonacoNs): void {
+  monaco.languages.registerCompletionItemProvider(REDCODE_LANGUAGE_ID, {
+    triggerCharacters: ['.', '#', '$', '@', '*', '<', '>', '{', '}'],
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position);
+      const range: MonacoNs.IRange = {
+        startLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endLineNumber: position.lineNumber,
+        endColumn: word.endColumn,
+      };
+
+      const lineContent = model.getLineContent(position.lineNumber);
+      const charBefore = lineContent[position.column - 2] ?? '';
+
+      if (charBefore === '.') {
+        const dotRange: MonacoNs.IRange = {
+          ...range,
+          startColumn: position.column - 1,
+        };
+        return {
+          suggestions: MODIFIERS.map((m) =>
+            entryToCompletion(monaco, m, monaco.languages.CompletionItemKind.Enum, dotRange),
+          ),
+        };
+      }
+
+      const suggestions: MonacoNs.languages.CompletionItem[] = [
+        ...OPCODES.map((e) =>
+          entryToCompletion(monaco, e, monaco.languages.CompletionItemKind.Keyword, range),
+        ),
+        ...PSEUDO_OPS.map((e) =>
+          entryToCompletion(monaco, e, monaco.languages.CompletionItemKind.Function, range),
+        ),
+        ...ADDRESSING_MODES.map((e) =>
+          entryToCompletion(monaco, e, monaco.languages.CompletionItemKind.Operator, range),
+        ),
+      ];
+
+      return { suggestions };
+    },
+  });
+}
+
+function registerHoverProvider(monaco: typeof MonacoNs): void {
+  const lookup = new Map<string, CheatEntry>();
+  for (const list of [OPCODES, PSEUDO_OPS]) {
+    for (const e of list) lookup.set(e.symbol.toUpperCase(), e);
+  }
+
+  monaco.languages.registerHoverProvider(REDCODE_LANGUAGE_ID, {
+    provideHover(model, position) {
+      const word = model.getWordAtPosition(position);
+      if (word) {
+        const entry = lookup.get(word.word.toUpperCase());
+        if (entry) {
+          return {
+            range: new monaco.Range(
+              position.lineNumber,
+              word.startColumn,
+              position.lineNumber,
+              word.endColumn,
+            ),
+            contents: [{ value: `**${entry.symbol}** — ${entry.name}` }, { value: entry.desc }],
+          };
+        }
+      }
+
+      const lineContent = model.getLineContent(position.lineNumber);
+      const col = position.column - 1;
+
+      for (const mode of ADDRESSING_MODES) {
+        if (lineContent[col] === mode.symbol) {
+          return {
+            range: new monaco.Range(position.lineNumber, col + 1, position.lineNumber, col + 2),
+            contents: [{ value: `**${mode.symbol}** — ${mode.name}` }, { value: mode.desc }],
+          };
+        }
+      }
+
+      const dotMatch = lineContent.substring(0, position.column).match(/\.([A-Za-z]+)$/);
+      if (dotMatch) {
+        const modSym = '.' + dotMatch[1].toUpperCase();
+        const mod = MODIFIERS.find((m) => m.symbol === modSym);
+        if (mod) {
+          const start = col - dotMatch[0].length + 1;
+          return {
+            range: new monaco.Range(
+              position.lineNumber,
+              start + 1,
+              position.lineNumber,
+              start + dotMatch[0].length + 1,
+            ),
+            contents: [{ value: `**${mod.symbol}** — ${mod.name}` }, { value: mod.desc }],
+          };
+        }
+      }
+
+      return null;
     },
   });
 }

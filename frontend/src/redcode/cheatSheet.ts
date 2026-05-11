@@ -72,4 +72,6 @@ export const PSEUDO_OPS: CheatEntry[] = [
   { symbol: 'ORG', name: 'origin', desc: 'Set the starting address label for execution.' },
   { symbol: 'END', name: 'end', desc: 'Marks end of source. Optional label sets start like ORG.' },
   { symbol: 'EQU', name: 'equate', desc: 'Define a named constant: `name EQU value`.' },
+  { symbol: 'FOR', name: 'for loop', desc: 'Repeat block N times: `FOR count` … `ROF`.' },
+  { symbol: 'ROF', name: 'end for', desc: 'Closes a FOR block.' },
 ];

@@ -182,6 +182,23 @@ export function useBuilder() {
     if (next) syncFromWarrior(next);
   };
 
+  const handleImport = async (name: string, content: string) => {
+    if (user) {
+      setSaving(true);
+      try {
+        const created = await createServerWarrior(name || 'Imported', content);
+        setSelectedId(created.id);
+        syncFromWarrior(created);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const created = createUserWarrior(name || 'Imported', content);
+      setSelectedId(created.id);
+      syncFromWarrior(created);
+    }
+  };
+
   const handleNew = async () => {
     const template = `;name New Warrior
 ;author you
@@ -250,6 +267,7 @@ start   MOV.I  $0, $1
     handleDuplicate,
     handleDelete,
     handleNew,
+    handleImport,
     handleTestInBattle,
     handleLabelChange,
     handleSourceChange,

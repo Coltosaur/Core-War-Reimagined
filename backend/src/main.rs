@@ -1,6 +1,8 @@
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
-use core_war_backend::{auth, config::Config, db, leaderboard, profile, warriors, AppConfig, AppState};
+use core_war_backend::{
+    auth, config::Config, db, leaderboard, profile, warriors, AppConfig, AppState,
+};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;

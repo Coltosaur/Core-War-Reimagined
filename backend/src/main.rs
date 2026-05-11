@@ -1,6 +1,6 @@
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
-use core_war_backend::{auth, config::Config, db, AppConfig, AppState};
+use core_war_backend::{auth, config::Config, db, warriors, AppConfig, AppState};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;
@@ -43,7 +43,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cors = CorsLayer::new()
         .allow_origin(config.frontend_url.parse::<axum::http::HeaderValue>()?)
-        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([header::CONTENT_TYPE])
         .allow_credentials(true);
 
@@ -76,6 +82,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )),
         )
         .route("/api/auth/logout", post(auth::handlers::logout))
+        .route("/api/auth/me", get(auth::handlers::me))
+        .route(
+            "/api/warriors",
+            get(warriors::handlers::list).post(warriors::handlers::create),
+        )
+        .route(
+            "/api/warriors/:id",
+            get(warriors::handlers::get)
+                .put(warriors::handlers::update)
+                .delete(warriors::handlers::delete),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::csrf_middleware,

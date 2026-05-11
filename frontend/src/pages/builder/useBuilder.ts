@@ -8,14 +8,24 @@ import {
   updateUserWarrior,
   deleteUserWarrior,
   duplicateWarrior,
+  syncFromServer,
+  createServerWarrior,
+  updateServerWarrior,
+  deleteServerWarrior,
   type Warrior,
 } from '../../warriors/library';
 import { registerRedcode, parseErrorToMarker } from '../../redcode/monaco';
+import { useAuth } from '../../api/AuthContext';
 
 export type ParseStatus = { ok: true; name: string | null } | { ok: false; message: string } | null;
 
+function isServerWarrior(id: string): boolean {
+  return id.startsWith('server:');
+}
+
 export function useBuilder() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const library = useWarriorLibrary();
   const [selectedId, setSelectedId] = useState<string>(() => library[0]?.id ?? '');
   const [source, setSource] = useState<string>('');
@@ -23,6 +33,7 @@ export function useBuilder() {
   const [dirty, setDirty] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [parseStatus, setParseStatus] = useState<ParseStatus>(null);
+  const [saving, setSaving] = useState(false);
 
   const monacoRef = useRef<Monaco | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -36,6 +47,12 @@ export function useBuilder() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      syncFromServer();
+    }
+  }, [user]);
 
   const selected = library.find((w) => w.id === selectedId);
 
@@ -93,31 +110,71 @@ export function useBuilder() {
     if (warrior) syncFromWarrior(warrior);
   };
 
-  const handleSave = () => {
-    if (!selected) return;
-    if (selected.isPreset) {
-      const created = createUserWarrior(label || 'Untitled', source);
-      setSelectedId(created.id);
-      syncFromWarrior(created);
-      return;
+  const handleSave = async () => {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      if (selected.isPreset) {
+        if (user) {
+          const created = await createServerWarrior(label || 'Untitled', source);
+          setSelectedId(created.id);
+          syncFromWarrior(created);
+        } else {
+          const created = createUserWarrior(label || 'Untitled', source);
+          setSelectedId(created.id);
+          syncFromWarrior(created);
+        }
+        return;
+      }
+      if (user && isServerWarrior(selected.id)) {
+        await updateServerWarrior(selected.id, { label: label || 'Untitled', source });
+      } else if (user && !isServerWarrior(selected.id)) {
+        const created = await createServerWarrior(label || 'Untitled', source);
+        setSelectedId(created.id);
+        syncFromWarrior(created);
+      } else {
+        updateUserWarrior(selected.id, { label: label || 'Untitled', source });
+      }
+      setDirty(false);
+    } finally {
+      setSaving(false);
     }
-    updateUserWarrior(selected.id, { label: label || 'Untitled', source });
-    setDirty(false);
   };
 
-  const handleDuplicate = () => {
-    if (!selected) return;
-    const created = duplicateWarrior(selected.id);
-    if (created) {
-      setSelectedId(created.id);
-      syncFromWarrior(created);
+  const handleDuplicate = async () => {
+    if (!selected || saving) return;
+    if (user) {
+      setSaving(true);
+      try {
+        const newLabel = `${selected.label} (copy)`;
+        const created = await createServerWarrior(newLabel, selected.source);
+        setSelectedId(created.id);
+        syncFromWarrior(created);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const created = duplicateWarrior(selected.id);
+      if (created) {
+        setSelectedId(created.id);
+        syncFromWarrior(created);
+      }
     }
   };
 
-  const handleDelete = () => {
-    if (!selected || selected.isPreset) return;
+  const handleDelete = async () => {
+    if (!selected || selected.isPreset || saving) return;
     if (!confirm(`Delete "${selected.label}"? This cannot be undone.`)) return;
-    deleteUserWarrior(selected.id);
+    if (user && isServerWarrior(selected.id)) {
+      setSaving(true);
+      try {
+        await deleteServerWarrior(selected.id);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      deleteUserWarrior(selected.id);
+    }
     const remaining = library.filter((w) => w.id !== selected.id);
     const nextId = remaining[0]?.id ?? '';
     setSelectedId(nextId);
@@ -125,15 +182,26 @@ export function useBuilder() {
     if (next) syncFromWarrior(next);
   };
 
-  const handleNew = () => {
+  const handleNew = async () => {
     const template = `;name New Warrior
 ;author you
         ORG    start
 start   MOV.I  $0, $1
 `;
-    const created = createUserWarrior('New Warrior', template);
-    setSelectedId(created.id);
-    syncFromWarrior(created);
+    if (user) {
+      setSaving(true);
+      try {
+        const created = await createServerWarrior('New Warrior', template);
+        setSelectedId(created.id);
+        syncFromWarrior(created);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const created = createUserWarrior('New Warrior', template);
+      setSelectedId(created.id);
+      syncFromWarrior(created);
+    }
   };
 
   const handleTestInBattle = () => {
@@ -173,7 +241,8 @@ start   MOV.I  $0, $1
     parseStatus,
     presets,
     userWarriors,
-    canSave: !!selected && dirty,
+    saving,
+    canSave: !!selected && dirty && !saving,
     handleEditorWillMount,
     handleEditorDidMount,
     handleSelect,

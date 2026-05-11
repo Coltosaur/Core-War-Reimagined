@@ -25,6 +25,10 @@ export function useBattle() {
   const [redId, setRedId] = useState(() => pickInitial(library, searchParams.get('red'), 0));
   const [blueId, setBlueId] = useState(() => pickInitial(library, searchParams.get('blue'), 1));
   const [warriors, setWarriors] = useState<{ name: string; alive: boolean; procs: number }[]>([]);
+  const [processes, setProcesses] = useState<
+    { warriorIdx: number; name: string; alive: boolean; pcs: number[] }[]
+  >([]);
+  const [selectedCell, setSelectedCell] = useState<number | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
@@ -88,6 +92,14 @@ export function useBattle() {
     if (tip) tip.style.display = 'none';
   }, []);
 
+  const handleGridClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const addr = cellAddressAtPixel(x, y);
+    if (addr >= 0) setSelectedCell(addr);
+  }, []);
+
   useEffect(() => {
     if (!gridRef.current) return;
     const renderer = createCoreRenderer(gridRef.current);
@@ -136,9 +148,14 @@ export function useBattle() {
       setStepCount(0);
       setResultCode(ONGOING);
       setResultWinner(-1);
+      const names = warriorNamesRef.current;
       setWarriors([
-        { name: warriorNamesRef.current[0], alive: true, procs: 1 },
-        { name: warriorNamesRef.current[1], alive: true, procs: 1 },
+        { name: names[0], alive: true, procs: 1 },
+        { name: names[1], alive: true, procs: 1 },
+      ]);
+      setProcesses([
+        { warriorIdx: 0, name: names[0], alive: true, pcs: Array.from(match.warriorProcessPcs(0)) },
+        { warriorIdx: 1, name: names[1], alive: true, pcs: Array.from(match.warriorProcessPcs(1)) },
       ]);
     },
     [libraryById],
@@ -166,15 +183,17 @@ export function useBattle() {
     setResultCode(code);
     setResultWinner(m.resultWinnerId());
     const ws: { name: string; alive: boolean; procs: number }[] = [];
+    const ps: { warriorIdx: number; name: string; alive: boolean; pcs: number[] }[] = [];
     const names = warriorNamesRef.current;
     for (let i = 0; i < m.warriorCount(); i++) {
-      ws.push({
-        name: names[i] ?? `Warrior ${m.warriorId(i)}`,
-        alive: m.warriorIsAlive(i),
-        procs: m.warriorProcessCount(i),
-      });
+      const alive = m.warriorIsAlive(i);
+      const name = names[i] ?? `Warrior ${m.warriorId(i)}`;
+      ws.push({ name, alive, procs: m.warriorProcessCount(i) });
+      const pcsArray = alive ? Array.from(m.warriorProcessPcs(i)) : [];
+      ps.push({ warriorIdx: i, name, alive, pcs: pcsArray });
     }
     setWarriors(ws);
+    setProcesses(ps);
   }, []);
 
   const tickRef = useRef<() => void>(() => {});
@@ -240,6 +259,7 @@ export function useBattle() {
   const reset = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     setRunning(false);
+    setSelectedCell(null);
     loadBattle(redId, blueId);
   }, [loadBattle, redId, blueId]);
 
@@ -268,11 +288,15 @@ export function useBattle() {
     redId,
     blueId,
     warriors,
+    processes,
+    selectedCell,
+    setSelectedCell,
     parseError,
     presets,
     userWarriors,
     gridRef,
     tooltipRef,
+    matchRef,
     play,
     pause,
     stepOnce,
@@ -281,5 +305,6 @@ export function useBattle() {
     handlePickChange,
     handleGridMouseMove,
     handleGridMouseLeave,
+    handleGridClick,
   };
 }

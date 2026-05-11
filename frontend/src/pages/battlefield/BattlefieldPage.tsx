@@ -2,13 +2,25 @@ import { useBattle } from './useBattle';
 import WarriorSelector from './WarriorSelector';
 import BattleControls from './BattleControls';
 import BattleStatus from './BattleStatus';
-import {
-  GRID_CONTAINER_STYLE,
-  PARSE_ERROR_STYLE,
-  ROOT_STYLE,
-  TITLE_STYLE,
-  TOOLTIP_STYLE,
-} from './styles';
+import InspectorPanel from './InspectorPanel';
+import { GRID_CONTAINER_STYLE, PARSE_ERROR_STYLE, TITLE_STYLE, TOOLTIP_STYLE } from './styles';
+
+const PAGE_STYLE: React.CSSProperties = {
+  display: 'flex',
+  height: '100vh',
+  minHeight: 0,
+};
+
+const MAIN_STYLE: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  padding: '1.5rem',
+  gap: '1rem',
+  overflow: 'auto',
+};
 
 export default function BattlefieldPage() {
   const {
@@ -23,11 +35,15 @@ export default function BattlefieldPage() {
     redId,
     blueId,
     warriors,
+    processes,
+    selectedCell,
+    setSelectedCell,
     parseError,
     presets,
     userWarriors,
     gridRef,
     tooltipRef,
+    matchRef,
     play,
     pause,
     stepOnce,
@@ -36,50 +52,62 @@ export default function BattlefieldPage() {
     handlePickChange,
     handleGridMouseMove,
     handleGridMouseLeave,
+    handleGridClick,
   } = useBattle();
 
   return (
-    <div style={ROOT_STYLE}>
-      <h1 style={TITLE_STYLE}>CORE WAR</h1>
+    <div style={PAGE_STYLE}>
+      <div style={MAIN_STYLE}>
+        <h1 style={TITLE_STYLE}>CORE WAR</h1>
 
-      <WarriorSelector
-        redId={redId}
-        blueId={blueId}
-        presets={presets}
-        userWarriors={userWarriors}
-        onPickChange={handlePickChange}
-      />
+        <WarriorSelector
+          redId={redId}
+          blueId={blueId}
+          presets={presets}
+          userWarriors={userWarriors}
+          onPickChange={handlePickChange}
+        />
 
-      {parseError && <div style={PARSE_ERROR_STYLE}>{parseError}</div>}
+        {parseError && <div style={PARSE_ERROR_STYLE}>{parseError}</div>}
 
-      <div
-        ref={gridRef}
-        style={GRID_CONTAINER_STYLE}
-        onMouseMove={handleGridMouseMove}
-        onMouseLeave={handleGridMouseLeave}
-      >
-        <div ref={tooltipRef} style={TOOLTIP_STYLE} />
+        <div
+          ref={gridRef}
+          style={GRID_CONTAINER_STYLE}
+          onMouseMove={handleGridMouseMove}
+          onMouseLeave={handleGridMouseLeave}
+          onClick={handleGridClick}
+        >
+          <div ref={tooltipRef} style={TOOLTIP_STYLE} />
+        </div>
+
+        <BattleControls
+          running={running}
+          resultCode={resultCode}
+          stepsPerFrame={stepsPerFrame}
+          setStepsPerFrame={setStepsPerFrame}
+          spfRef={spfRef}
+          play={play}
+          pause={pause}
+          stepOnce={stepOnce}
+          stepMany={stepMany}
+          reset={reset}
+        />
+
+        <BattleStatus
+          ready={ready}
+          stepCount={stepCount}
+          warriors={warriors}
+          resultCode={resultCode}
+          resultWinner={resultWinner}
+        />
       </div>
 
-      <BattleControls
-        running={running}
-        resultCode={resultCode}
-        stepsPerFrame={stepsPerFrame}
-        setStepsPerFrame={setStepsPerFrame}
-        spfRef={spfRef}
-        play={play}
-        pause={pause}
-        stepOnce={stepOnce}
-        stepMany={stepMany}
-        reset={reset}
-      />
-
-      <BattleStatus
-        ready={ready}
-        stepCount={stepCount}
-        warriors={warriors}
-        resultCode={resultCode}
-        resultWinner={resultWinner}
+      <InspectorPanel
+        selectedCell={selectedCell}
+        match={matchRef.current}
+        warriors={processes}
+        onCellSelect={setSelectedCell}
+        onClearCell={() => setSelectedCell(null)}
       />
     </div>
   );

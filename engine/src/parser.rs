@@ -188,10 +188,7 @@ fn expand_for_rof_block(
 
         // Check for bare `FOR` with no count — produce a clear error.
         if strip_keyword_ci(trimmed, "FOR").is_some()
-            && strip_keyword_ci(trimmed, "FOR")
-                .unwrap()
-                .trim()
-                .is_empty()
+            && strip_keyword_ci(trimmed, "FOR").unwrap().trim().is_empty()
         {
             return Err(ParseError::SyntaxError {
                 line: line_no,

@@ -63,6 +63,7 @@ const ITEMS: Item[] = [
   { to: '/builder', label: 'Builder', icon: '✎' },
   { to: '/learn', label: 'Learn', icon: 'ℹ' },
   { to: '/lobby', label: 'Play', icon: '▶' },
+  { to: '/leaderboard', label: 'Ranks', icon: '♛' },
 ];
 
 const AUTH_SECTION: React.CSSProperties = {

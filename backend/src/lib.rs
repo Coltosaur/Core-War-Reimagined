@@ -4,6 +4,7 @@ pub mod db;
 pub mod errors;
 pub mod matches;
 mod models;
+pub mod profile;
 pub mod warriors;
 
 use sqlx::PgPool;

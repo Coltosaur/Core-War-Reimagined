@@ -180,12 +180,7 @@ function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) 
   );
 }
 
-export default function InspectorPanel({
-  cellInfo,
-  warriors,
-  onCellSelect,
-  onClearCell,
-}: Props) {
+export default function InspectorPanel({ cellInfo, warriors, onCellSelect, onClearCell }: Props) {
   return (
     <aside style={PANEL_STYLE}>
       <div style={SECTION_HEADER_STYLE}>Cell Inspector</div>

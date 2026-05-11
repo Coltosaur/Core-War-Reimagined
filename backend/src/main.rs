@@ -1,7 +1,8 @@
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
 use core_war_backend::{
-    auth, config::Config, db, matches, matchmaking, profile, warriors, AppConfig, AppState,
+    auth, config::Config, db, leaderboard, matches, matchmaking, profile, warriors, AppConfig,
+    AppState,
 };
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
@@ -98,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .put(warriors::handlers::update)
                 .delete(warriors::handlers::delete),
         )
+        .route("/api/leaderboard", get(leaderboard::handlers::leaderboard))
         .route(
             "/api/matches",
             get(matches::handlers::list).post(matches::handlers::submit),

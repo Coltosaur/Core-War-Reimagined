@@ -14,6 +14,8 @@ const BuilderPage = React.lazy(() => import('./pages/builder/BuilderPage'));
 const LearnPage = React.lazy(() => import('./pages/LearnPage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const LeaderboardPage = React.lazy(() => import('./pages/LeaderboardPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const ProfilePage = React.lazy(() => import('./pages/profile/ProfilePage'));
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -51,6 +53,22 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               element={
                 <Suspense>
                   <LeaderboardPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <Suspense>
+                  <ProfilePage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/users/:username"
+              element={
+                <Suspense>
+                  <ProfilePage />
                 </Suspense>
               }
             />

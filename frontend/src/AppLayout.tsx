@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from './api/AuthContext';
 import AuthModal from './api/AuthModal';
 
@@ -123,7 +123,13 @@ export default function AppLayout() {
         <div style={AUTH_SECTION}>
           {loading ? null : user ? (
             <>
-              <span style={USERNAME_STYLE}>{user.username}</span>
+              <Link
+                to="/profile"
+                style={{ ...USERNAME_STYLE, textDecoration: 'none' }}
+                title="Dashboard"
+              >
+                {user.username}
+              </Link>
               <button style={AUTH_BTN} onClick={logout} title="Log out">
                 <span style={ICON_STYLE}>{'←'}</span>
                 <span style={LABEL_STYLE}>Logout</span>

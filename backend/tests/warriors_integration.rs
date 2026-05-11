@@ -117,7 +117,10 @@ async fn send(router: Router, req: Request<Body>) -> TestResponse {
     TestResponse { status, json }
 }
 
-async fn send_with_cookies(router: Router, req: Request<Body>) -> (TestResponse, HashMap<String, String>) {
+async fn send_with_cookies(
+    router: Router,
+    req: Request<Body>,
+) -> (TestResponse, HashMap<String, String>) {
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let cookies = extract_cookies(resp.headers());
@@ -209,10 +212,7 @@ async fn create_warrior_unauthenticated(pool: PgPool) {
     let router = app(pool);
     let resp = send(
         router,
-        post_json(
-            "/api/warriors",
-            &warrior_body("Imp", "MOV.I $0, $1"),
-        ),
+        post_json("/api/warriors", &warrior_body("Imp", "MOV.I $0, $1")),
     )
     .await;
     assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
@@ -225,11 +225,7 @@ async fn create_warrior_empty_name(pool: PgPool) {
 
     let resp = send(
         router,
-        post_json_with_cookies(
-            "/api/warriors",
-            &warrior_body("", "MOV.I $0, $1"),
-            &cookies,
-        ),
+        post_json_with_cookies("/api/warriors", &warrior_body("", "MOV.I $0, $1"), &cookies),
     )
     .await;
     assert_eq!(resp.status, StatusCode::BAD_REQUEST);
@@ -667,11 +663,7 @@ async fn full_crud_flow(pool: PgPool) {
     assert_eq!(resp.json["name"], "Imp");
 
     // List
-    let resp = send(
-        router.clone(),
-        get_with_cookies("/api/warriors", &cookies),
-    )
-    .await;
+    let resp = send(router.clone(), get_with_cookies("/api/warriors", &cookies)).await;
     assert_eq!(resp.json["total"], 1);
 
     // Update

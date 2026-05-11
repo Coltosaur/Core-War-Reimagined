@@ -16,10 +16,9 @@
 //!   - Default operand handling: single-operand `DAT`/`NOP` becomes
 //!     `(#0, #operand)`; single-operand jumps become `(operand, $0)`.
 //!
-//! Not yet supported (deferred until a real warrior needs it):
-//!   - `EQU` constants
-//!   - Arithmetic expressions in operand values (`label + 1` etc.)
-//!   - Multiple warriors per source file (`FOR` loops)
+//!   - `EQU` text substitution constants with recursive expression evaluation
+//!   - Full arithmetic expressions in operand values (`label + 1` etc.)
+//!   - `FOR count` / `ROF` preprocessor loops with label renaming and nesting
 
 use std::collections::{HashMap, HashSet};
 
@@ -76,6 +75,10 @@ pub enum ParseError {
     DuplicateLabel { line: usize, label: String },
     /// A line had structural problems (missing operand, malformed pseudo-op).
     SyntaxError { line: usize, message: String },
+    /// A `ROF` was found without a matching `FOR`.
+    UnmatchedRof { line: usize },
+    /// A `FOR` was found without a matching `ROF`.
+    UnmatchedFor { line: usize },
 }
 
 impl std::fmt::Display for ParseError {
@@ -100,14 +103,381 @@ impl std::fmt::Display for ParseError {
             ParseError::SyntaxError { line, message } => {
                 write!(f, "line {line}: syntax error: {message}")
             }
+            ParseError::UnmatchedRof { line } => {
+                write!(f, "line {line}: ROF without matching FOR")
+            }
+            ParseError::UnmatchedFor { line } => {
+                write!(f, "line {line}: FOR without matching ROF")
+            }
         }
     }
 }
 
 impl std::error::Error for ParseError {}
 
+/// Preprocess FOR/ROF loops in Redcode source text.
+///
+/// `FOR count` ... `ROF` blocks repeat the enclosed lines `count` times.
+/// The count can be any expression that resolves using only EQU constants
+/// and numeric literals (labels are not available at preprocessing time).
+/// Nested FOR/ROF is supported. Labels inside a FOR/ROF block are suffixed
+/// with `_N` (where N is the 0-based iteration index) to avoid collisions.
+///
+/// EQU definitions that appear before or inside FOR/ROF blocks are collected
+/// so they can be used in FOR count expressions. EQU definitions inside a
+/// loop body are expanded with the same iteration suffix as labels.
+///
+/// This function returns the expanded source text, ready for the two-pass
+/// parse.
+fn preprocess_for_rof(source: &str) -> Result<String, ParseError> {
+    // First pass: collect EQU definitions that appear at the top level
+    // (before any FOR) so they're available for FOR count expressions.
+    let mut equ_table: HashMap<String, String> = HashMap::new();
+    // Scan for top-level EQUs — we need these before expansion.
+    for raw in source.lines() {
+        let code = strip_comment(raw);
+        let code = code.trim();
+        if code.is_empty() {
+            continue;
+        }
+        // Check for EQU pseudo-op.
+        let first_end = code
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(i, _)| i)
+            .unwrap_or(code.len());
+        let after_first = code[first_end..].trim_start();
+        if let Some(rest) = strip_keyword_ci(after_first, "EQU") {
+            let equ_name = code[..first_end].trim_end_matches(':').to_string();
+            let equ_value = rest.trim().to_string();
+            if !equ_value.is_empty() {
+                // Don't error on duplicates here — let the main parser catch that.
+                equ_table.entry(equ_name).or_insert(equ_value);
+            }
+        }
+    }
+
+    let lines: Vec<&str> = source.lines().collect();
+    let expanded = expand_for_rof_block(&lines, 0, lines.len(), &equ_table, "")?;
+    Ok(expanded.join("\n"))
+}
+
+/// Recursively expand FOR/ROF blocks in `lines[start..end]`.
+///
+/// Returns the expanded lines. `suffix` is the current label-rename suffix
+/// inherited from enclosing FOR loops (empty at the top level).
+fn expand_for_rof_block(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+    equ_table: &HashMap<String, String>,
+    suffix: &str,
+) -> Result<Vec<String>, ParseError> {
+    let mut expanded = Vec::new();
+    let mut i = start;
+
+    while i < end {
+        let line_no = i + 1; // 1-indexed for error messages
+        let code = strip_comment(lines[i]);
+        let trimmed = code.trim();
+
+        // Check for ROF — if we hit one at this level, it's unmatched.
+        if is_rof_directive(trimmed) {
+            return Err(ParseError::UnmatchedRof { line: line_no });
+        }
+
+        // Check for bare `FOR` with no count — produce a clear error.
+        if strip_keyword_ci(trimmed, "FOR").is_some()
+            && strip_keyword_ci(trimmed, "FOR")
+                .unwrap()
+                .trim()
+                .is_empty()
+        {
+            return Err(ParseError::SyntaxError {
+                line: line_no,
+                message: "FOR requires a count expression".to_string(),
+            });
+        }
+
+        // Check for FOR directive (possibly labeled: "label FOR count").
+        if let Some(for_count_expr) = detect_for_directive(trimmed) {
+            let count = evaluate_for_count(&for_count_expr, line_no, equ_table)?;
+
+            // Find the matching ROF, handling nesting.
+            let body_start = i + 1;
+            let rof_line = find_matching_rof(lines, body_start, end)?;
+
+            // Collect labels defined in the body (non-recursively, just this
+            // level's labels) for renaming.
+            let body_labels = collect_labels_in_range(lines, body_start, rof_line);
+
+            // Expand the body `count` times.
+            for iter in 0..count {
+                let iter_suffix = format!("{suffix}_{iter}");
+
+                // Rename labels in each line of the body, then recursively
+                // expand any nested FOR/ROF blocks.
+                let renamed_body: Vec<String> = (body_start..rof_line)
+                    .map(|j| rename_labels_in_line(lines[j], &body_labels, &iter_suffix))
+                    .collect();
+                let renamed_refs: Vec<&str> = renamed_body.iter().map(|s| s.as_str()).collect();
+
+                let inner = expand_for_rof_block(
+                    &renamed_refs,
+                    0,
+                    renamed_refs.len(),
+                    equ_table,
+                    "", // suffix already applied via renaming
+                )?;
+                expanded.extend(inner);
+            }
+
+            i = rof_line + 1; // skip past the ROF
+        } else {
+            // Regular line — pass through.
+            expanded.push(lines[i].to_string());
+            i += 1;
+        }
+    }
+
+    Ok(expanded)
+}
+
+/// Detect a FOR directive in a trimmed line. Returns the count expression
+/// string if found. Handles both bare `FOR expr` and labeled `label FOR expr`.
+fn detect_for_directive(trimmed: &str) -> Option<String> {
+    // Case 1: line starts with FOR keyword.
+    if let Some(rest) = strip_keyword_ci(trimmed, "FOR") {
+        let expr = rest.trim().to_string();
+        if expr.is_empty() {
+            return None; // FOR with no count — will be caught as syntax error
+        }
+        return Some(expr);
+    }
+
+    // Case 2: "label FOR expr" — first token is a label (not an opcode).
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first_end = trimmed
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(trimmed.len());
+    let first_token = &trimmed[..first_end];
+    let after_first = trimmed[first_end..].trim_start();
+
+    // The first token must NOT be a known opcode (otherwise it's an instruction).
+    let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
+    if parse_opcode_name(first_no_modifier).is_some() {
+        return None;
+    }
+
+    if let Some(rest) = strip_keyword_ci(after_first, "FOR") {
+        let expr = rest.trim().to_string();
+        if expr.is_empty() {
+            return None;
+        }
+        return Some(expr);
+    }
+
+    None
+}
+
+/// Evaluate a FOR count expression using only EQU constants and numeric
+/// literals (labels are not available at preprocessing time).
+fn evaluate_for_count(
+    expr: &str,
+    line_no: usize,
+    equ_table: &HashMap<String, String>,
+) -> Result<usize, ParseError> {
+    let empty_labels: HashMap<String, usize> = HashMap::new();
+    let tokens = tokenize_expr(expr, line_no)?;
+    let mut cursor = ExprCursor {
+        tokens: &tokens,
+        pos: 0,
+    };
+    let mut visiting = HashSet::new();
+    let value = cursor.parse_expr(0, line_no, &empty_labels, equ_table, &mut visiting)?;
+    if cursor.pos < tokens.len() {
+        return Err(ParseError::SyntaxError {
+            line: line_no,
+            message: format!("trailing tokens in FOR count expression: {expr:?}"),
+        });
+    }
+    if value < 0 {
+        return Err(ParseError::SyntaxError {
+            line: line_no,
+            message: format!("FOR count must be non-negative, got {value}"),
+        });
+    }
+    Ok(value as usize)
+}
+
+/// Find the line index of the ROF that matches a FOR at `body_start - 1`.
+/// Handles nesting by tracking depth.
+fn find_matching_rof(lines: &[&str], body_start: usize, end: usize) -> Result<usize, ParseError> {
+    let mut depth = 0usize;
+    for (i, line) in lines.iter().enumerate().take(end).skip(body_start) {
+        let code = strip_comment(line);
+        let trimmed = code.trim();
+
+        if is_for_directive_any(trimmed) {
+            depth += 1;
+        } else if is_rof_directive(trimmed) {
+            if depth == 0 {
+                return Ok(i);
+            }
+            depth -= 1;
+        }
+    }
+    // No matching ROF found.
+    Err(ParseError::UnmatchedFor {
+        line: body_start, // 0-indexed here, but close enough — the FOR line is body_start - 1
+    })
+}
+
+/// Check if a trimmed line is any FOR directive (with or without count).
+/// Used for depth tracking in `find_matching_rof`.
+fn is_for_directive_any(trimmed: &str) -> bool {
+    // Bare `FOR` or `FOR expr`.
+    if strip_keyword_ci(trimmed, "FOR").is_some() {
+        return true;
+    }
+    // `label FOR ...` where label is not an opcode.
+    if trimmed.is_empty() {
+        return false;
+    }
+    let first_end = trimmed
+        .char_indices()
+        .find(|(_, c)| c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(trimmed.len());
+    let first_token = &trimmed[..first_end];
+    let after_first = trimmed[first_end..].trim_start();
+    let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
+    if parse_opcode_name(first_no_modifier).is_some() {
+        return false;
+    }
+    strip_keyword_ci(after_first, "FOR").is_some()
+}
+
+/// Check if a trimmed line is a ROF directive.
+fn is_rof_directive(trimmed: &str) -> bool {
+    strip_keyword_ci(trimmed, "ROF").is_some()
+}
+
+/// Collect all label names defined in `lines[start..end]`.
+/// A label is the first whitespace-separated token on a line if it doesn't
+/// parse as a known opcode and isn't a FOR/ROF directive. EQU names (the
+/// token before `EQU`) are also collected as labels for renaming.
+fn collect_labels_in_range(lines: &[&str], start: usize, end: usize) -> HashSet<String> {
+    let mut labels = HashSet::new();
+    for line in lines.iter().take(end).skip(start) {
+        let code = strip_comment(line);
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip FOR and ROF directives.
+        if detect_for_directive(trimmed).is_some() || is_rof_directive(trimmed) {
+            continue;
+        }
+        let first_end = trimmed
+            .char_indices()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(idx, _)| idx)
+            .unwrap_or(trimmed.len());
+        let first_token = &trimmed[..first_end];
+        let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
+
+        if parse_opcode_name(first_no_modifier).is_none() {
+            let label = first_token.trim_end_matches(':').to_string();
+            labels.insert(label);
+        }
+    }
+    labels
+}
+
+/// Rename all occurrences of `labels` in `line` by appending `suffix`.
+/// This handles:
+///   - Label definitions (first token, possibly with trailing colon)
+///   - Label references in operand values
+///   - EQU names (the name before EQU)
+fn rename_labels_in_line(line: &str, labels: &HashSet<String>, suffix: &str) -> String {
+    // Split the line into code and comment parts to avoid renaming inside comments.
+    let (code_part, comment_part) = match line.find(';') {
+        Some(idx) => (&line[..idx], Some(&line[idx..])),
+        None => (line, None),
+    };
+
+    // Rename identifiers in the code part. We need to be careful to only
+    // rename whole-word occurrences of known labels, not substrings.
+    let renamed_code = rename_identifiers_in_text(code_part, labels, suffix);
+
+    match comment_part {
+        Some(comment) => format!("{renamed_code}{comment}"),
+        None => renamed_code,
+    }
+}
+
+/// Replace all whole-word occurrences of identifiers from `labels` with
+/// the suffixed version. A "whole word" boundary is a transition between
+/// an identifier character (alphanumeric or `_`) and a non-identifier
+/// character. When a matched identifier is immediately followed by `:`,
+/// the suffix is inserted before the colon (label definition syntax).
+fn rename_identifiers_in_text(text: &str, labels: &HashSet<String>, suffix: &str) -> String {
+    if labels.is_empty() || text.is_empty() {
+        return text.to_string();
+    }
+
+    let bytes = text.as_bytes();
+    let mut result = String::with_capacity(text.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'_' || bytes[i].is_ascii_alphabetic() {
+            let start = i;
+            while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+                i += 1;
+            }
+            let ident = &text[start..i];
+
+            if labels.contains(ident) {
+                result.push_str(ident);
+                result.push_str(suffix);
+                // Consume a trailing colon (label definition syntax).
+                if i < bytes.len() && bytes[i] == b':' {
+                    result.push(':');
+                    i += 1;
+                }
+            } else {
+                result.push_str(ident);
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Strip the `;`-comment from a line (without extracting metadata).
+/// Used during preprocessing where we only need the code portion.
+fn strip_comment(line: &str) -> String {
+    match line.find(';') {
+        Some(idx) => line[..idx].to_string(),
+        None => line.to_string(),
+    }
+}
+
 /// Parse a Redcode warrior from text source.
 pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
+    // ─── Preprocessor: expand FOR/ROF loops ───
+    let expanded = preprocess_for_rof(source)?;
+    let source = &expanded;
+
     // ─── Pass 1: classify lines, extract metadata, find labels ───
     let mut name: Option<String> = None;
     let mut author: Option<String> = None;
@@ -1456,5 +1826,306 @@ b       EQU a + 1
     fn numeric_overflow_in_operand_errors() {
         let err = parse_warrior("MOV.I $99999999999999999, $0").unwrap_err();
         assert!(matches!(err, ParseError::InvalidNumber { .. }));
+    }
+
+    // ── FOR/ROF preprocessor loop tests ─────────────────────────────
+
+    #[test]
+    fn for_rof_basic_expansion() {
+        // FOR 3 / ROF should repeat the body 3 times.
+        let source = "
+        FOR 3
+        DAT #0, #1
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 3);
+        for i in 0..3 {
+            assert_eq!(parsed.instructions()[i].b, imm(1), "instruction {i}");
+        }
+    }
+
+    #[test]
+    fn for_rof_with_labels_renames_per_iteration() {
+        // Labels inside FOR/ROF should be suffixed with _0, _1, etc.
+        // Each iteration's label should resolve independently.
+        let source = "
+        FOR 2
+target  DAT #0, #0
+        JMP target
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        // 4 instructions: DAT, JMP, DAT, JMP
+        assert_eq!(parsed.instructions().len(), 4);
+        // First JMP (offset 1) should point to target_0 (offset 0): relative -1.
+        assert_eq!(parsed.instructions()[1].a.value, -1);
+        // Second JMP (offset 3) should point to target_1 (offset 2): relative -1.
+        assert_eq!(parsed.instructions()[3].a.value, -1);
+    }
+
+    #[test]
+    fn for_rof_count_zero_produces_no_output() {
+        let source = "
+        DAT #0, #99
+        FOR 0
+        DAT #0, #1
+        ROF
+        DAT #0, #42
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 2);
+        assert_eq!(parsed.instructions()[0].b, imm(99));
+        assert_eq!(parsed.instructions()[1].b, imm(42));
+    }
+
+    #[test]
+    fn for_rof_nested() {
+        // Outer loop 2 times, inner loop 3 times = 6 DATs total.
+        let source = "
+        FOR 2
+        FOR 3
+        DAT #0, #7
+        ROF
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 6);
+        for i in 0..6 {
+            assert_eq!(parsed.instructions()[i].b, imm(7), "instruction {i}");
+        }
+    }
+
+    #[test]
+    fn for_rof_nested_with_labels() {
+        // Nested loops with labels should all get unique suffixes.
+        let source = "
+        FOR 2
+        FOR 2
+lbl     DAT #0, #0
+        JMP lbl
+        ROF
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        // 2 outer * 2 inner * 2 instructions = 8 instructions.
+        assert_eq!(parsed.instructions().len(), 8);
+        // Each JMP should reference its local DAT (relative -1).
+        for i in (1..8).step_by(2) {
+            assert_eq!(
+                parsed.instructions()[i].a.value,
+                -1,
+                "JMP at offset {i} should reference its local DAT"
+            );
+        }
+    }
+
+    #[test]
+    fn for_rof_with_equ_count() {
+        // FOR count should accept EQU-defined constants.
+        let source = "
+count   EQU 3
+        FOR count
+        DAT #0, #5
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 3);
+    }
+
+    #[test]
+    fn for_rof_with_expression_count() {
+        // FOR count should accept arithmetic expressions.
+        let source = "
+        FOR 2 + 1
+        DAT #0, #1
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 3);
+    }
+
+    #[test]
+    fn for_rof_with_equ_expression_count() {
+        // FOR count that uses an EQU referencing another EQU.
+        let source = "
+base    EQU 2
+count   EQU base * 2
+        FOR count
+        DAT #0, #1
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 4);
+    }
+
+    #[test]
+    fn for_rof_preserves_surrounding_code() {
+        // Instructions before and after FOR/ROF should be preserved.
+        let source = "
+        MOV.I $0, $1
+        FOR 2
+        DAT #0, #1
+        ROF
+        ADD #1, $2
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 4);
+        assert_eq!(parsed.instructions()[0].opcode, Opcode::Mov);
+        assert_eq!(parsed.instructions()[1].opcode, Opcode::Dat);
+        assert_eq!(parsed.instructions()[2].opcode, Opcode::Dat);
+        assert_eq!(parsed.instructions()[3].opcode, Opcode::Add);
+    }
+
+    #[test]
+    fn for_rof_multiple_sequential_loops() {
+        let source = "
+        FOR 2
+        DAT #0, #1
+        ROF
+        FOR 3
+        DAT #0, #2
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 5);
+        assert_eq!(parsed.instructions()[0].b, imm(1));
+        assert_eq!(parsed.instructions()[1].b, imm(1));
+        assert_eq!(parsed.instructions()[2].b, imm(2));
+        assert_eq!(parsed.instructions()[3].b, imm(2));
+        assert_eq!(parsed.instructions()[4].b, imm(2));
+    }
+
+    #[test]
+    fn for_rof_case_insensitive() {
+        let source = "
+        for 2
+        DAT #0, #1
+        rof
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 2);
+    }
+
+    #[test]
+    fn for_rof_labels_across_iterations_dont_collide() {
+        // Two iterations each define a label. The cross-iteration
+        // references should be to their own iteration's label.
+        let source = "
+        FOR 3
+entry   MOV.I $0, $1
+        JMP   entry
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 6);
+        // Each JMP targets its own iteration's MOV (relative -1).
+        assert_eq!(parsed.instructions()[1].a.value, -1);
+        assert_eq!(parsed.instructions()[3].a.value, -1);
+        assert_eq!(parsed.instructions()[5].a.value, -1);
+    }
+
+    // ── FOR/ROF error cases ─────────────────────────────────────────
+
+    #[test]
+    fn for_rof_unmatched_rof_errors() {
+        let err = parse_warrior("ROF\nDAT #0, #0").unwrap_err();
+        assert!(matches!(err, ParseError::UnmatchedRof { .. }));
+    }
+
+    #[test]
+    fn for_rof_unmatched_for_errors() {
+        let err = parse_warrior("FOR 3\nDAT #0, #0").unwrap_err();
+        assert!(matches!(err, ParseError::UnmatchedFor { .. }));
+    }
+
+    #[test]
+    fn for_rof_negative_count_errors() {
+        let source = "
+        FOR -1
+        DAT #0, #0
+        ROF
+        ";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn for_rof_bare_for_no_count_errors() {
+        let source = "
+        FOR
+        DAT #0, #0
+        ROF
+        ";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn for_rof_equ_inside_loop_is_renamed() {
+        // EQU defined inside a FOR/ROF should have its name suffixed
+        // to avoid collisions across iterations.
+        let source = "
+        FOR 2
+val     EQU 5
+        DAT #0, #val
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 2);
+        assert_eq!(parsed.instructions()[0].b, imm(5));
+        assert_eq!(parsed.instructions()[1].b, imm(5));
+    }
+
+    #[test]
+    fn for_rof_with_label_and_colon() {
+        let source = "
+        FOR 2
+target: DAT #0, #0
+        JMP target
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 4);
+        // Each JMP references its own DAT.
+        assert_eq!(parsed.instructions()[1].a.value, -1);
+        assert_eq!(parsed.instructions()[3].a.value, -1);
+    }
+
+    #[test]
+    fn for_rof_does_not_rename_outside_labels() {
+        // Labels defined outside FOR/ROF should not be renamed.
+        let source = "
+target  DAT #0, #0
+        FOR 2
+        JMP target
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 3);
+        // JMP at offset 1 → target at offset 0: relative -1.
+        assert_eq!(parsed.instructions()[1].a.value, -1);
+        // JMP at offset 2 → target at offset 0: relative -2.
+        assert_eq!(parsed.instructions()[2].a.value, -2);
+    }
+
+    #[test]
+    fn for_rof_multi_line_body() {
+        // FOR/ROF with multiple lines in the body.
+        let source = "
+        FOR 2
+        ADD #1, $2
+        SUB #2, $3
+        MOV.I $0, $1
+        ROF
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions().len(), 6);
+        assert_eq!(parsed.instructions()[0].opcode, Opcode::Add);
+        assert_eq!(parsed.instructions()[1].opcode, Opcode::Sub);
+        assert_eq!(parsed.instructions()[2].opcode, Opcode::Mov);
+        assert_eq!(parsed.instructions()[3].opcode, Opcode::Add);
+        assert_eq!(parsed.instructions()[4].opcode, Opcode::Sub);
+        assert_eq!(parsed.instructions()[5].opcode, Opcode::Mov);
     }
 }

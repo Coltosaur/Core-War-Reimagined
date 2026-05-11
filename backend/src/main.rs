@@ -1,6 +1,8 @@
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Json, Router};
-use core_war_backend::{auth, config::Config, db, matches, profile, warriors, AppConfig, AppState};
+use core_war_backend::{
+    auth, config::Config, db, matches, matchmaking, profile, warriors, AppConfig, AppState,
+};
 use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;
@@ -36,9 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let jwt_secret_for_socket = state.config.jwt_secret.clone();
+    let queue = matchmaking::queue::new_shared_queue();
+    let db_for_socket = state.db.clone();
     let (socket_layer, io) = SocketIo::new_layer();
     io.ns("/", move |socket: SocketRef| {
-        auth::socket::on_connect(socket, jwt_secret_for_socket.clone());
+        auth::socket::on_connect(socket.clone(), jwt_secret_for_socket.clone());
+        matchmaking::events::register_events(&socket, queue.clone(), db_for_socket.clone());
     });
 
     let cors = CorsLayer::new()

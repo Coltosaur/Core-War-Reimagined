@@ -35,4 +35,4 @@ node_modules/
 dist/
 
 # Playwright MCP runtime artifacts
-.playwright-mcp/
+.playwright-mcp/.claude/worktrees/

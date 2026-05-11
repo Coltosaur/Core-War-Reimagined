@@ -113,6 +113,7 @@ fn clear_refresh_cookie() -> Cookie<'static> {
 
 pub async fn register(
     State(state): State<AppState>,
+    jar: CookieJar,
     Json(body): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let username = body.username.trim();
@@ -146,12 +147,33 @@ pub async fn register(
         _ => AppError::Internal(e.to_string()),
     })?;
 
+    let (user_id, username) = row;
+
+    let access_token = encode_access_token(user_id, &username, &state.config.jwt_secret)?;
+    let refresh_token = generate_refresh_token();
+    let token_hash = hash_refresh_token(&refresh_token);
+    let expires_at = Utc::now() + Duration::days(7);
+
+    sqlx::query("INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)")
+        .bind(user_id)
+        .bind(&token_hash)
+        .bind(expires_at)
+        .execute(&state.db)
+        .await?;
+
+    let jar = jar
+        .add(build_access_cookie(access_token))
+        .add(build_refresh_cookie(refresh_token));
+
     Ok((
-        StatusCode::CREATED,
-        Json(AuthResponse {
-            user_id: row.0.to_string(),
-            username: row.1,
-        }),
+        jar,
+        (
+            StatusCode::CREATED,
+            Json(AuthResponse {
+                user_id: user_id.to_string(),
+                username,
+            }),
+        ),
     ))
 }
 
@@ -255,6 +277,13 @@ pub async fn refresh(
             username,
         }),
     ))
+}
+
+pub async fn me(user: crate::auth::middleware::AuthUser) -> Json<AuthResponse> {
+    Json(AuthResponse {
+        user_id: user.user_id.to_string(),
+        username: user.username,
+    })
 }
 
 pub async fn logout(

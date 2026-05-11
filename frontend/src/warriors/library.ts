@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import * as warriorsApi from '../api/warriors';
 
 export type Warrior = {
   id: string;
@@ -207,6 +208,55 @@ export function deleteUserWarrior(id: string): void {
 export function duplicateWarrior(sourceId: string): Warrior | undefined {
   const src = getWarrior(sourceId);
   if (!src) return undefined;
-  const label = src.isPreset ? `${src.label} (copy)` : `${src.label} (copy)`;
+  const label = `${src.label} (copy)`;
   return createUserWarrior(label, src.source);
+}
+
+export async function syncFromServer(): Promise<void> {
+  try {
+    const resp = await warriorsApi.listWarriors(1, 100);
+    userWarriors = resp.warriors.map((w) => ({
+      id: `server:${w.id}`,
+      label: w.name,
+      source: w.source,
+      isPreset: false,
+    }));
+    snapshot = computeSnapshot();
+    listeners.forEach((l) => l());
+  } catch {
+    // silently fall back to localStorage
+  }
+}
+
+export async function createServerWarrior(label: string, source: string): Promise<Warrior> {
+  const sw = await warriorsApi.createWarrior(label, source);
+  const w: Warrior = { id: `server:${sw.id}`, label: sw.name, source: sw.source, isPreset: false };
+  userWarriors = [...userWarriors, w];
+  snapshot = computeSnapshot();
+  listeners.forEach((l) => l());
+  return w;
+}
+
+export async function updateServerWarrior(
+  localId: string,
+  patch: { label?: string; source?: string },
+): Promise<void> {
+  const serverId = localId.replace('server:', '');
+  const apiPatch: { name?: string; source?: string } = {};
+  if (patch.label !== undefined) apiPatch.name = patch.label;
+  if (patch.source !== undefined) apiPatch.source = patch.source;
+  const sw = await warriorsApi.updateWarrior(serverId, apiPatch);
+  userWarriors = userWarriors.map((w) =>
+    w.id === localId ? { ...w, label: sw.name, source: sw.source } : w,
+  );
+  snapshot = computeSnapshot();
+  listeners.forEach((l) => l());
+}
+
+export async function deleteServerWarrior(localId: string): Promise<void> {
+  const serverId = localId.replace('server:', '');
+  await warriorsApi.deleteWarrior(serverId);
+  userWarriors = userWarriors.filter((w) => w.id !== localId);
+  snapshot = computeSnapshot();
+  listeners.forEach((l) => l());
 }

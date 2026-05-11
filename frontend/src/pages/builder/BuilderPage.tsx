@@ -11,6 +11,7 @@ export default function BuilderPage() {
   const {
     selectedId,
     selected,
+    source,
     label,
     dirty,
     wasmReady,
@@ -25,6 +26,7 @@ export default function BuilderPage() {
     handleDuplicate,
     handleDelete,
     handleNew,
+    handleImport,
     handleTestInBattle,
     handleLabelChange,
     handleSourceChange,
@@ -45,11 +47,13 @@ export default function BuilderPage() {
           label={label}
           selected={selected}
           canSave={canSave}
+          source={source}
           onLabelChange={handleLabelChange}
           onSave={handleSave}
           onDuplicate={handleDuplicate}
           onDelete={handleDelete}
           onTestInBattle={handleTestInBattle}
+          onImport={handleImport}
         />
 
         <div style={EDITOR_CONTAINER_STYLE}>
@@ -72,6 +76,13 @@ export default function BuilderPage() {
               readOnly: selected?.isPreset ?? false,
               wordWrap: 'off',
               tabSize: 8,
+              quickSuggestions: {
+                other: 'on',
+                comments: 'off',
+                strings: 'off',
+              },
+              suggestOnTriggerCharacters: true,
+              wordBasedSuggestions: 'off',
             }}
           />
         </div>

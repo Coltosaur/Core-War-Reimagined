@@ -91,14 +91,26 @@ export default function AuthModal({ onClose }: Props) {
           {mode === 'login' ? (
             <>
               No account?{' '}
-              <button style={LINK_BTN} onClick={() => { setMode('register'); setError(''); }}>
+              <button
+                style={LINK_BTN}
+                onClick={() => {
+                  setMode('register');
+                  setError('');
+                }}
+              >
                 Register
               </button>
             </>
           ) : (
             <>
               Already have an account?{' '}
-              <button style={LINK_BTN} onClick={() => { setMode('login'); setError(''); }}>
+              <button
+                style={LINK_BTN}
+                onClick={() => {
+                  setMode('login');
+                  setError('');
+                }}
+              >
                 Log in
               </button>
             </>

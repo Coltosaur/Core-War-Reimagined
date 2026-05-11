@@ -115,7 +115,10 @@ pub async fn list(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<WarriorListResponse>, AppError> {
     let page = query.page.unwrap_or(1).max(1);
-    let per_page = query.per_page.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
+    let per_page = query
+        .per_page
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE);
     let offset = (page - 1) * per_page;
 
     let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM warriors WHERE user_id = $1")
@@ -195,12 +198,11 @@ pub async fn delete(
     user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
-    let result =
-        sqlx::query("DELETE FROM warriors WHERE id = $1 AND user_id = $2")
-            .bind(id)
-            .bind(user.user_id)
-            .execute(&state.db)
-            .await?;
+    let result = sqlx::query("DELETE FROM warriors WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user.user_id)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound("Warrior not found".into()));

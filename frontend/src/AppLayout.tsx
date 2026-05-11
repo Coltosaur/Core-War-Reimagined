@@ -123,21 +123,13 @@ export default function AppLayout() {
           {loading ? null : user ? (
             <>
               <span style={USERNAME_STYLE}>{user.username}</span>
-              <button
-                style={AUTH_BTN}
-                onClick={logout}
-                title="Log out"
-              >
+              <button style={AUTH_BTN} onClick={logout} title="Log out">
                 <span style={ICON_STYLE}>{'←'}</span>
                 <span style={LABEL_STYLE}>Logout</span>
               </button>
             </>
           ) : (
-            <button
-              style={AUTH_BTN}
-              onClick={() => setShowAuth(true)}
-              title="Log in or register"
-            >
+            <button style={AUTH_BTN} onClick={() => setShowAuth(true)} title="Log in or register">
               <span style={ICON_STYLE}>{'→'}</span>
               <span style={LABEL_STYLE}>Log In</span>
             </button>

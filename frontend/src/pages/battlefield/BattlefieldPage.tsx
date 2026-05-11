@@ -36,14 +36,12 @@ export default function BattlefieldPage() {
     blueId,
     warriors,
     processes,
-    selectedCell,
-    setSelectedCell,
+    cellInfo,
     parseError,
     presets,
     userWarriors,
     gridRef,
     tooltipRef,
-    matchRef,
     play,
     pause,
     stepOnce,
@@ -53,6 +51,8 @@ export default function BattlefieldPage() {
     handleGridMouseMove,
     handleGridMouseLeave,
     handleGridClick,
+    selectCell,
+    clearCell,
   } = useBattle();
 
   return (
@@ -103,11 +103,10 @@ export default function BattlefieldPage() {
       </div>
 
       <InspectorPanel
-        selectedCell={selectedCell}
-        match={matchRef.current}
+        cellInfo={cellInfo}
         warriors={processes}
-        onCellSelect={setSelectedCell}
-        onClearCell={() => setSelectedCell(null)}
+        onCellSelect={selectCell}
+        onClearCell={clearCell}
       />
     </div>
   );

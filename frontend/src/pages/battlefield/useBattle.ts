@@ -6,6 +6,20 @@ import { cellAddressAtPixel, formatCellTooltip } from '../../core/redcodeFormat'
 import { CORE_SIZE } from '../../core/constants';
 import { useWarriorLibrary, type Warrior } from '../../warriors/library';
 import { ONGOING } from './styles';
+import type { CellInfo } from './InspectorPanel';
+
+function readCellFromMatch(match: MatchState, addr: number): CellInfo {
+  return {
+    addr,
+    opcode: match.cellOpcode(addr),
+    modifier: match.cellModifier(addr),
+    aMode: match.cellAMode(addr),
+    aValue: match.cellAValue(addr),
+    bMode: match.cellBMode(addr),
+    bValue: match.cellBValue(addr),
+    owner: match.coreOwnership()[addr] ?? 0,
+  };
+}
 
 function pickInitial(library: Warrior[], queryId: string | null, fallbackIdx: number): string {
   if (queryId && library.some((w) => w.id === queryId)) return queryId;
@@ -29,6 +43,7 @@ export function useBattle() {
     { warriorIdx: number; name: string; alive: boolean; pcs: number[] }[]
   >([]);
   const [selectedCell, setSelectedCell] = useState<number | null>(null);
+  const [cellInfo, setCellInfo] = useState<CellInfo | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
@@ -97,7 +112,10 @@ export function useBattle() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const addr = cellAddressAtPixel(x, y);
-    if (addr >= 0) setSelectedCell(addr);
+    if (addr >= 0) {
+      setSelectedCell(addr);
+      if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));
+    }
   }, []);
 
   useEffect(() => {
@@ -194,6 +212,10 @@ export function useBattle() {
     }
     setWarriors(ws);
     setProcesses(ps);
+    setSelectedCell((prev) => {
+      if (prev !== null) setCellInfo(readCellFromMatch(m, prev));
+      return prev;
+    });
   }, []);
 
   const tickRef = useRef<() => void>(() => {});
@@ -260,6 +282,7 @@ export function useBattle() {
     cancelAnimationFrame(rafRef.current);
     setRunning(false);
     setSelectedCell(null);
+    setCellInfo(null);
     loadBattle(redId, blueId);
   }, [loadBattle, redId, blueId]);
 
@@ -276,6 +299,16 @@ export function useBattle() {
     [loadBattle, redId, blueId],
   );
 
+  const selectCell = useCallback((addr: number) => {
+    setSelectedCell(addr);
+    if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));
+  }, []);
+
+  const clearCell = useCallback(() => {
+    setSelectedCell(null);
+    setCellInfo(null);
+  }, []);
+
   return {
     ready,
     running,
@@ -290,13 +323,12 @@ export function useBattle() {
     warriors,
     processes,
     selectedCell,
-    setSelectedCell,
+    cellInfo,
     parseError,
     presets,
     userWarriors,
     gridRef,
     tooltipRef,
-    matchRef,
     play,
     pause,
     stepOnce,
@@ -306,5 +338,7 @@ export function useBattle() {
     handleGridMouseMove,
     handleGridMouseLeave,
     handleGridClick,
+    selectCell,
+    clearCell,
   };
 }

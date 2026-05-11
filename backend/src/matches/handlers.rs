@@ -38,12 +38,10 @@ const MAX_PAGE_SIZE: i64 = 100;
 const DEFAULT_PAGE_SIZE: i64 = 50;
 
 fn run_battle(red_source: &str, blue_source: &str) -> Result<(String, i32), AppError> {
-    let red = parse_warrior(red_source).map_err(|e| {
-        AppError::BadRequest(format!("Red warrior parse error: {e}"))
-    })?;
-    let blue = parse_warrior(blue_source).map_err(|e| {
-        AppError::BadRequest(format!("Blue warrior parse error: {e}"))
-    })?;
+    let red = parse_warrior(red_source)
+        .map_err(|e| AppError::BadRequest(format!("Red warrior parse error: {e}")))?;
+    let blue = parse_warrior(blue_source)
+        .map_err(|e| AppError::BadRequest(format!("Blue warrior parse error: {e}")))?;
 
     let mut m = MatchState::new(CORE_SIZE, MAX_STEPS);
     m.load_warrior(0, &red, 0);

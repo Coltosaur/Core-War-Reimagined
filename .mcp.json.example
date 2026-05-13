@@ -6,7 +6,7 @@
         "@playwright/mcp@latest",
         "--headless",
         "--executable-path",
-        "/home/coltergeizt/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome"
+        "<path-to-chromium>/chrome"
       ]
     }
   }

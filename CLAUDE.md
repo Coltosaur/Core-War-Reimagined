@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A modernized web rebuild of the 1984 programming game **Core War**. Players write **Redcode** warriors that battle inside **MARS** (Memory Array Redcode Simulator), a virtual machine implemented in Rust and compiled to WebAssembly.
 
-The repo is early-stage. The frontend is a stub (`<h1>Core War</h1>`); the backend is a working axum + socketioxide skeleton with a `/health` endpoint and Socket.IO connect/disconnect handlers but no auth, persistence, or matchmaking yet; the engine has a working executor for the canonical Imp, Dwarf, multi-process imp rings (via SPL), Mice-style replicators, and simple linear scanners — covering all three classical warrior strategies (stones, papers, scanners) — implements the **complete ICWS '94 opcode and addressing-mode set**, and **has a working Redcode parser** (`parser::parse_warrior`) that loads warriors from text source. The remaining gaps before full ICWS '94 conformance are the multi-field modifier variants for the jump/skip opcodes; everything else is in place.
+The engine implements the **complete ICWS '94 opcode and addressing-mode set** with a full Redcode parser. The frontend provides a Monaco editor, battle visualizer, annotated classic warriors, a learning page, matchmaking lobby, leaderboard, and user profiles. The backend handles JWT + Argon2 auth, warrior CRUD, server-side match validation, matchmaking over Socket.IO, and Elo-based leaderboards — all backed by Postgres with sqlx migrations.
 
 **Engine implementation status (see `engine/src/vm.rs`):**
 - **All 16 ICWS '94 opcodes** implemented: `DAT`, `MOV`, `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `JMP`, `JMZ`, `JMN`, `DJN`, `SPL`, `SEQ`, `SNE`, `SLT`, `NOP`.
@@ -53,14 +53,14 @@ Three independent components, **two** deployment services (frontend static + bac
 ```
 engine/    Rust crate → Wasm (wasm-bindgen, wasm-pack). NOT a server process.
 frontend/  React 18 + TypeScript + Vite. Imports the Wasm module directly.
-backend/   Rust (axum + socketioxide + tokio). Postgres + Redis (planned).
+backend/   Rust (axum + socketioxide + tokio). Postgres via sqlx, Redis planned.
 ```
 
-**Critical architectural rule:** The Rust engine compiles to Wasm and runs **in the browser** alongside the frontend — it is not a server-side process and is not bundled into the backend container. The backend exists for auth, matchmaking, persistence, and live-battle WebSocket streaming for ranked play. For ranked-match validation, the backend will eventually call the engine as a native Rust crate dependency (`cargo add core-war-engine` from `backend/`), avoiding any FFI bridge.
+**Critical architectural rule:** The Rust engine compiles to Wasm and runs **in the browser** alongside the frontend — it is not a server-side process and is not bundled into the backend container. The backend also depends on the engine as a native Rust crate for server-side match validation (no FFI bridge needed — just a `path` dependency in `Cargo.toml`).
 
-**Backend stack:** Rust binary crate `core-war-backend`. Axum 0.7 for HTTP routing, socketioxide 0.15 for Socket.IO (wire-compatible with the Socket.IO JS client), tower-http for CORS, tokio runtime, dotenvy for `.env`, tracing/tracing-subscriber for logging. Entry point: `backend/src/main.rs`. The backend was originally scaffolded in Python (FastAPI + python-socketio) and swapped to Rust early so the engine could be a direct crate dependency for server-side battle validation. Planning docs (`corewars_project_summary.md`) still reference the old Python stack — ignore those.
+**Backend stack:** Rust binary crate `core-war-backend`. Axum 0.7 for HTTP routing, socketioxide 0.15 for Socket.IO (wire-compatible with the Socket.IO JS client), tower-http for CORS, sqlx 0.8 for Postgres (compile-time-checked queries), jsonwebtoken for JWT auth, argon2 for password hashing, tokio runtime, dotenvy for `.env`, tracing/tracing-subscriber for logging. Entry point: `backend/src/main.rs`.
 
-**Future backend deps (add when first used, not preemptively):** `sqlx` (Postgres, with compile-time-checked queries), `redis` with `tokio-comp` (Redis), `apalis` (Redis-backed job queue, equivalent to Python's `arq`), `jsonwebtoken` (JWT), `argon2` (password hashing).
+**Future backend deps (add when first used):** `redis` with `tokio-comp` (Redis for matchmaking queue persistence, rate limiting), `apalis` (Redis-backed job queue).
 
 **Frontend ↔ Engine:** Frontend imports the wasm-pack output as a JS module (`--target web`). The engine's `wasm` module (`engine/src/wasm.rs`, compiled only on `wasm32`) provides `#[wasm_bindgen]` wrapper types (`MatchState`, `ParsedWarrior`) and free functions (`parseWarrior`, `engineVersion`) that adapt the native Rust API for JS consumption. Key methods:
 - `parseWarrior(source)` → `ParsedWarrior` (or throws a JS error string on parse failure)
@@ -117,13 +117,16 @@ It exits 0 on success, 1 on any failure, and prints the assigned `sid` so you ca
 
 ### Playwright MCP (browser testing from Claude Code)
 
-The repo includes a `.mcp.json` that configures the Playwright MCP server for headless Chromium. This lets Claude Code launch a browser, navigate pages, click elements, and take accessibility snapshots of the running frontend.
+The repo includes a `.mcp.json.example` template for the Playwright MCP server (headless Chromium). Copy it to `.mcp.json` and fill in your local Chromium path. The `.mcp.json` file is gitignored since it contains machine-specific paths.
 
 **First-time setup:**
 
 ```bash
 # Install Playwright browsers (only needed once)
 npx playwright install chromium
+
+# Create local config from template
+cp .mcp.json.example .mcp.json
 ```
 
 After install, update the `--executable-path` in `.mcp.json` to match the installed Chromium path (check `~/.cache/ms-playwright/` for the exact directory).
@@ -136,7 +139,7 @@ Engine release build: `wasm-pack build --target web --release` (uses `opt-level 
 
 Backend release build: `cargo build --release` from `backend/`. Output binary at `backend/target/release/core-war-backend`.
 
-There are **no tests configured yet** in any of the three components. Rust formatting/linting are available out of the box: `cargo fmt` and `cargo clippy --all-targets -- -D warnings` work in both `engine/` and `backend/` without any config. There's no frontend linter set up yet.
+**Testing:** Engine has unit + integration tests (`cargo test` in `engine/`). Backend has unit tests and integration tests requiring Postgres (`cargo test` in `backend/`). Frontend uses Vitest + Testing Library (`npm test` in `frontend/`). **Linting/formatting:** `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in both `engine/` and `backend/`. Frontend has ESLint (`npm run lint`) and Prettier (`npm run format`).
 
 ## Environment
 

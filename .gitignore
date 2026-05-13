@@ -35,4 +35,10 @@ node_modules/
 dist/
 
 # Playwright MCP runtime artifacts
-.playwright-mcp/.claude/worktrees/
+.playwright-mcp/
+
+# Claude Code local config
+.claude/
+
+# MCP server config (contains local paths)
+.mcp.json

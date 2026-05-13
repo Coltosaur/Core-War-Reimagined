@@ -14,7 +14,7 @@ backend/      Rust (axum + socketioxide + tokio) API server
 
 - The **engine** compiles to Wasm via `wasm-pack` and is imported by the frontend as a JS module. It handles parsing, simulation, and state queries entirely client-side.
 - The **frontend** provides a Monaco-based Redcode editor, a battle visualizer, annotated classic warriors, and a learning page.
-- The **backend** handles auth, persistence, and (eventually) matchmaking and live battle streaming over Socket.IO. For ranked play it will also run the engine as a native Rust crate dependency for server-side validation.
+- The **backend** handles auth (JWT + Argon2, cookie-based), warrior persistence, matchmaking, leaderboards, and server-side match validation. Live matchmaking uses Socket.IO for real-time queue and battle events. The engine is a native Rust crate dependency for server-side battle validation.
 
 ## Prerequisites
 
@@ -55,19 +55,13 @@ This starts PostgreSQL 16 on port `5432` and Redis 7 on port `6379` with default
 
 ### 3. Set up the backend environment
 
-Create `backend/.env` if it doesn't exist:
+Copy the example env file and adjust as needed:
 
 ```bash
-cat > backend/.env << 'EOF'
-DATABASE_URL=postgresql://corewar:corewar@localhost:5432/corewar
-REDIS_URL=redis://localhost:6379
-FRONTEND_URL=http://localhost:5173
-PORT=3001
-JWT_SECRET=your-secret-here-must-be-at-least-32-bytes
-EOF
+cp backend/.env.example backend/.env
 ```
 
-`JWT_SECRET` must be at least 32 bytes. The backend will refuse to start if it's missing or too short.
+At a minimum, replace `JWT_SECRET` with a strong random value (must be at least 32 bytes). The backend will refuse to start if it's missing or too short. The defaults match the Docker Compose services above.
 
 ### 4. Build the Wasm engine
 
@@ -126,12 +120,23 @@ cargo test
 
 ### Backend tests
 
-The backend has unit tests for config validation and error responses. These don't require a running database:
+Unit tests (config, middleware, error handling) run without external dependencies. Integration tests (`backend/tests/`) require a running Postgres instance (the `docker compose up` from step 2):
 
 ```bash
 cd backend
 cargo test
 ```
+
+### Smoke-testing the backend
+
+`frontend/scripts/test-backend.mjs` hits `/health` and opens a Socket.IO connection to verify both transports end-to-end:
+
+```bash
+# (with the backend running)
+node frontend/scripts/test-backend.mjs
+```
+
+Exits 0 on success, 1 on failure.
 
 ### Frontend tests
 
@@ -191,7 +196,7 @@ npm run test:watch # Vitest (watch mode)
 
 ## Playwright MCP (Browser Testing with Claude Code)
 
-The repo includes a `.mcp.json` that configures the [Playwright MCP server](https://github.com/anthropics/mcp-playwright), allowing Claude Code to launch a headless browser, navigate pages, interact with UI elements, and take accessibility snapshots of the running frontend.
+The repo includes a `.mcp.json.example` template for configuring the [Playwright MCP server](https://github.com/anthropics/mcp-playwright), which lets Claude Code launch a headless browser, navigate pages, interact with UI elements, and take accessibility snapshots of the running frontend.
 
 ### Setup
 
@@ -207,23 +212,13 @@ npx playwright install chromium
 ls ~/.cache/ms-playwright/
 ```
 
-3. Update `.mcp.json` at the repo root with the correct path:
+3. Copy the example and fill in your local Chromium path:
 
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest",
-        "--headless",
-        "--executable-path",
-        "<your-chromium-path>/chrome"
-      ]
-    }
-  }
-}
+```bash
+cp .mcp.json.example .mcp.json
 ```
+
+Edit `.mcp.json` and replace `<path-to-chromium>` with the path found in step 2. The `.mcp.json` file is gitignored since it contains machine-specific paths.
 
 ### Usage
 

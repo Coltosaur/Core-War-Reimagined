@@ -4,6 +4,7 @@ use std::net::IpAddr;
 #[derive(Debug)]
 pub struct Config {
     pub database_url: String,
+    pub redis_url: String,
     pub frontend_url: String,
     pub port: u16,
     pub jwt_secret: Vec<u8>,
@@ -20,6 +21,7 @@ impl Config {
         F: Fn(&str) -> Option<String>,
     {
         let database_url = get("DATABASE_URL").ok_or(ConfigError::Missing("DATABASE_URL"))?;
+        let redis_url = get("REDIS_URL").ok_or(ConfigError::Missing("REDIS_URL"))?;
 
         let frontend_url = get("FRONTEND_URL").unwrap_or_else(|| "http://localhost:5173".into());
 
@@ -41,6 +43,7 @@ impl Config {
 
         Ok(Self {
             database_url,
+            redis_url,
             frontend_url,
             port,
             jwt_secret,
@@ -84,6 +87,7 @@ mod tests {
     fn valid_env() -> Vec<(&'static str, &'static str)> {
         vec![
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
             ("FRONTEND_URL", "http://localhost:5173"),
             ("PORT", "4000"),
@@ -105,9 +109,27 @@ mod tests {
     }
 
     #[test]
+    fn happy_path_includes_redis_url() {
+        let lookup = make_lookup(&valid_env());
+        let config = Config::from_lookup(lookup).unwrap();
+        assert_eq!(config.redis_url, "redis://localhost:6379");
+    }
+
+    #[test]
+    fn missing_redis_url() {
+        let lookup = make_lookup(&[
+            ("DATABASE_URL", "postgresql://localhost/test"),
+            ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
+        ]);
+        let err = Config::from_lookup(lookup).unwrap_err();
+        assert!(matches!(err, ConfigError::Missing("REDIS_URL")));
+    }
+
+    #[test]
     fn defaults_for_optional_vars() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
         ]);
         let config = Config::from_lookup(lookup).unwrap();
@@ -121,6 +143,7 @@ mod tests {
     fn invalid_port_falls_back_to_default() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
             ("PORT", "not-a-number"),
         ]);
@@ -137,7 +160,10 @@ mod tests {
 
     #[test]
     fn missing_jwt_secret() {
-        let lookup = make_lookup(&[("DATABASE_URL", "postgresql://localhost/test")]);
+        let lookup = make_lookup(&[
+            ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
+        ]);
         let err = Config::from_lookup(lookup).unwrap_err();
         assert!(matches!(err, ConfigError::Missing("JWT_SECRET")));
     }
@@ -146,6 +172,7 @@ mod tests {
     fn jwt_secret_too_short() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "too-short"),
         ]);
         let err = Config::from_lookup(lookup).unwrap_err();
@@ -156,6 +183,7 @@ mod tests {
     fn jwt_secret_exactly_32_bytes() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "abcdefghijklmnopqrstuvwxyz012345"),
         ]);
         let config = Config::from_lookup(lookup).unwrap();
@@ -166,6 +194,7 @@ mod tests {
     fn trusted_proxies_parsed() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
             ("TRUSTED_PROXIES", "10.0.0.1, 172.16.0.1"),
         ]);
@@ -180,6 +209,7 @@ mod tests {
     fn trusted_proxies_skips_invalid_entries() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
             ("TRUSTED_PROXIES", "10.0.0.1, not-an-ip, 192.168.1.1"),
         ]);

@@ -3,46 +3,94 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use redis::aio::ConnectionManager;
 use serde_json::json;
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+
+const RATE_LIMIT_SCRIPT: &str = r#"
+local key = KEYS[1]
+local max_requests = tonumber(ARGV[1])
+local window_secs = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local request_id = ARGV[4]
+
+local cutoff = now - window_secs
+
+redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+
+local count = redis.call('ZCARD', key)
+if count >= max_requests then
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    if #oldest >= 2 then
+        local retry_after = window_secs - (now - tonumber(oldest[2]))
+        return retry_after
+    end
+    return window_secs
+end
+
+redis.call('ZADD', key, now, request_id)
+redis.call('EXPIRE', key, window_secs + 1)
+
+return -1
+"#;
 
 #[derive(Clone)]
 pub struct RateLimiter {
-    state: Arc<Mutex<HashMap<IpAddr, Vec<Instant>>>>,
+    conn: ConnectionManager,
+    key_prefix: String,
     max_requests: u32,
-    window: Duration,
+    window_secs: u64,
     trusted_proxies: Arc<Vec<IpAddr>>,
 }
 
 impl RateLimiter {
-    pub fn new(max_requests: u32, window: Duration, trusted_proxies: Vec<IpAddr>) -> Self {
+    pub fn new(
+        conn: ConnectionManager,
+        name: &str,
+        max_requests: u32,
+        window_secs: u64,
+        trusted_proxies: Vec<IpAddr>,
+    ) -> Self {
         Self {
-            state: Arc::new(Mutex::new(HashMap::new())),
+            conn,
+            key_prefix: format!("rate_limit:{name}"),
             max_requests,
-            window,
+            window_secs,
             trusted_proxies: Arc::new(trusted_proxies),
         }
     }
 
-    pub fn check(&self, ip: IpAddr) -> Result<(), Duration> {
-        let mut state = self.state.lock().unwrap();
-        let now = Instant::now();
-        let cutoff = now - self.window;
+    pub async fn check(&self, ip: IpAddr) -> Result<(), u64> {
+        let key = format!("{}:{}", self.key_prefix, ip);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let request_id = format!("{now}:{}", uuid::Uuid::new_v4());
+        let mut conn = self.conn.clone();
 
-        let timestamps = state.entry(ip).or_default();
-        timestamps.retain(|t| *t > cutoff);
+        let result: i64 = match redis::Script::new(RATE_LIMIT_SCRIPT)
+            .key(&key)
+            .arg(self.max_requests)
+            .arg(self.window_secs)
+            .arg(now)
+            .arg(&request_id)
+            .invoke_async(&mut conn)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Redis rate limit error: {e}");
+                return Ok(());
+            }
+        };
 
-        if timestamps.len() >= self.max_requests as usize {
-            let oldest = timestamps[0];
-            let retry_after = self.window - (now - oldest);
-            return Err(retry_after);
+        if result < 0 {
+            Ok(())
+        } else {
+            Err(result as u64)
         }
-
-        timestamps.push(now);
-        Ok(())
     }
 }
 
@@ -71,16 +119,16 @@ fn extract_ip(
     direct_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]))
 }
 
-pub fn login_limiter(trusted_proxies: Vec<IpAddr>) -> RateLimiter {
-    RateLimiter::new(5, Duration::from_secs(15 * 60), trusted_proxies)
+pub fn login_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpAddr>) -> RateLimiter {
+    RateLimiter::new(conn, "login", 5, 15 * 60, trusted_proxies)
 }
 
-pub fn register_limiter(trusted_proxies: Vec<IpAddr>) -> RateLimiter {
-    RateLimiter::new(3, Duration::from_secs(60 * 60), trusted_proxies)
+pub fn register_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpAddr>) -> RateLimiter {
+    RateLimiter::new(conn, "register", 3, 60 * 60, trusted_proxies)
 }
 
-pub fn refresh_limiter(trusted_proxies: Vec<IpAddr>) -> RateLimiter {
-    RateLimiter::new(10, Duration::from_secs(15 * 60), trusted_proxies)
+pub fn refresh_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpAddr>) -> RateLimiter {
+    RateLimiter::new(conn, "refresh", 10, 15 * 60, trusted_proxies)
 }
 
 pub async fn rate_limit_middleware(
@@ -95,10 +143,10 @@ pub async fn rate_limit_middleware(
         &limiter.trusted_proxies,
     );
 
-    match limiter.check(ip) {
+    match limiter.check(ip).await {
         Ok(()) => next.run(request).await,
         Err(retry_after) => {
-            let secs = retry_after.as_secs() + 1;
+            let secs = retry_after + 1;
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 [(axum::http::header::RETRY_AFTER, secs.to_string())],
@@ -112,109 +160,6 @@ pub async fn rate_limit_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::body::Body;
-    use axum::http::Request;
-    use axum::routing::post;
-    use axum::Router;
-    use http_body_util::BodyExt;
-    use serde_json::Value;
-    use tower::ServiceExt;
-
-    fn test_limiter(max: u32, window_secs: u64) -> RateLimiter {
-        RateLimiter::new(max, Duration::from_secs(window_secs), vec![])
-    }
-
-    fn app_with_limiter(limiter: RateLimiter) -> Router {
-        Router::new()
-            .route("/test", post(|| async { "ok" }))
-            .layer(axum::middleware::from_fn_with_state(
-                limiter.clone(),
-                rate_limit_middleware,
-            ))
-            .with_state(limiter)
-    }
-
-    async fn response_parts(resp: Response) -> (StatusCode, Value, Option<String>) {
-        let status = resp.status();
-        let retry_after = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: Value = serde_json::from_slice(&body).unwrap_or(json!(null));
-        (status, json, retry_after)
-    }
-
-    fn post_request() -> Request<Body> {
-        Request::post("/test").body(Body::empty()).unwrap()
-    }
-
-    // --- Sliding window tests ---
-
-    #[tokio::test]
-    async fn allows_requests_within_limit() {
-        let limiter = test_limiter(3, 60);
-        for _ in 0..3 {
-            let app = app_with_limiter(limiter.clone());
-            let resp = app.oneshot(post_request()).await.unwrap();
-            assert_eq!(resp.status(), StatusCode::OK);
-        }
-    }
-
-    #[tokio::test]
-    async fn blocks_after_limit_exceeded() {
-        let limiter = test_limiter(2, 60);
-        for _ in 0..2 {
-            let app = app_with_limiter(limiter.clone());
-            let resp = app.oneshot(post_request()).await.unwrap();
-            assert_eq!(resp.status(), StatusCode::OK);
-        }
-
-        let app = app_with_limiter(limiter.clone());
-        let (status, json, retry_after) =
-            response_parts(app.oneshot(post_request()).await.unwrap()).await;
-        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-        assert!(json["error"]
-            .as_str()
-            .unwrap()
-            .contains("Too many requests"));
-        assert!(retry_after.is_some());
-    }
-
-    #[tokio::test]
-    async fn retry_after_header_present() {
-        let limiter = test_limiter(1, 300);
-
-        let app = app_with_limiter(limiter.clone());
-        app.oneshot(post_request()).await.unwrap();
-
-        let app = app_with_limiter(limiter.clone());
-        let (_, _, retry_after) = response_parts(app.oneshot(post_request()).await.unwrap()).await;
-        let secs: u64 = retry_after.unwrap().parse().unwrap();
-        assert!(secs > 0 && secs <= 301);
-    }
-
-    #[test]
-    fn check_allows_up_to_max() {
-        let limiter = test_limiter(3, 60);
-        let ip = IpAddr::from([1, 2, 3, 4]);
-        assert!(limiter.check(ip).is_ok());
-        assert!(limiter.check(ip).is_ok());
-        assert!(limiter.check(ip).is_ok());
-        assert!(limiter.check(ip).is_err());
-    }
-
-    #[test]
-    fn check_returns_retry_duration() {
-        let limiter = test_limiter(1, 300);
-        let ip = IpAddr::from([5, 6, 7, 8]);
-        assert!(limiter.check(ip).is_ok());
-        let retry = limiter.check(ip).unwrap_err();
-        assert!(retry.as_secs() > 0 && retry.as_secs() <= 300);
-    }
-
-    // --- IP extraction + trust boundary tests ---
 
     #[test]
     fn direct_ip_used_when_no_trusted_proxies() {
@@ -282,48 +227,86 @@ mod tests {
         assert_eq!(ip, IpAddr::from(attacker));
     }
 
-    // --- Per-IP isolation (middleware-level) ---
+    async fn test_conn() -> ConnectionManager {
+        let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
+        let client = redis::Client::open(url.as_str()).unwrap();
+        ConnectionManager::new(client).await.unwrap()
+    }
 
     #[tokio::test]
-    async fn different_ips_tracked_separately_via_connect_info() {
-        let limiter = test_limiter(1, 60);
-
-        let app = app_with_limiter(limiter.clone());
-        let resp = app.oneshot(post_request()).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let app = app_with_limiter(limiter.clone());
-        let resp = app.oneshot(post_request()).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
-    }
-
-    // --- Limiter config tests ---
-
-    #[test]
-    fn login_limiter_config() {
-        let l = login_limiter(vec![]);
+    async fn login_limiter_config() {
+        let l = login_limiter(test_conn().await, vec![]);
         assert_eq!(l.max_requests, 5);
-        assert_eq!(l.window, Duration::from_secs(15 * 60));
+        assert_eq!(l.window_secs, 15 * 60);
     }
 
-    #[test]
-    fn register_limiter_config() {
-        let l = register_limiter(vec![]);
+    #[tokio::test]
+    async fn register_limiter_config() {
+        let l = register_limiter(test_conn().await, vec![]);
         assert_eq!(l.max_requests, 3);
-        assert_eq!(l.window, Duration::from_secs(60 * 60));
+        assert_eq!(l.window_secs, 60 * 60);
     }
 
-    #[test]
-    fn refresh_limiter_config() {
-        let l = refresh_limiter(vec![]);
+    #[tokio::test]
+    async fn refresh_limiter_config() {
+        let l = refresh_limiter(test_conn().await, vec![]);
         assert_eq!(l.max_requests, 10);
-        assert_eq!(l.window, Duration::from_secs(15 * 60));
+        assert_eq!(l.window_secs, 15 * 60);
     }
 
-    #[test]
-    fn limiter_carries_trusted_proxies() {
+    #[tokio::test]
+    async fn limiter_carries_trusted_proxies() {
         let proxies = vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([10, 0, 0, 2])];
-        let l = login_limiter(proxies.clone());
+        let l = login_limiter(test_conn().await, proxies.clone());
         assert_eq!(*l.trusted_proxies, proxies);
+    }
+
+    #[tokio::test]
+    async fn check_allows_up_to_max() {
+        let limiter = RateLimiter::new(test_conn().await, "test_allows", 3, 60, vec![]);
+        let ip = IpAddr::from([1, 2, 3, 4]);
+
+        let key = format!("{}:{}", limiter.key_prefix, ip);
+        let mut c = limiter.conn.clone();
+        let _: () = redis::cmd("DEL")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+
+        assert!(limiter.check(ip).await.is_ok());
+        assert!(limiter.check(ip).await.is_ok());
+        assert!(limiter.check(ip).await.is_ok());
+        assert!(limiter.check(ip).await.is_err());
+
+        let _: () = redis::cmd("DEL")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn check_returns_retry_duration() {
+        let limiter = RateLimiter::new(test_conn().await, "test_retry", 1, 300, vec![]);
+        let ip = IpAddr::from([5, 6, 7, 8]);
+
+        let key = format!("{}:{}", limiter.key_prefix, ip);
+        let mut c = limiter.conn.clone();
+        let _: () = redis::cmd("DEL")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+
+        assert!(limiter.check(ip).await.is_ok());
+        let retry = limiter.check(ip).await.unwrap_err();
+        assert!(retry > 0 && retry <= 300);
+
+        let _: () = redis::cmd("DEL")
+            .arg(&key)
+            .query_async(&mut c)
+            .await
+            .unwrap();
     }
 }

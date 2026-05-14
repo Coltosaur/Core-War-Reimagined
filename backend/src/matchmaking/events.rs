@@ -1,5 +1,5 @@
 use crate::auth::socket::{get_auth, require_auth};
-use crate::matchmaking::queue::{QueueEntry, SharedQueue};
+use crate::matchmaking::queue::{QueueEntry, RedisQueue};
 use crate::models::warrior::Warrior;
 use core_war_engine::{parse_warrior, MatchResult, MatchState};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ struct MatchResultEvent {
     blue_username: String,
 }
 
-pub fn register_events(socket: &SocketRef, queue: SharedQueue, db: PgPool) {
+pub fn register_events(socket: &SocketRef, queue: RedisQueue, db: PgPool) {
     let q = queue.clone();
     let pool = db.clone();
     socket.on(
@@ -107,20 +107,31 @@ pub fn register_events(socket: &SocketRef, queue: SharedQueue, db: PgPool) {
                     socket_id: socket.id.to_string(),
                 };
 
-                let match_pair = {
-                    let mut q = q.lock().await;
-                    q.join(entry)
+                let match_pair = match q.join(entry).await {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        error!("Redis error in queue:join: {e}");
+                        let _ = socket.emit(
+                            "queue:error",
+                            &serde_json::json!({"error": "Internal error"}),
+                        );
+                        return;
+                    }
                 };
 
                 match match_pair {
                     None => {
-                        let q = q.lock().await;
-                        let pos = q.position(user.user_id).unwrap_or(0);
+                        let pos = q
+                            .position(user.user_id)
+                            .await
+                            .unwrap_or(Some(0))
+                            .unwrap_or(0);
+                        let size = q.len().await.unwrap_or(0);
                         let _ = socket.emit(
                             "queue:joined",
                             &QueueJoined {
                                 position: pos + 1,
-                                queue_size: q.len(),
+                                queue_size: size,
                             },
                         );
                         info!("user {} joined queue (position {})", user.username, pos + 1);
@@ -143,9 +154,12 @@ pub fn register_events(socket: &SocketRef, queue: SharedQueue, db: PgPool) {
                 None => return,
             };
 
-            let removed = {
-                let mut q = q.lock().await;
-                q.leave(user.user_id)
+            let removed = match q.leave(user.user_id).await {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("Redis error in queue:leave: {e}");
+                    return;
+                }
             };
 
             if removed {
@@ -160,8 +174,9 @@ pub fn register_events(socket: &SocketRef, queue: SharedQueue, db: PgPool) {
         let q = q3.clone();
         async move {
             if let Some(user) = get_auth(&socket) {
-                let mut q = q.lock().await;
-                q.leave(user.user_id);
+                if let Err(e) = q.leave(user.user_id).await {
+                    error!("Redis error on disconnect cleanup: {e}");
+                }
             }
         }
     });

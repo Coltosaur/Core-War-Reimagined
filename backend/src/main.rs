@@ -29,6 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let pool = db::init_pool(&config.database_url).await?;
 
+    let redis_client = redis::Client::open(config.redis_url.as_str())?;
+    let redis_conn = redis::aio::ConnectionManager::new(redis_client).await?;
+    info!("connected to redis");
+
     let state = AppState {
         db: pool,
         config: AppConfig {
@@ -39,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let jwt_secret_for_socket = state.config.jwt_secret.clone();
-    let queue = matchmaking::queue::new_shared_queue();
+    let queue = matchmaking::queue::RedisQueue::new(redis_conn.clone());
     let db_for_socket = state.db.clone();
     let (socket_layer, io) = SocketIo::new_layer();
     io.ns("/", move |socket: SocketRef| {
@@ -60,9 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_credentials(true);
 
     let proxies = state.config.trusted_proxies.clone();
-    let login_limiter = auth::rate_limit::login_limiter(proxies.clone());
-    let register_limiter = auth::rate_limit::register_limiter(proxies.clone());
-    let refresh_limiter = auth::rate_limit::refresh_limiter(proxies);
+    let login_limiter = auth::rate_limit::login_limiter(redis_conn.clone(), proxies.clone());
+    let register_limiter = auth::rate_limit::register_limiter(redis_conn.clone(), proxies.clone());
+    let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn, proxies);
 
     let app = Router::new()
         .route("/health", get(health))

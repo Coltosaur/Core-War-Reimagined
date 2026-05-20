@@ -2,6 +2,15 @@
 name = "core-war-backend"
 version = "0.1.0"
 edition = "2021"
+default-run = "core-war-backend"
+
+[features]
+dev-fixtures = []
+
+[[bin]]
+name = "seed-test-users"
+path = "src/bin/seed_test_users.rs"
+required-features = ["dev-fixtures"]
 
 [dependencies]
 axum = "0.7"

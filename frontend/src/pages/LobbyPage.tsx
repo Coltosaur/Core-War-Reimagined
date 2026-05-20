@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../api/AuthContext';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
 import { io, type Socket } from 'socket.io-client';
@@ -95,6 +95,7 @@ type Phase = 'idle' | 'queued' | 'matched' | 'result';
 export default function LobbyPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const library = useWarriorLibrary();
   const userWarriors = library.filter((w: Warrior) => serverUuid(w) !== null);
   const firstUuid = userWarriors.length > 0 ? (serverUuid(userWarriors[0]) ?? '') : '';
@@ -104,10 +105,11 @@ export default function LobbyPage() {
   const [result, setResult] = useState<MatchResultData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const autoQueuedRef = useRef(false);
 
   const effectiveId = selectedId || firstUuid;
 
-  function connect() {
+  const connect = useCallback(() => {
     if (socketRef.current) return socketRef.current;
     const s = io(API_BASE, { withCredentials: true });
     socketRef.current = s;
@@ -134,14 +136,35 @@ export default function LobbyPage() {
     });
 
     return s;
-  }
+  }, [navigate]);
 
-  function joinQueue() {
-    if (!effectiveId) return;
-    setError(null);
-    const s = connect();
-    s.emit('queue:join', { warrior_id: effectiveId });
-  }
+  // Takes the warrior id as an argument (rather than closing over the derived
+  // `effectiveId`) so the callback's deps stay stable values only.
+  const joinQueue = useCallback(
+    (warriorId: string) => {
+      if (!warriorId) return;
+      setError(null);
+      const s = connect();
+      s.emit('queue:join', { warrior_id: warriorId });
+    },
+    [connect],
+  );
+
+  // "Play Again" from the match viewer navigates here with { autoQueue: true }.
+  // Re-join the queue once a warrior is available, then clear the router state
+  // so a refresh or back-navigation doesn't silently re-queue. The latch is
+  // released on cleanup so StrictMode's mount/cleanup/mount cycle (which tears
+  // down the first socket) re-establishes the connection on the second mount.
+  useEffect(() => {
+    const autoQueue = (location.state as { autoQueue?: boolean } | null)?.autoQueue;
+    if (!autoQueue || autoQueuedRef.current || !effectiveId) return;
+    autoQueuedRef.current = true;
+    joinQueue(effectiveId);
+    navigate(location.pathname, { replace: true });
+    return () => {
+      autoQueuedRef.current = false;
+    };
+  }, [location.state, location.pathname, effectiveId, joinQueue, navigate]);
 
   function leaveQueue() {
     socketRef.current?.emit('queue:leave');
@@ -158,6 +181,7 @@ export default function LobbyPage() {
   useEffect(() => {
     return () => {
       socketRef.current?.disconnect();
+      socketRef.current = null;
     };
   }, []);
 
@@ -198,7 +222,7 @@ export default function LobbyPage() {
               </option>
             ))}
           </select>
-          <button style={QUEUE_BTN} onClick={joinQueue}>
+          <button style={QUEUE_BTN} onClick={() => joinQueue(effectiveId)}>
             Find Match
           </button>
         </>

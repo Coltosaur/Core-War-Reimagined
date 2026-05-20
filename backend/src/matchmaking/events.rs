@@ -1,6 +1,7 @@
 use crate::auth::socket::{get_auth, require_auth};
 use crate::matchmaking::queue::{QueueEntry, RedisQueue};
 use crate::models::warrior::Warrior;
+use chrono::Utc;
 use core_war_engine::{parse_warrior, MatchResult, MatchState};
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::{Data, SocketRef};
@@ -12,6 +13,13 @@ use uuid::Uuid;
 
 const CORE_SIZE: usize = 8000;
 const MAX_STEPS: u64 = 80_000;
+const RED_START: usize = 0;
+const BLUE_START: usize = CORE_SIZE / 2;
+// Playback rate for the client-side replay. Server runs the battle once, the
+// outcome is deterministic, and clients render locally paced from
+// `playback_start_time_ms`. Tuning knob for the live viewer UX — higher is
+// snappier, lower draws out the moment-to-moment activity.
+const STEPS_PER_SEC: u32 = 2000;
 
 #[derive(Deserialize)]
 pub struct QueueJoinData {
@@ -31,6 +39,23 @@ struct MatchFound {
     blue_username: String,
     red_warrior: String,
     blue_warrior: String,
+}
+
+#[derive(Serialize, Clone)]
+struct MatchStart {
+    match_id: String,
+    red_username: String,
+    blue_username: String,
+    red_warrior_source: String,
+    blue_warrior_source: String,
+    core_size: usize,
+    max_steps: u64,
+    red_start: usize,
+    blue_start: usize,
+    steps_taken: u64,
+    result: String,
+    playback_start_time_ms: i64,
+    steps_per_sec: u32,
 }
 
 #[derive(Serialize, Clone)]
@@ -275,13 +300,17 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
 
     let _ = io.to(room.clone()).emit("match:found", &found_event);
 
+    let red_source_for_battle = red_source.clone();
+    let blue_source_for_battle = blue_source.clone();
     let battle_result = tokio::task::spawn_blocking(move || {
-        let red_parsed = parse_warrior(&red_source).map_err(|e| format!("Red parse: {e}"))?;
-        let blue_parsed = parse_warrior(&blue_source).map_err(|e| format!("Blue parse: {e}"))?;
+        let red_parsed =
+            parse_warrior(&red_source_for_battle).map_err(|e| format!("Red parse: {e}"))?;
+        let blue_parsed =
+            parse_warrior(&blue_source_for_battle).map_err(|e| format!("Blue parse: {e}"))?;
 
         let mut m = MatchState::new(CORE_SIZE, MAX_STEPS);
-        m.load_warrior(0, &red_parsed, 0);
-        m.load_warrior(1, &blue_parsed, CORE_SIZE / 2);
+        m.load_warrior(0, &red_parsed, RED_START);
+        m.load_warrior(1, &blue_parsed, BLUE_START);
 
         while m.step() {}
 
@@ -308,6 +337,30 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
             return;
         }
     };
+
+    // Emit the full replay payload. Clients use playback_start_time_ms to
+    // pace the local wasm replay deterministically; match:result follows
+    // immediately as informational confirmation of the canonical outcome.
+    // No server-side scheduling — pacing is purely client-side, which makes
+    // spectator join-in-progress trivial (compute current step from elapsed
+    // time and fast-forward locally).
+    let start_event = MatchStart {
+        match_id: match_id.clone(),
+        red_username: red.username.clone(),
+        blue_username: blue.username.clone(),
+        red_warrior_source: red_source,
+        blue_warrior_source: blue_source,
+        core_size: CORE_SIZE,
+        max_steps: MAX_STEPS,
+        red_start: RED_START,
+        blue_start: BLUE_START,
+        steps_taken,
+        result: result_str.clone(),
+        playback_start_time_ms: Utc::now().timestamp_millis(),
+        steps_per_sec: STEPS_PER_SEC,
+    };
+
+    let _ = io.to(room.clone()).emit("match:start", &start_event);
 
     let result_event = MatchResultEvent {
         match_id: match_id.clone(),

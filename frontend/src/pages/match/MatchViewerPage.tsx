@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../api/AuthContext';
-import { GRID_CONTAINER_STYLE } from '../battlefield/styles';
+import { GRID_CONTAINER_STYLE, PARSE_ERROR_STYLE } from '../battlefield/styles';
 import { useMatchReplay, type MatchStartPayload } from './useMatchReplay';
 
 const PAGE_STYLE: React.CSSProperties = {
@@ -35,20 +35,89 @@ const STATUS_ROW: React.CSSProperties = {
   fontFamily: '"JetBrains Mono", "Fira Code", monospace',
 };
 
-const RESULT_BOX: React.CSSProperties = {
-  padding: '1rem 1.5rem',
-  backgroundColor: '#111',
-  border: '1px solid #333',
-  borderRadius: '8px',
-  textAlign: 'center',
-  minWidth: '260px',
-};
-
 const WARRIOR_ROW: React.CSSProperties = {
   display: 'flex',
   gap: '2rem',
   fontSize: '0.85rem',
   fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+};
+
+// Wrap the imperative PixiJS canvas so overlays can be positioned over it.
+// Overlays are siblings of the canvas container (never children of gridRef),
+// so React never reconciles away the canvas Pixi appends imperatively.
+const GRID_WRAP_STYLE: React.CSSProperties = {
+  position: 'relative',
+  display: 'inline-block',
+  lineHeight: 0,
+};
+
+const OVERLAY_BASE: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 'normal',
+};
+
+const LOADING_OVERLAY_STYLE: React.CSSProperties = {
+  ...OVERLAY_BASE,
+  backgroundColor: 'rgba(10, 10, 12, 0.8)',
+  color: '#888',
+  fontSize: '0.9rem',
+  letterSpacing: '0.05em',
+};
+
+const RESULT_CARD_STYLE: React.CSSProperties = {
+  padding: '1.5rem 2rem',
+  backgroundColor: '#111',
+  border: '1px solid #333',
+  borderRadius: '10px',
+  textAlign: 'center',
+  minWidth: '240px',
+  boxShadow: '0 12px 40px rgba(0, 0, 0, 0.55)',
+};
+
+const RESULT_HEADLINE_STYLE: React.CSSProperties = {
+  fontSize: '1.6rem',
+  fontWeight: 700,
+  margin: 0,
+};
+
+const RESULT_SUB_STYLE: React.CSSProperties = {
+  color: '#888',
+  fontSize: '0.85rem',
+  margin: '0.4rem 0 1.2rem',
+};
+
+const BUTTON_ROW_STYLE: React.CSSProperties = {
+  display: 'flex',
+  gap: '0.6rem',
+  justifyContent: 'center',
+};
+
+const PRIMARY_BTN_STYLE: React.CSSProperties = {
+  padding: '0.5rem 1.3rem',
+  backgroundColor: '#e94560',
+  color: '#fff',
+  border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: '0.9rem',
+  letterSpacing: '0.04em',
+};
+
+const SECONDARY_BTN_STYLE: React.CSSProperties = {
+  padding: '0.5rem 1.3rem',
+  backgroundColor: 'transparent',
+  color: '#bbb',
+  border: '1px solid #444',
+  borderRadius: '6px',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: '0.9rem',
+  letterSpacing: '0.04em',
 };
 
 function resultLabel(result: string, red: string, blue: string, me: string | undefined): string {
@@ -72,7 +141,7 @@ export default function MatchViewerPage() {
   const params = useParams<{ matchId: string }>();
 
   // Match payload comes from the lobby via router state. Reload-without-state
-  // bounces back to the lobby (spectator-join via deep-link is PR 4 territory).
+  // bounces back to the lobby (spectator-join via deep-link is issue #51).
   const payload = (location.state as { matchStart?: MatchStartPayload } | null)?.matchStart ?? null;
 
   useEffect(() => {
@@ -101,9 +170,61 @@ export default function MatchViewerPage() {
         {payload.red_username} vs {payload.blue_username}
       </p>
 
-      {parseError && <div style={{ color: '#e94560' }}>{parseError}</div>}
+      {parseError && <div style={PARSE_ERROR_STYLE}>{parseError}</div>}
 
-      <div ref={gridRef} style={GRID_CONTAINER_STYLE} />
+      <div style={GRID_WRAP_STYLE}>
+        <div ref={gridRef} style={GRID_CONTAINER_STYLE} />
+
+        {!ready && !parseError && <div style={LOADING_OVERLAY_STYLE}>Loading engine…</div>}
+
+        {finished && (
+          <div
+            style={{
+              ...OVERLAY_BASE,
+              backgroundColor: 'rgba(10, 10, 12, 0.72)',
+              animation: 'cw-fade-in 200ms ease-out both',
+            }}
+          >
+            <div
+              style={{
+                ...RESULT_CARD_STYLE,
+                animation: 'cw-result-pop 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both',
+              }}
+            >
+              <p
+                style={{
+                  ...RESULT_HEADLINE_STYLE,
+                  color: resultColor(
+                    payload.result,
+                    payload.red_username,
+                    payload.blue_username,
+                    user?.username,
+                  ),
+                }}
+              >
+                {resultLabel(
+                  payload.result,
+                  payload.red_username,
+                  payload.blue_username,
+                  user?.username,
+                )}
+              </p>
+              <p style={RESULT_SUB_STYLE}>{totalSteps.toLocaleString()} steps</p>
+              <div style={BUTTON_ROW_STYLE}>
+                <button
+                  style={PRIMARY_BTN_STYLE}
+                  onClick={() => navigate('/lobby', { state: { autoQueue: true } })}
+                >
+                  Play Again
+                </button>
+                <button style={SECONDARY_BTN_STYLE} onClick={() => navigate('/lobby')}>
+                  Back to Lobby
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={STATUS_ROW}>
         <span>
@@ -119,51 +240,6 @@ export default function MatchViewerPage() {
           </span>
         ))}
       </div>
-
-      {finished && (
-        <div style={RESULT_BOX}>
-          <p
-            style={{
-              fontSize: '1.3rem',
-              fontWeight: 700,
-              margin: 0,
-              color: resultColor(
-                payload.result,
-                payload.red_username,
-                payload.blue_username,
-                user?.username,
-              ),
-            }}
-          >
-            {resultLabel(
-              payload.result,
-              payload.red_username,
-              payload.blue_username,
-              user?.username,
-            )}
-          </p>
-          <p style={{ color: '#888', fontSize: '0.85rem', margin: '0.5rem 0 1rem' }}>
-            {totalSteps.toLocaleString()} steps
-          </p>
-          <button
-            style={{
-              padding: '0.5rem 1.5rem',
-              backgroundColor: '#e94560',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              letterSpacing: '0.05em',
-            }}
-            onClick={() => navigate('/lobby')}
-          >
-            Back to Lobby
-          </button>
-        </div>
-      )}
-
-      {!ready && !parseError && <p style={{ color: '#888' }}>Loading engine…</p>}
     </div>
   );
 }

@@ -18,6 +18,8 @@ const LeaderboardPage = React.lazy(() => import('./pages/LeaderboardPage'));
 const ProfilePage = React.lazy(() => import('./pages/profile/ProfilePage'));
 // eslint-disable-next-line react-refresh/only-export-components
 const LobbyPage = React.lazy(() => import('./pages/LobbyPage'));
+// eslint-disable-next-line react-refresh/only-export-components
+const MatchViewerPage = React.lazy(() => import('./pages/match/MatchViewerPage'));
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -79,6 +81,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
               element={
                 <Suspense>
                   <LobbyPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/match/:matchId"
+              element={
+                <Suspense>
+                  <MatchViewerPage />
                 </Suspense>
               }
             />

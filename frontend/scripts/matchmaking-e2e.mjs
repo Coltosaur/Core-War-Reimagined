@@ -140,6 +140,63 @@ if (redFound && blueFound) {
   }
 }
 
+const redStart = findEvent(redResult.events, 'match:start');
+const blueStart = findEvent(blueResult.events, 'match:start');
+
+if (!redStart) failures.push('bot-red never received match:start');
+if (!blueStart) failures.push('bot-blue never received match:start');
+
+if (redStart && blueStart) {
+  const requiredFields = [
+    'match_id',
+    'red_username',
+    'blue_username',
+    'red_warrior_source',
+    'blue_warrior_source',
+    'core_size',
+    'max_steps',
+    'red_start',
+    'blue_start',
+    'steps_taken',
+    'result',
+    'playback_start_time_ms',
+    'steps_per_sec',
+  ];
+  for (const f of requiredFields) {
+    if (!(f in redStart.data)) failures.push(`bot-red match:start missing field "${f}"`);
+    if (!(f in blueStart.data)) failures.push(`bot-blue match:start missing field "${f}"`);
+    if (
+      f in redStart.data &&
+      f in blueStart.data &&
+      JSON.stringify(redStart.data[f]) !== JSON.stringify(blueStart.data[f])
+    ) {
+      failures.push(
+        `match:start field "${f}" differs across bots — red=${JSON.stringify(redStart.data[f])}, blue=${JSON.stringify(blueStart.data[f])}`,
+      );
+    }
+  }
+  if (failures.length === 0 || !failures.some((f) => f.startsWith('match:start'))) {
+    console.log(
+      `✓ both saw match:start — steps_taken=${redStart.data.steps_taken}, steps_per_sec=${redStart.data.steps_per_sec}, playback_start_time_ms=${redStart.data.playback_start_time_ms}`,
+    );
+  }
+}
+
+function eventIndex(events, name) {
+  return events.findIndex((e) => e.event === name);
+}
+
+for (const [label, events] of [
+  ['bot-red', redResult.events],
+  ['bot-blue', blueResult.events],
+]) {
+  const startIdx = eventIndex(events, 'match:start');
+  const resultIdx = eventIndex(events, 'match:result');
+  if (startIdx >= 0 && resultIdx >= 0 && startIdx >= resultIdx) {
+    failures.push(`${label} received match:result before match:start (idx ${resultIdx} vs ${startIdx})`);
+  }
+}
+
 const redOutcome = findEvent(redResult.events, 'match:result');
 const blueOutcome = findEvent(blueResult.events, 'match:result');
 

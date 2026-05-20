@@ -138,7 +138,14 @@ export async function runBot({ role, username, password, expectedWarriorName, ti
     logEvent('socket:disconnect', { reason });
   });
 
-  const passthrough = ['queue:joined', 'queue:left', 'queue:error', 'match:found', 'auth_error'];
+  const passthrough = [
+    'queue:joined',
+    'queue:left',
+    'queue:error',
+    'match:found',
+    'match:start',
+    'auth_error',
+  ];
   for (const ev of passthrough) {
     socket.on(ev, (data) => {
       logEvent(ev, data, { sid: socket.id });

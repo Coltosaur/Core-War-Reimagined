@@ -4,8 +4,10 @@ use crate::models::warrior::Warrior;
 use core_war_engine::{parse_warrior, MatchResult, MatchState};
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::{Data, SocketRef};
+use socketioxide::{socket::Sid, SocketIo};
 use sqlx::PgPool;
-use tracing::{error, info};
+use std::str::FromStr;
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const CORE_SIZE: usize = 8000;
@@ -40,14 +42,20 @@ struct MatchResultEvent {
     blue_username: String,
 }
 
-pub fn register_events(socket: &SocketRef, queue: RedisQueue, db: PgPool) {
+fn match_room(match_id: &str) -> String {
+    format!("match:{match_id}")
+}
+
+pub fn register_events(socket: &SocketRef, io: SocketIo, queue: RedisQueue, db: PgPool) {
     let q = queue.clone();
     let pool = db.clone();
+    let io_for_join = io.clone();
     socket.on(
         "queue:join",
         move |socket: SocketRef, Data(data): Data<QueueJoinData>| {
             let q = q.clone();
             let pool = pool.clone();
+            let io = io_for_join.clone();
             async move {
                 let user = match require_auth(&socket) {
                     Some(u) => u,
@@ -138,7 +146,7 @@ pub fn register_events(socket: &SocketRef, queue: RedisQueue, db: PgPool) {
                     }
                     Some((red, blue)) => {
                         info!("match found: {} vs {}", red.username, blue.username);
-                        run_matched_battle(socket, pool, red, blue).await;
+                        run_matched_battle(io, pool, red, blue).await;
                     }
                 }
             }
@@ -182,15 +190,7 @@ pub fn register_events(socket: &SocketRef, queue: RedisQueue, db: PgPool) {
     });
 }
 
-fn emit_to_socket(socket: &SocketRef, target_sid: &str, event: &str, data: &impl Serialize) {
-    if socket.id.to_string() == target_sid {
-        let _ = socket.emit(event, data);
-    } else {
-        let _ = socket.to(target_sid.to_string()).emit(event, data);
-    }
-}
-
-async fn run_matched_battle(socket: SocketRef, db: PgPool, red: QueueEntry, blue: QueueEntry) {
+async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: QueueEntry) {
     let red_source =
         match sqlx::query_scalar::<_, String>("SELECT source FROM warriors WHERE id = $1")
             .bind(red.warrior_id)
@@ -218,6 +218,52 @@ async fn run_matched_battle(socket: SocketRef, db: PgPool, red: QueueEntry, blue
         };
 
     let match_id = Uuid::new_v4().to_string();
+    let room = match_room(&match_id);
+
+    // Join both participants into a dedicated room for this match. socketioxide
+    // does NOT auto-join sockets to a room named after their sid (unlike vanilla
+    // Node socket.io), so we must use explicit room names — that's the root cause
+    // of the prior `socket.to(sid).emit()` silently dropping events on the other
+    // side. Emitting via `io.to(room)` from the SocketIo instance includes all
+    // sockets currently in the room (no self-exclusion semantics).
+    let red_sid = match Sid::from_str(&red.socket_id) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("invalid red socket_id {}: {e}", red.socket_id);
+            return;
+        }
+    };
+    let blue_sid = match Sid::from_str(&blue.socket_id) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("invalid blue socket_id {}: {e}", blue.socket_id);
+            return;
+        }
+    };
+
+    let red_socket = match io.get_socket(red_sid) {
+        Some(s) => s,
+        None => {
+            warn!(
+                "red socket {} no longer connected; aborting match",
+                red.socket_id
+            );
+            return;
+        }
+    };
+    let blue_socket = match io.get_socket(blue_sid) {
+        Some(s) => s,
+        None => {
+            warn!(
+                "blue socket {} no longer connected; aborting match",
+                blue.socket_id
+            );
+            return;
+        }
+    };
+
+    let _ = red_socket.join(room.clone());
+    let _ = blue_socket.join(room.clone());
 
     let found_event = MatchFound {
         match_id: match_id.clone(),
@@ -227,8 +273,7 @@ async fn run_matched_battle(socket: SocketRef, db: PgPool, red: QueueEntry, blue
         blue_warrior: blue.warrior_id.to_string(),
     };
 
-    emit_to_socket(&socket, &red.socket_id, "match:found", &found_event);
-    emit_to_socket(&socket, &blue.socket_id, "match:found", &found_event);
+    let _ = io.to(room.clone()).emit("match:found", &found_event);
 
     let battle_result = tokio::task::spawn_blocking(move || {
         let red_parsed = parse_warrior(&red_source).map_err(|e| format!("Red parse: {e}"))?;
@@ -265,15 +310,14 @@ async fn run_matched_battle(socket: SocketRef, db: PgPool, red: QueueEntry, blue
     };
 
     let result_event = MatchResultEvent {
-        match_id,
+        match_id: match_id.clone(),
         result: result_str.clone(),
         steps_taken,
         red_username: red.username.clone(),
         blue_username: blue.username.clone(),
     };
 
-    emit_to_socket(&socket, &red.socket_id, "match:result", &result_event);
-    emit_to_socket(&socket, &blue.socket_id, "match:result", &result_event);
+    let _ = io.to(room).emit("match:result", &result_event);
 
     let _ = sqlx::query(
         "INSERT INTO matches \

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../api/AuthContext';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
 import { io, type Socket } from 'socket.io-client';
+import type { MatchStartPayload } from './match/useMatchReplay';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
@@ -92,6 +94,7 @@ type Phase = 'idle' | 'queued' | 'matched' | 'result';
 
 export default function LobbyPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const library = useWarriorLibrary();
   const userWarriors = library.filter((w: Warrior) => serverUuid(w) !== null);
   const firstUuid = userWarriors.length > 0 ? (serverUuid(userWarriors[0]) ?? '') : '';
@@ -118,6 +121,12 @@ export default function LobbyPage() {
     s.on('match:found', (data: MatchFoundData) => {
       setMatchInfo(data);
       setPhase('matched');
+    });
+    s.on('match:start', (data: MatchStartPayload) => {
+      // Hand off to the dedicated viewer route with the full replay payload.
+      // The lobby's socket gets cleaned up on unmount; the viewer doesn't need
+      // one because match:start carries everything for deterministic replay.
+      navigate(`/match/${data.match_id}`, { state: { matchStart: data } });
     });
     s.on('match:result', (data: MatchResultData) => {
       setResult(data);

@@ -46,9 +46,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let queue = matchmaking::queue::RedisQueue::new(redis_conn.clone());
     let db_for_socket = state.db.clone();
     let (socket_layer, io) = SocketIo::new_layer();
+    let io_for_handler = io.clone();
     io.ns("/", move |socket: SocketRef| {
         auth::socket::on_connect(socket.clone(), jwt_secret_for_socket.clone());
-        matchmaking::events::register_events(&socket, queue.clone(), db_for_socket.clone());
+        matchmaking::events::register_events(
+            &socket,
+            io_for_handler.clone(),
+            queue.clone(),
+            db_for_socket.clone(),
+        );
     });
 
     let cors = CorsLayer::new()

@@ -43,6 +43,11 @@ fn validate_username(username: &str) -> Result<(), AppError> {
             "Username must contain only alphanumeric characters and underscores".into(),
         ));
     }
+    if username.starts_with("_test_") {
+        return Err(AppError::BadRequest(
+            "Username prefix '_test_' is reserved".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -330,6 +335,19 @@ mod tests {
         assert!(validate_username("alice!").is_err());
         assert!(validate_username("bob smith").is_err());
         assert!(validate_username("user@name").is_err());
+    }
+
+    #[test]
+    fn username_reserved_test_prefix_blocked() {
+        assert!(validate_username("_test_red").is_err());
+        assert!(validate_username("_test_blue").is_err());
+        assert!(validate_username("_test_anything").is_err());
+    }
+
+    #[test]
+    fn username_test_prefix_only_blocks_at_start() {
+        assert!(validate_username("not_test_user").is_ok());
+        assert!(validate_username("alice_test_").is_ok());
     }
 
     #[test]

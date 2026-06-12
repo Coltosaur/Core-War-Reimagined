@@ -1,0 +1,33 @@
+# Keep build context small for `docker build`.
+# The backend image only needs engine/ and backend/ source.
+
+**/target
+**/node_modules
+**/dist
+**/.next
+**/.cache
+
+# Frontend isn't built into the backend image (lives on Cloudflare Pages).
+frontend
+
+# Wasm-pack output (browser-only, not needed in the backend image).
+engine/pkg
+
+# Local-only files
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.production.example
+
+# Editor / OS
+.git
+.github
+.vscode
+.idea
+.DS_Store
+.playwright-mcp
+.mcp.json
+
+# Memory / docs that don't affect the build
+*.md
+!backend/migrations/**/*.sql

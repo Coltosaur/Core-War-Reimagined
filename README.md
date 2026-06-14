@@ -182,7 +182,12 @@ cd backend && cargo build --release
 
 ## Deployment
 
-The backend ships as a Docker image and runs on a DigitalOcean droplet behind Caddy. The frontend is hosted on Cloudflare Pages. See [`deploy/README.md`](deploy/README.md) for the full VPS bootstrap and manual deploy runbook, and `docker-compose.prod.yml` for the production-mirror stack you can run locally to verify changes before deploying.
+The backend ships as a Docker image and runs on a DigitalOcean droplet behind Caddy. The frontend is hosted on Cloudflare Pages. Two runbooks cover the two halves:
+
+- [`deploy/README.md`](deploy/README.md) — VPS bootstrap + manual backend deploy
+- [`deploy/cloudflare-pages.md`](deploy/cloudflare-pages.md) — frontend (static + Wasm) on Cloudflare Pages
+
+`docker-compose.prod.yml` at the repo root is the production-mirror stack you can run locally to verify backend changes before deploying.
 
 ```bash
 # Push a fresh build to the droplet (from your laptop, after configuring

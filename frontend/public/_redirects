@@ -1,0 +1,5 @@
+# SPA fallback: every unmatched route serves index.html so React Router
+# handles client-side routing (/match/:id, /profile/:user, etc.). The 200
+# status code makes this a server-side rewrite, not a redirect — the URL
+# in the browser stays the same.
+/*    /index.html   200

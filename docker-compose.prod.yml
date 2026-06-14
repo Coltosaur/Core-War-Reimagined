@@ -1,0 +1,88 @@
+# Production-mirror compose stack.
+#
+# Usage:
+#   cp .env.production.example .env.production   # then edit it
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Caddy is the only service that publishes host ports (80/443). The backend,
+# Postgres, and Redis are only reachable on the internal docker network.
+#
+# The `name:` lock isolates this stack's volumes/networks from the dev
+# docker-compose.yml in the same directory (which would otherwise share
+# project name and clobber each other's postgres_data).
+
+name: corewar-prod
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env.production
+    expose:
+      - "3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    depends_on:
+      - backend
+    networks:
+      - app
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  app:

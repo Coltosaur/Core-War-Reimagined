@@ -180,6 +180,16 @@ cd backend && cargo build --release
 # Binary at backend/target/release/core-war-backend
 ```
 
+## Deployment
+
+The backend ships as a Docker image and runs on a DigitalOcean droplet behind Caddy. The frontend is hosted on Cloudflare Pages. See [`deploy/README.md`](deploy/README.md) for the full VPS bootstrap and manual deploy runbook, and `docker-compose.prod.yml` for the production-mirror stack you can run locally to verify changes before deploying.
+
+```bash
+# Push a fresh build to the droplet (from your laptop, after configuring
+# .env.production on the droplet — see deploy/README.md)
+./deploy/deploy.sh user@droplet-ip
+```
+
 ## Linting and Formatting
 
 ```bash

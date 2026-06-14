@@ -1,0 +1,6 @@
+# Belt-and-suspenders Content-Type for the wasm-pack output. Cloudflare
+# Pages should set this automatically by extension, but pinning it here
+# guarantees streaming WebAssembly compilation (WebAssembly.instantiateStreaming)
+# works regardless of upstream defaults drifting.
+/*.wasm
+  Content-Type: application/wasm

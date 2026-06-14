@@ -245,7 +245,9 @@ docker compose -f docker-compose.prod.yml --env-file .env.production down
 docker compose -f docker-compose.prod.yml --env-file .env.production down -v
 ```
 
-Steady-state redeploy from your laptop after pushing code:
+Steady-state redeploy from your laptop after pushing code (escape hatch
+when CI is unavailable — normal redeploys happen automatically via
+GitHub Actions, see section 10):
 
 ```bash
 ./deploy/deploy.sh colt@<DROPLET_IP>
@@ -255,6 +257,67 @@ The script rsyncs (skipping `.env.production` and other excluded paths),
 then runs `docker compose up -d --build` over SSH so only changed layers
 rebuild.
 
+## 10. Enable CI deploys (deploy-on-merge)
+
+Once the droplet is up and the manual deploy from section 7 worked, wire
+up `.github/workflows/deploy-backend.yml` to take over steady-state
+deploys. The workflow builds the backend image on every push to master,
+pushes it to GitHub Container Registry (ghcr.io), then SSHes into the
+droplet and rolls out the new image.
+
+### One-time: make the backend image public
+
+The first time the workflow runs, it creates a private package under
+`ghcr.io/coltosaur/core-war-backend`. The droplet can't pull it without
+auth setup, so flip it to public:
+
+1. GitHub → your profile → **Packages** → `core-war-backend`.
+2. **Package settings → Change visibility → Public**.
+
+(Source is already public; the compiled binary doesn't expose anything
+new.)
+
+### Required GitHub Actions secrets
+
+Repo → **Settings → Secrets and variables → Actions → Secrets → New
+repository secret**:
+
+| Secret | Value |
+|---|---|
+| `DROPLET_HOST` | Droplet IPv4 (or `api.corewar.coltcampbell.dev` once DNS is in) |
+| `DROPLET_USER` | The non-root user from section 2 (e.g. `colt`) |
+| `DROPLET_SSH_KEY` | **Private** half of an SSH key whose public half is in the droplet's `~/.ssh/authorized_keys`. Generate a fresh one for CI — don't reuse your personal key: `ssh-keygen -t ed25519 -f ~/.ssh/corewar_deploy -C corewar-deploy`. Copy `~/.ssh/corewar_deploy.pub` to the droplet's `~/.ssh/authorized_keys`, paste the contents of `~/.ssh/corewar_deploy` (the private file) here. |
+
+### Required GitHub Actions variable
+
+Same page → **Variables → New repository variable**:
+
+| Variable | Value |
+|---|---|
+| `DEPLOY_ENABLED` | `true` |
+
+The workflow's `deploy` job is gated by `vars.DEPLOY_ENABLED == 'true'`,
+so until you set this it'll only build + push the image without
+attempting to ssh anywhere. Useful for the gap between provisioning the
+droplet and being ready to roll out.
+
+### Trigger the first CI deploy
+
+After the secrets and variable are in place:
+
+```
+GitHub repo → Actions → "Deploy backend" → Run workflow → master → Run
+```
+
+The job log will show the image push, the rsync, and the docker compose
+restart. Health check waits up to 60s for the container to report
+`healthy` before declaring success.
+
+From then on, every push to master that touches `backend/`, `engine/`,
+`Caddyfile`, or `docker-compose.prod.yml` triggers a deploy. PRs build
+the image without pushing (so Dockerfile breakage gets caught before
+merge).
+
 ## What's NOT here (yet)
 
 - **Database backups.** Volumes survive `down`, but the droplet does not.
@@ -263,5 +326,4 @@ rebuild.
 - **Migration step in CI.** Currently the backend runs `sqlx::migrate!()`
   on startup. PR 5 makes that an explicit deploy step so failures surface
   before the container starts accepting traffic.
-- **Automated deploy on merge.** PR 4 wires up GitHub Actions.
 - **Uptime monitoring.** PR 5 adds a free external pinger against `/health`.

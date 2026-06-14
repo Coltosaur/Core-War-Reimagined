@@ -15,6 +15,12 @@ name: corewar-prod
 
 services:
   backend:
+    # `image:` is what CI publishes and what the droplet pulls. `build:` is
+    # kept so the local prod-mirror smoke test still works with
+    # `docker compose up --build` — that build tags the local image with
+    # this same name, which is harmless. If you fork, update the owner
+    # segment to match your GitHub login (lowercase).
+    image: ghcr.io/coltosaur/core-war-backend:latest
     build:
       context: .
       dockerfile: backend/Dockerfile

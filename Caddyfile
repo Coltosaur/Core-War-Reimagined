@@ -1,0 +1,19 @@
+# Caddy config for the production-mirror stack.
+#
+# Site address comes from $BACKEND_DOMAIN (e.g. "api.corewar.example.com" in
+# prod, ":80" for local plain-HTTP testing). When a real hostname is used
+# Caddy auto-provisions a Let's Encrypt cert; $ACME_EMAIL is the contact
+# address it registers.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$BACKEND_DOMAIN} {
+	encode gzip zstd
+
+	# Reverse-proxy everything to the backend. Caddy upgrades WebSocket
+	# (Socket.IO) connections automatically and sets X-Forwarded-For /
+	# X-Forwarded-Proto by default.
+	reverse_proxy backend:3001
+}

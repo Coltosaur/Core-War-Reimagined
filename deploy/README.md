@@ -8,6 +8,11 @@ The deploy is fully manual at this stage. `deploy/deploy.sh` rsyncs the
 project to the droplet and rebuilds the prod compose stack over SSH —
 GitHub Actions automation comes in PR 4.
 
+For the **frontend** (Cloudflare Pages) see the sibling runbook
+[`deploy/cloudflare-pages.md`](cloudflare-pages.md). Frontend and backend
+deploys are independent — Pages can ship before this VPS exists; the app
+will just see a non-resolving API host until the droplet is up.
+
 > All `<placeholder>` values are things you fill in. Wherever the runbook
 > references `coltcampbell.dev`, replace with your domain if you forked.
 

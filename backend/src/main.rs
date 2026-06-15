@@ -1,19 +1,14 @@
 use axum::http::{header, Method};
-use axum::{middleware, routing::get, routing::post, Json, Router};
+use axum::{middleware, routing::get, routing::post, Router};
 use core_war_backend::{
-    auth, config::Config, db, leaderboard, matches, matchmaking, profile, warriors, AppConfig,
-    AppState,
+    auth, config::Config, db, health, leaderboard, matches, matchmaking, profile, warriors,
+    AppConfig, AppState,
 };
-use serde_json::{json, Value};
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-
-async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -75,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn, proxies);
 
     let app = Router::new()
-        .route("/health", get(health))
+        .route("/health", get(health::handler))
         .route(
             "/api/auth/register",
             post(auth::handlers::register).layer(middleware::from_fn_with_state(

@@ -286,11 +286,21 @@ droplet — the build is CPU-bound on cargo) and bring the stack up.
 ## 8. Verify TLS
 
 ```bash
+# Cheap liveness probe — public, no DB work.
 curl -i https://api.corewar.coltcampbell.dev/health
+
+# Deep readiness probe — DB-probing, used by the container HEALTHCHECK.
+curl -i https://api.corewar.coltcampbell.dev/health/deep
 ```
 
 The first request can take **30+ seconds** while Caddy negotiates the
-Let's Encrypt cert. Expected response:
+Let's Encrypt cert. Expected responses:
+
+```
+HTTP/2 200
+content-type: application/json
+{"status":"ok"}
+```
 
 ```
 HTTP/2 200
@@ -298,9 +308,11 @@ content-type: application/json
 {"status":"ok","database":"ok"}
 ```
 
-(Older deploys returned just `{"status":"ok"}` — `/health` now also probes
-Postgres via a 2s-timeout `SELECT 1` and returns HTTP 503 if the DB is
-unreachable.)
+`/health` always returns 200 if the process is listening; it does no DB
+work, so it can't be used to amplify load against Postgres. `/health/deep`
+runs a 2s-timeout `SELECT 1` and returns HTTP 503 if the DB is
+unreachable — Docker's HEALTHCHECK uses it so a downstream outage marks
+the container unhealthy.
 
 If the cert handshake fails:
 
@@ -309,7 +321,7 @@ If the cert handshake fails:
   HTTP-01 challenge uses it). `sudo ufw status` should show 80/tcp ALLOW.
 - Inspect Caddy's logs: `docker compose -f docker-compose.prod.yml logs caddy`.
 
-If `/health` returns 503 with `"database":"fail"`, the backend booted but
+If `/health/deep` returns 503 with `"database":"fail"`, the backend booted but
 can't talk to Postgres. Tail the backend logs to see the exact error:
 
 ```bash
@@ -414,21 +426,24 @@ merge).
 
 ## 11. Uptime monitoring
 
-External monitor pinging `/health` so you find out about an outage from
+External monitor pinging the backend so you find out about an outage from
 a notification, not from a friend trying to use the site. **UptimeRobot**
-has the longest-running free tier and is what we'll wire up:
+has the longest-running free tier and is what we'll wire up. Use
+`/health/deep` so the monitor catches DB outages, not just process
+liveness:
 
 1. Sign up at [uptimerobot.com](https://uptimerobot.com) — free, no card.
 2. **+ New Monitor**:
    - Type: HTTPS
    - Friendly name: `Core War backend`
-   - URL: `https://api.corewar.coltcampbell.dev/health`
+   - URL: `https://api.corewar.coltcampbell.dev/health/deep`
    - Monitoring interval: 5 minutes (free-tier minimum)
 3. **Alert contacts**: at least email. Optional: Slack, Telegram, webhooks.
 4. **Advanced** (optional but recommended):
    - **Keyword monitoring**: also check the response body for the string
-     `"status":"ok"`. Catches the case where `/health` returns 503 with
-     `"status":"degraded"` (DB unreachable) but the TLS/proxy layer is fine.
+     `"database":"ok"`. Catches the case where `/health/deep` returns 503
+     with `"status":"degraded"` (DB unreachable) but the TLS/proxy layer
+     is fine.
 
 The same pattern will work for the frontend once Cloudflare Pages is up
 — add a second monitor for `https://corewar.coltcampbell.dev`.
@@ -438,10 +453,12 @@ The same pattern will work for the frontend once Cloudflare Pages is up
 - **Database backups.** Volumes survive `down`, but the droplet does not.
   A future PR will add either DO managed snapshots ($1.20/mo) or a
   `pg_dump`-to-Backblaze-B2 cron job.
-- **Redis check in `/health`.** Currently only Postgres is probed. Adding
-  Redis means restructuring `AppState`; tracked as a follow-up.
+- **Redis check in `/health/deep`.** Currently only Postgres is probed.
+  Adding Redis means restructuring `AppState`; tracked as a follow-up.
 - **Migrations as an explicit deploy step.** The backend currently runs
   `sqlx::migrate!()` at startup; migration failures surface as backend
   startup errors in `docker compose logs backend` and the CI deploy job's
   60s health-check loop catches them. Splitting into a separate
   pre-startup step is a nice-to-have, not a blocker.
+
+We should probably have a way to back up the latest image and test and tag an image as "good" and keep at least the last good image without overwriting it. Ideally though, I think we should keep as many images we build as we can that go through successfully, may recquire versioning the images and keeping "latest" as a sort of duplicate or alias of the most recent version of image. 

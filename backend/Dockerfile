@@ -33,6 +33,6 @@ WORKDIR /home/app
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -fsS http://localhost:3001/health || exit 1
+    CMD curl -fsS http://localhost:3001/health/deep || exit 1
 
 CMD ["core-war-backend"]

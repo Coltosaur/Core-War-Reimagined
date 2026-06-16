@@ -507,8 +507,12 @@ The CSP is the load-bearing one. Each non-obvious allowance:
   to self-host Monaco, drop the jsdelivr allowance.
 - `style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net` — Monaco
   injects inline styles and pulls CSS from the same CDN.
-- `connect-src 'self' https://api.corewar.coltcampbell.dev wss://api.corewar.coltcampbell.dev`
-  — REST + Socket.IO to the backend. Both schemes needed.
+- `connect-src 'self' https://api.corewar.coltcampbell.dev wss://api.corewar.coltcampbell.dev https://cdn.jsdelivr.net`
+  — REST + Socket.IO to the backend (both schemes needed); jsdelivr is
+  for Monaco's source maps, which devtools `fetch()`es when the
+  inspector is open. Without the jsdelivr allowance on `connect-src`,
+  the editor still works but the devtools console logs a CSP
+  violation on every page load with devtools open.
 - `worker-src 'self' blob:` — Monaco creates language-service workers
   via `URL.createObjectURL(blob)`. Without this, the editor logs CSP
   errors and falls back to the main thread.

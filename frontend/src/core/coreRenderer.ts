@@ -11,17 +11,14 @@
 // lookup table, written into the canvas's ImageData, then uploaded to a
 // PixiJS texture on a single Sprite scaled up with NEAREST filtering.
 
-import * as PIXI from 'pixi.js';
+// Side-effect import: replaces PixiJS's runtime `new Function(...)`
+// shader-binding compilation with prebuilt equivalents so the strict
+// CSP in frontend/public/_headers (no 'unsafe-eval') runs Pixi unchanged.
+// Since @pixi/unsafe-eval@7.1.0 the package self-installs on import —
+// the older install(PIXI) API was deprecated.
+import '@pixi/unsafe-eval';
 import { Application, BaseTexture, Sprite, Texture, SCALE_MODES } from 'pixi.js';
-import { install as installNoEval } from '@pixi/unsafe-eval';
 import { CORE_SIZE, GRID_COLS, GRID_ROWS, CELL_SCALE } from './constants';
-
-// Replace PixiJS's runtime `new Function(...)` shader-binding compilation
-// with prebuilt equivalents from @pixi/unsafe-eval. Lets the strict CSP
-// in frontend/public/_headers (no 'unsafe-eval') run Pixi unchanged.
-// Idempotent and one-time at module load — safe to import this file from
-// multiple call sites.
-installNoEval(PIXI);
 
 // Warrior color palette: index = ownership value from the engine.
 // 0 = unowned (dark), 1 = warrior 0, 2 = warrior 1, ...

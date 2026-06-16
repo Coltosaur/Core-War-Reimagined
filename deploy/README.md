@@ -232,6 +232,37 @@ dig +short AAAA api.corewar.coltcampbell.dev
 Both should return the droplet's addresses before you proceed — Caddy can't
 issue a Let's Encrypt cert until the hostname resolves to this box.
 
+### 6a. CAA records (edge hardening, issue #69)
+
+CAA pins which CAs are allowed to issue certs for the apex and any
+subdomain. Without it, any compromised CA in the global trust store can
+mint a cert for `coltcampbell.dev` — CAA is a cheap belt-and-braces.
+
+Two CAs are in play here:
+
+- **Let's Encrypt** — issues for `api.corewar.coltcampbell.dev` via Caddy.
+- **Google Trust Services** (`pki.goog`) — issues for
+  `corewar.coltcampbell.dev` because Cloudflare Pages uses GTS.
+
+At the Porkbun apex (`coltcampbell.dev`):
+
+| Type | Host | Answer | TTL |
+|---|---|---|---|
+| `CAA` | (apex) | `0 issue "letsencrypt.org"` | 3600 |
+| `CAA` | (apex) | `0 issue "pki.goog"` | 3600 |
+| `CAA` | (apex) | `0 iodef "mailto:campbellcolt297@gmail.com"` | 3600 |
+
+The `iodef` record is optional — it tells a CA where to mail
+misissuance reports. Verify with:
+
+```bash
+dig CAA coltcampbell.dev +short
+```
+
+You should see all three records back. CAA is checked **at cert issuance
+time**, not on every TLS handshake, so the records only matter when
+Caddy or Cloudflare next requests/renews a cert.
+
 ## 7. First deploy from your laptop
 
 From the repo root on your laptop:
@@ -447,6 +478,56 @@ liveness:
 
 The same pattern will work for the frontend once Cloudflare Pages is up
 — add a second monitor for `https://corewar.coltcampbell.dev`.
+
+## 12. Cloudflare Pages security headers (edge hardening, issue #69)
+
+The Pages frontend ships a `_headers` file at `frontend/public/_headers`
+that Cloudflare picks up automatically. The file is the source of truth
+— this section just documents the expected shape and why each
+allowance exists, so a future audit can diff against intent rather than
+guess.
+
+The global block on `/*`:
+
+| Header | Value (abridged) | Why |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Same as backend, plus `preload` because this is the navigated origin |
+| `Content-Security-Policy` | see below | Locks down what scripts/styles/connections the page can make |
+| `X-Frame-Options` | `DENY` | Clickjacking — paired with CSP `frame-ancestors 'none'` |
+| `X-Content-Type-Options` | `nosniff` | Blocks MIME-sniffing |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Strips full URL on cross-origin nav |
+| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` | Disables APIs we don't use |
+
+The CSP is the load-bearing one. Each non-obvious allowance:
+
+- `script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net` —
+  `'wasm-unsafe-eval'` is required for the engine's wasm. `jsdelivr` is
+  where `@monaco-editor/react`'s default loader fetches Monaco from at
+  runtime. If you ever call `loader.config({ paths: { vs: '/...' } })`
+  to self-host Monaco, drop the jsdelivr allowance.
+- `style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net` — Monaco
+  injects inline styles and pulls CSS from the same CDN.
+- `connect-src 'self' https://api.corewar.coltcampbell.dev wss://api.corewar.coltcampbell.dev https://cdn.jsdelivr.net`
+  — REST + Socket.IO to the backend (both schemes needed); jsdelivr is
+  for Monaco's source maps, which devtools `fetch()`es when the
+  inspector is open. Without the jsdelivr allowance on `connect-src`,
+  the editor still works but the devtools console logs a CSP
+  violation on every page load with devtools open.
+- `worker-src 'self' blob:` — Monaco creates language-service workers
+  via `URL.createObjectURL(blob)`. Without this, the editor logs CSP
+  errors and falls back to the main thread.
+- `frame-ancestors 'none'` — modern equivalent of `X-Frame-Options:
+  DENY`, kept for browsers that prefer one over the other.
+
+After any deploy that touches `_headers`, verify:
+
+```bash
+curl -sI https://corewar.coltcampbell.dev | grep -iE 'strict-transport|content-security|x-frame|x-content|referrer|permissions'
+```
+
+All six headers should be present. Then load the site in a browser and
+walk through the builder — CSP violations log to the devtools console
+and are the most likely regression source.
 
 ## What's NOT here (yet)
 

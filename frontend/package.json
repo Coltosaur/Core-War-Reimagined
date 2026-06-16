@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.0.0",
+    "@pixi/unsafe-eval": "^7.4.3",
     "core-war-engine": "file:../engine/pkg",
     "pixi.js": "^7.0.0",
     "react": "^18.0.0",

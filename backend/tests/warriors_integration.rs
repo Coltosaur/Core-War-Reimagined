@@ -136,7 +136,7 @@ async fn register_and_login(router: &Router) -> String {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &json!({"username": "testuser", "email": "test@example.com", "password": "password123"}),
+            &json!({"username": "testuser", "email": "test@example.com", "password": "password1234"}),
         ),
     )
     .await;
@@ -145,7 +145,7 @@ async fn register_and_login(router: &Router) -> String {
         router.clone(),
         post_json(
             "/api/auth/login",
-            &json!({"username_or_email": "testuser", "password": "password123"}),
+            &json!({"username_or_email": "testuser", "password": "password1234"}),
         ),
     )
     .await;
@@ -158,7 +158,7 @@ async fn register_and_login_as(router: &Router, username: &str, email: &str) -> 
         router.clone(),
         post_json(
             "/api/auth/register",
-            &json!({"username": username, "email": email, "password": "password123"}),
+            &json!({"username": username, "email": email, "password": "password1234"}),
         ),
     )
     .await;
@@ -167,7 +167,7 @@ async fn register_and_login_as(router: &Router, username: &str, email: &str) -> 
         router.clone(),
         post_json(
             "/api/auth/login",
-            &json!({"username_or_email": username, "password": "password123"}),
+            &json!({"username_or_email": username, "password": "password1234"}),
         ),
     )
     .await;

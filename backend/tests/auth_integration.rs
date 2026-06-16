@@ -143,7 +143,7 @@ async fn register_success(pool: PgPool) {
         app(pool),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -162,7 +162,7 @@ async fn register_duplicate_username(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice1@example.com", "password123"),
+            &register_body("alice", "alice1@example.com", "password1234"),
         ),
     )
     .await;
@@ -172,7 +172,7 @@ async fn register_duplicate_username(pool: PgPool) {
         router,
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice2@example.com", "password123"),
+            &register_body("alice", "alice2@example.com", "password1234"),
         ),
     )
     .await;
@@ -188,7 +188,7 @@ async fn register_duplicate_email(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("user1", "same@example.com", "password123"),
+            &register_body("user1", "same@example.com", "password1234"),
         ),
     )
     .await;
@@ -198,7 +198,7 @@ async fn register_duplicate_email(pool: PgPool) {
         router,
         post_json(
             "/api/auth/register",
-            &register_body("user2", "same@example.com", "password123"),
+            &register_body("user2", "same@example.com", "password1234"),
         ),
     )
     .await;
@@ -215,7 +215,7 @@ async fn register_validation_errors(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("ab", "ab@example.com", "password123"),
+            &register_body("ab", "ab@example.com", "password1234"),
         ),
     )
     .await;
@@ -226,7 +226,7 @@ async fn register_validation_errors(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("user!name", "un@example.com", "password123"),
+            &register_body("user!name", "un@example.com", "password1234"),
         ),
     )
     .await;
@@ -237,7 +237,7 @@ async fn register_validation_errors(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("validuser", "not-an-email", "password123"),
+            &register_body("validuser", "not-an-email", "password1234"),
         ),
     )
     .await;
@@ -284,7 +284,7 @@ async fn register_email_normalized(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "  Alice@Example.COM  ", "password123"),
+            &register_body("alice", "  Alice@Example.COM  ", "password1234"),
         ),
     )
     .await;
@@ -295,7 +295,7 @@ async fn register_email_normalized(pool: PgPool) {
         router,
         post_json(
             "/api/auth/register",
-            &register_body("bob", "alice@example.com", "password123"),
+            &register_body("bob", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -308,7 +308,7 @@ async fn register_username_trimmed(pool: PgPool) {
         app(pool),
         post_json(
             "/api/auth/register",
-            &register_body("  alice  ", "alice@example.com", "password123"),
+            &register_body("  alice  ", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -327,14 +327,14 @@ async fn login_by_username(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
 
     let resp = send(
         router,
-        post_json("/api/auth/login", &login_body("alice", "password123")),
+        post_json("/api/auth/login", &login_body("alice", "password1234")),
     )
     .await;
     assert_eq!(resp.status, StatusCode::OK);
@@ -349,7 +349,7 @@ async fn login_by_email(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -358,7 +358,7 @@ async fn login_by_email(pool: PgPool) {
         router,
         post_json(
             "/api/auth/login",
-            &login_body("alice@example.com", "password123"),
+            &login_body("alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -373,7 +373,7 @@ async fn login_email_case_insensitive(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -382,7 +382,7 @@ async fn login_email_case_insensitive(pool: PgPool) {
         router,
         post_json(
             "/api/auth/login",
-            &login_body("ALICE@EXAMPLE.COM", "password123"),
+            &login_body("ALICE@EXAMPLE.COM", "password1234"),
         ),
     )
     .await;
@@ -397,7 +397,7 @@ async fn login_wrong_password(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -415,7 +415,7 @@ async fn login_wrong_password(pool: PgPool) {
 async fn login_nonexistent_user(pool: PgPool) {
     let resp = send(
         app(pool),
-        post_json("/api/auth/login", &login_body("ghost", "password123")),
+        post_json("/api/auth/login", &login_body("ghost", "password1234")),
     )
     .await;
     assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
@@ -429,14 +429,14 @@ async fn login_sets_both_cookies(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
 
     let resp = send(
         router,
-        post_json("/api/auth/login", &login_body("alice", "password123")),
+        post_json("/api/auth/login", &login_body("alice", "password1234")),
     )
     .await;
     assert_eq!(resp.status, StatusCode::OK);
@@ -453,14 +453,14 @@ async fn login_cookie_properties(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
 
     let resp = send(
         router,
-        post_json("/api/auth/login", &login_body("alice", "password123")),
+        post_json("/api/auth/login", &login_body("alice", "password1234")),
     )
     .await;
 
@@ -495,7 +495,7 @@ async fn login_cookie_properties(pool: PgPool) {
 #[sqlx::test]
 async fn refresh_rotates_token(pool: PgPool) {
     let router = app(pool);
-    let cookies = register_and_login(&router, "alice", "alice@example.com", "password123").await;
+    let cookies = register_and_login(&router, "alice", "alice@example.com", "password1234").await;
     let old_refresh = cookies["refresh_token"].clone();
 
     let resp = send(
@@ -513,7 +513,7 @@ async fn refresh_rotates_token(pool: PgPool) {
 #[sqlx::test]
 async fn refresh_old_token_rejected(pool: PgPool) {
     let router = app(pool);
-    let cookies = register_and_login(&router, "alice", "alice@example.com", "password123").await;
+    let cookies = register_and_login(&router, "alice", "alice@example.com", "password1234").await;
     let old_refresh = cookies["refresh_token"].clone();
 
     // Use the token once (rotates it)
@@ -558,7 +558,7 @@ async fn refresh_expired_token(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("alice", "alice@example.com", "password123"),
+            &register_body("alice", "alice@example.com", "password1234"),
         ),
     )
     .await;
@@ -593,7 +593,7 @@ async fn refresh_expired_token(pool: PgPool) {
 #[sqlx::test]
 async fn logout_clears_cookies(pool: PgPool) {
     let router = app(pool);
-    let cookies = register_and_login(&router, "alice", "alice@example.com", "password123").await;
+    let cookies = register_and_login(&router, "alice", "alice@example.com", "password1234").await;
     let refresh = &cookies["refresh_token"];
 
     let resp = send(
@@ -622,7 +622,7 @@ async fn logout_clears_cookies(pool: PgPool) {
 #[sqlx::test]
 async fn logout_token_not_reusable(pool: PgPool) {
     let router = app(pool);
-    let cookies = register_and_login(&router, "alice", "alice@example.com", "password123").await;
+    let cookies = register_and_login(&router, "alice", "alice@example.com", "password1234").await;
     let refresh = cookies["refresh_token"].clone();
 
     // Logout
@@ -668,7 +668,7 @@ async fn full_flow_register_login_refresh_logout(pool: PgPool) {
         router.clone(),
         post_json(
             "/api/auth/register",
-            &register_body("flowuser", "flow@example.com", "password123"),
+            &register_body("flowuser", "flow@example.com", "password1234"),
         ),
     )
     .await;
@@ -678,7 +678,7 @@ async fn full_flow_register_login_refresh_logout(pool: PgPool) {
     // 2. Login
     let resp = send(
         router.clone(),
-        post_json("/api/auth/login", &login_body("flowuser", "password123")),
+        post_json("/api/auth/login", &login_body("flowuser", "password1234")),
     )
     .await;
     assert_eq!(resp.status, StatusCode::OK);

@@ -4,3 +4,18 @@
 # works regardless of upstream defaults drifting.
 /*.wasm
   Content-Type: application/wasm
+
+# Global security headers. Mirrors the backend Caddy headers (issue #68) with
+# additions that only make sense on the user-facing origin:
+#  - HSTS includes `preload` (corewar.coltcampbell.dev is the navigated origin)
+#  - CSP — the editor's runtime is loaded from cdn.jsdelivr.net by
+#    @monaco-editor/react's default loader, hence the jsdelivr allowances on
+#    script/style/font. Monaco also spawns blob: workers (worker-src).
+#    connect-src covers REST (https) + Socket.IO (wss) to the api host.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://api.corewar.coltcampbell.dev wss://api.corewar.coltcampbell.dev; img-src 'self' data:; font-src 'self' data: https://cdn.jsdelivr.net; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=()

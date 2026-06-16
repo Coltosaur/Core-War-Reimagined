@@ -11,6 +11,12 @@
 // lookup table, written into the canvas's ImageData, then uploaded to a
 // PixiJS texture on a single Sprite scaled up with NEAREST filtering.
 
+// Side-effect import: replaces PixiJS's runtime `new Function(...)`
+// shader-binding compilation with prebuilt equivalents so the strict
+// CSP in frontend/public/_headers (no 'unsafe-eval') runs Pixi unchanged.
+// Since @pixi/unsafe-eval@7.1.0 the package self-installs on import —
+// the older install(PIXI) API was deprecated.
+import '@pixi/unsafe-eval';
 import { Application, BaseTexture, Sprite, Texture, SCALE_MODES } from 'pixi.js';
 import { CORE_SIZE, GRID_COLS, GRID_ROWS, CELL_SCALE } from './constants';
 

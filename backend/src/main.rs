@@ -1,9 +1,12 @@
+use axum::extract::DefaultBodyLimit;
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Router};
 use core_war_backend::{
     auth, config::Config, db, health, leaderboard, matches, matchmaking, profile, warriors,
     AppConfig, AppState,
 };
+
+const MAX_REQUEST_BODY_BYTES: usize = 128 * 1024;
 use socketioxide::{extract::SocketRef, SocketIo};
 use std::net::SocketAddr;
 use tower_http::cors::CorsLayer;
@@ -23,6 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::from_env()?;
     let pool = db::init_pool(&config.database_url).await?;
+
+    auth::password::warm_dummy_hash();
 
     let redis_client = redis::Client::open(config.redis_url.as_str())?;
     let redis_conn = redis::aio::ConnectionManager::new(redis_client).await?;
@@ -70,7 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn, proxies);
 
     let app = Router::new()
-        .route("/health", get(health::handler))
+        .route("/health", get(health::liveness))
+        .route("/health/deep", get(health::readiness))
         .route(
             "/api/auth/register",
             post(auth::handlers::register).layer(middleware::from_fn_with_state(
@@ -119,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state.clone(),
             auth::middleware::csrf_middleware,
         ))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(state)
         .layer(socket_layer)
         .layer(cors);

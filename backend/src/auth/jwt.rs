@@ -1,11 +1,12 @@
 use chrono::Utc;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::AppError;
 
 const ACCESS_TOKEN_DURATION_SECS: i64 = 15 * 60;
+const JWT_ALGORITHM: Algorithm = Algorithm::HS256;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Claims {
@@ -39,7 +40,7 @@ pub fn decode_access_token(token: &str, secret: &[u8]) -> Result<Claims, AppErro
     decode::<Claims>(
         token,
         &DecodingKey::from_secret(secret),
-        &Validation::default(),
+        &Validation::new(JWT_ALGORITHM),
     )
     .map(|data| data.claims)
     .map_err(|e| AppError::Unauthorized(format!("Invalid token: {e}")))
@@ -109,6 +110,26 @@ mod tests {
         let tampered = format!("{token}x");
         let result = decode_access_token(&tampered, TEST_SECRET);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn token_signed_with_different_algorithm_rejected() {
+        let user_id = Uuid::new_v4();
+        let now = Utc::now().timestamp();
+        let claims = Claims {
+            sub: user_id.to_string(),
+            username: "testuser".into(),
+            exp: now + 60,
+            iat: now,
+        };
+        let mut header = Header::new(Algorithm::HS384);
+        header.typ = Some("JWT".into());
+        let token = encode(&header, &claims, &EncodingKey::from_secret(TEST_SECRET)).unwrap();
+        let result = decode_access_token(&token, TEST_SECRET);
+        assert!(
+            result.is_err(),
+            "decode_access_token must reject tokens signed with non-HS256 algorithms"
+        );
     }
 
     #[test]

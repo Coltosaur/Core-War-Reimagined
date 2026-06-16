@@ -12,6 +12,19 @@
 {$BACKEND_DOMAIN} {
 	encode gzip zstd
 
+	# Security headers applied to every response. HSTS is one-year with
+	# subdomain coverage; `preload` is intentionally omitted so we can
+	# revert without users being locked out by a browser's preload list.
+	# Submit to hstspreload.org separately when ready.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+
 	# Reverse-proxy everything to the backend. Caddy upgrades WebSocket
 	# (Socket.IO) connections automatically and sets X-Forwarded-For /
 	# X-Forwarded-Proto by default.

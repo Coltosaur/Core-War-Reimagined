@@ -130,6 +130,15 @@ jobs:
           echo "==> Restarting stack"
           docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
 
+          # Caddyfile is a single-file bind mount. rsync replaces the host
+          # file via write-new + rename, which leaves the running container
+          # pointed at the original inode and blind to config changes. Force
+          # caddy to be recreated so its bind mount re-resolves to the new
+          # file. ~1s bounce, no data loss (caddy_data + caddy_config are
+          # named volumes that survive container recreation).
+          echo "==> Recreating caddy to refresh single-file bind mount"
+          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate caddy
+
           echo "==> Waiting up to 60s for backend to be healthy"
           end=$((SECONDS + 60))
           while [[ $SECONDS -lt $end ]]; do

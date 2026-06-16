@@ -1,5 +1,5 @@
 use crate::auth::jwt::{encode_access_token, generate_refresh_token, hash_refresh_token};
-use crate::auth::password::{hash_password, verify_password};
+use crate::auth::password::{hash_password, verify_password, verify_password_against_dummy};
 use crate::errors::AppError;
 use crate::AppState;
 use axum::extract::State;
@@ -63,14 +63,19 @@ fn validate_email(email: &str) -> Result<(), AppError> {
 }
 
 fn validate_password(password: &str) -> Result<(), AppError> {
-    if password.len() < 8 {
+    if password.len() < 12 {
         return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".into(),
+            "Password must be at least 12 characters".into(),
         ));
     }
     if password.len() > 1000 {
         return Err(AppError::BadRequest(
             "Password must not exceed 1000 characters".into(),
+        ));
+    }
+    if password.chars().all(|c| c.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one non-digit character".into(),
         ));
     }
     Ok(())
@@ -196,10 +201,15 @@ pub async fn login(
     .bind(input)
     .bind(&email_input)
     .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("Invalid credentials".into()))?;
+    .await?;
 
-    let (user_id, username, password_hash) = user;
+    let (user_id, username, password_hash) = match user {
+        Some(row) => row,
+        None => {
+            verify_password_against_dummy(&body.password);
+            return Err(AppError::Unauthorized("Invalid credentials".into()));
+        }
+    };
 
     if !verify_password(&body.password, &password_hash)? {
         return Err(AppError::Unauthorized("Invalid credentials".into()));
@@ -380,13 +390,15 @@ mod tests {
 
     #[test]
     fn valid_password() {
-        assert!(validate_password("12345678").is_ok());
+        assert!(validate_password("hunter2hunter").is_ok());
         assert!(validate_password("a-very-long-password-indeed").is_ok());
     }
 
     #[test]
     fn password_too_short() {
-        assert!(validate_password("1234567").is_err());
+        assert!(validate_password("short").is_err());
+        assert!(validate_password("eleven-chars").is_ok());
+        assert!(validate_password("ten-chars1").is_err());
     }
 
     #[test]
@@ -399,6 +411,25 @@ mod tests {
     fn password_at_max_length() {
         let max = "a".repeat(1000);
         assert!(validate_password(&max).is_ok());
+    }
+
+    #[test]
+    fn password_exactly_min_length_passes() {
+        assert!(validate_password("abcdefghijkl").is_ok());
+        assert_eq!("abcdefghijkl".len(), 12);
+    }
+
+    #[test]
+    fn password_pure_numeric_rejected() {
+        assert!(validate_password("123456789012").is_err());
+        assert!(validate_password(&"1".repeat(20)).is_err());
+    }
+
+    #[test]
+    fn password_with_any_non_digit_accepted() {
+        assert!(validate_password("12345678901a").is_ok());
+        assert!(validate_password("a23456789012").is_ok());
+        assert!(validate_password("123456-78901").is_ok());
     }
 
     #[test]

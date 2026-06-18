@@ -181,3 +181,63 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  audit:
+    name: Supply-chain audit (cargo + npm)
+    runs-on: ubuntu-latest
+    # Independent of test jobs — supply-chain advisories shouldn't block
+    # faster signals from clippy/tests, and shouldn't be blocked BY them
+    # either. Runs in parallel with engine/backend/frontend.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache the cargo-audit binary so we don't pay the install cost
+      # on every CI run. Invalidates when the runner OS changes.
+      - name: Cache cargo-audit binary
+        id: cache-cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}
+
+      - name: Install cargo-audit
+        if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --locked
+
+      # cargo audit fails on any RustSec advisory — there's no built-in
+      # severity filter. RustSec is hand-curated so false positives are
+      # rare; if one shows up we can `cargo audit --ignore RUSTSEC-XXX`
+      # with a justifying comment rather than loosening globally.
+      - name: Audit engine deps
+        run: cargo audit
+        working-directory: engine
+
+      # RUSTSEC-2023-0071 (`rsa` 0.9.x Marvin timing sidechannel) has no
+      # upstream fix. The crate enters our Cargo.lock via sqlx-mysql,
+      # which sqlx-macros-core pulls in for compile-time query checking
+      # against all DB backends. We don't actually link against MySQL
+      # support — `cargo tree --target all -i rsa` shows no reachable
+      # path from `core-war-backend`. Revisit when the rsa crate ships
+      # a constant-time fix.
+      - name: Audit backend deps
+        run: cargo audit --ignore RUSTSEC-2023-0071
+        working-directory: backend
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm audit reads the lockfile and queries the registry — it
+      # doesn't need node_modules, so we skip `npm ci` here. The
+      # frontend's `file:` engine dep would otherwise force a wasm-pack
+      # build just to satisfy install, which audit doesn't actually need.
+      # --audit-level=high: fail on high or critical, ignore moderate/low.
+      - name: Audit frontend deps
+        run: npm audit --audit-level=high
+        working-directory: frontend

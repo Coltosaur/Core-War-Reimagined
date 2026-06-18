@@ -35,6 +35,7 @@ Optional but recommended:
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **cargo-watch** | Auto-rebuild on file changes | `cargo install cargo-watch` |
+| **cargo-audit** | Supply-chain advisory checks (matches CI's `audit` job; cadence in `deploy/README.md` §13) | `cargo install cargo-audit --locked` |
 
 ## Getting Started
 

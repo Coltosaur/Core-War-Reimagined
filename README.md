@@ -25,8 +25,8 @@ Install the following before setting up the project:
 | **Rust** (stable) | latest | [rustup.rs](https://rustup.rs) |
 | **wasm32 target** | — | `rustup target add wasm32-unknown-unknown` |
 | **wasm-pack** | 0.13+ | `cargo install wasm-pack` |
-| **Node.js** | 18+ | [nvm](https://github.com/nvm-sh/nvm) recommended |
-| **npm** | 9+ | Bundled with Node.js |
+| **Node.js** | 20.19+ or 22.12+ | [nvm](https://github.com/nvm-sh/nvm) recommended (Vite 8 dropped Node 18 support) |
+| **npm** | 10+ | Bundled with Node.js 20+ |
 | **Docker** | 20+ | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Rancher Desktop |
 | **Docker Compose** | v2+ | Bundled with Docker Desktop |
 

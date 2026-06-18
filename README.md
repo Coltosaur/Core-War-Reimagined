@@ -25,8 +25,8 @@ Install the following before setting up the project:
 | **Rust** (stable) | latest | [rustup.rs](https://rustup.rs) |
 | **wasm32 target** | — | `rustup target add wasm32-unknown-unknown` |
 | **wasm-pack** | 0.13+ | `cargo install wasm-pack` |
-| **Node.js** | 18+ | [nvm](https://github.com/nvm-sh/nvm) recommended |
-| **npm** | 9+ | Bundled with Node.js |
+| **Node.js** | 20.19+ or 22.12+ | [nvm](https://github.com/nvm-sh/nvm) recommended (Vite 8 dropped Node 18 support) |
+| **npm** | 10+ | Bundled with Node.js 20+ |
 | **Docker** | 20+ | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or Rancher Desktop |
 | **Docker Compose** | v2+ | Bundled with Docker Desktop |
 
@@ -35,6 +35,7 @@ Optional but recommended:
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **cargo-watch** | Auto-rebuild on file changes | `cargo install cargo-watch` |
+| **cargo-audit** | Supply-chain advisory checks (matches CI's `audit` job; cadence in `deploy/README.md` §13) | `cargo install cargo-audit --locked` |
 
 ## Getting Started
 

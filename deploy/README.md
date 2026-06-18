@@ -571,14 +571,19 @@ If `npm audit` flags a new high/critical advisory:
 ## What's NOT here (yet)
 
 - **Database backups.** Volumes survive `down`, but the droplet does not.
-  A future PR will add either DO managed snapshots ($1.20/mo) or a
-  `pg_dump`-to-Backblaze-B2 cron job.
-- **Redis check in `/health/deep`.** Currently only Postgres is probed.
-  Adding Redis means restructuring `AppState`; tracked as a follow-up.
+  Will add either DO managed snapshots ($1.20/mo) or a `pg_dump`-to-
+  Backblaze-B2 cron job. Tracked in #75.
+- **Redis check in `/health/deep`.** Currently only Postgres is probed;
+  adding Redis means restructuring `AppState`. Tracked in #76.
 - **Migrations as an explicit deploy step.** The backend currently runs
   `sqlx::migrate!()` at startup; migration failures surface as backend
   startup errors in `docker compose logs backend` and the CI deploy job's
   60s health-check loop catches them. Splitting into a separate
-  pre-startup step is a nice-to-have, not a blocker.
-
-We should probably have a way to back up the latest image and test and tag an image as "good" and keep at least the last good image without overwriting it. Ideally though, I think we should keep as many images we build as we can that go through successfully, may recquire versioning the images and keeping "latest" as a sort of duplicate or alias of the most recent version of image. 
+  pre-startup step is a nice-to-have, not a blocker. Tracked in #77.
+- **Backend image versioning + retention.** CI currently pushes only
+  `:latest` to GHCR, so each successful build overwrites the previous
+  image — rollback to a known-good image isn't possible. Tracked in #78.
+- **Zero-downtime deploys** (blue/green or rolling). Current `docker
+  compose up -d` produces a ~5–15s window where `/health` returns
+  connection refused. Fine at single-digit users; revisit if the user
+  base grows or post-deploy validation becomes a goal. Tracked in #79.

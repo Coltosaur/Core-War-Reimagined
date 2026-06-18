@@ -529,6 +529,45 @@ All six headers should be present. Then load the site in a browser and
 walk through the builder — CSP violations log to the devtools console
 and are the most likely regression source.
 
+## 13. Audit cadence (ops + CI hardening, issue #70)
+
+CI runs `cargo audit` + `npm audit --audit-level=high` on every push
+(see the `audit` job in `.github/workflows/ci.yml`), so newly-disclosed
+advisories against the *current* lockfile surface automatically. What CI
+doesn't catch: drift between the lockfile and what's actually current
+upstream, OS packages on the droplet, and credentials. This section is
+the human cadence for those.
+
+| Cadence | Action | How |
+|---|---|---|
+| **Monthly** | Refresh Rust dep lockfiles | `cd engine && cargo update && cargo audit` and same in `backend/`. Bump versions, commit, push — CI's audit job catches anything new. |
+| **Monthly** | Refresh frontend deps | `cd frontend && npm update && npm audit --audit-level=high && npm run lint && npm run test && npm run build`. Bump, run full FE checks, push. |
+| **Quarterly** | OS patches on droplet | `unattended-upgrades` handles security automatically (verified via PR #71). For non-security packages: `ssh colt@<droplet> 'sudo apt update && apt list --upgradable && sudo apt upgrade'`. Reboot if a new kernel landed (`sudo reboot`). |
+| **Quarterly** | `fail2ban` jail health | `ssh colt@<droplet> 'sudo fail2ban-client status sshd'` — confirm the `sshd` jail is active and ban counts look sane. |
+| **Yearly** | Rotate GHCR pull PAT | The `corewar-droplet-pull` PAT (Section 5b) is set to 1-year expiry. Calendar reminder when issued; rotate by generating a new PAT, `docker login` on the droplet, then revoke the old. |
+| **Yearly** | Rotate JWT secret | `JWT_SECRET` in droplet `.env.production`. Rotation invalidates all live sessions — schedule a low-traffic window. |
+| **On backup rollout** | Verify restore path | Once backups exist (currently in §"What's NOT here yet"), quarterly: pick a recent snapshot, restore into a scratch container, confirm `psql -c '\dt'` shows the expected tables. A backup that's never been restored is a wish, not a backup. |
+
+If `cargo audit` flags a new advisory:
+
+1. Read it. RustSec advisories are hand-curated — false positives are
+   rare but not zero (e.g. the `rsa` 0.9.x Marvin Attack advisory is
+   already ignored in `ci.yml` because sqlx-mysql is unreachable in our
+   build).
+2. If reachable: bump the offending crate or its parent. Use
+   `cargo update -p <crate>` for minor bumps; edit `Cargo.toml` for
+   major bumps.
+3. If unreachable and unfixable upstream: add it to the `cargo audit
+   --ignore RUSTSEC-XXXX-XXXX` list in `ci.yml` with an inline comment
+   explaining why it's safe to ignore. Don't loosen the gate globally.
+
+If `npm audit` flags a new high/critical advisory:
+
+1. `npm audit fix` for non-breaking transitive fixes.
+2. For major-version bumps (`--force`): run the full FE check suite
+   (`npm run lint && npm run format:check && npm run test && npm run
+   build`) and a browser smoke test on the dev server before committing.
+
 ## What's NOT here (yet)
 
 - **Database backups.** Volumes survive `down`, but the droplet does not.

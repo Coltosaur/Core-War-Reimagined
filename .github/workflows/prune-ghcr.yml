@@ -1,0 +1,43 @@
+name: Prune old GHCR backend image versions
+
+# Keeps GHCR from growing without bound: every push to master publishes
+# a new `master-<sha>` tag alongside `:latest`, so at ~2 pushes/day the
+# registry would accumulate hundreds of images per year with no way for
+# a human to find "the last known-good one".
+#
+# Policy: keep the last 20 image versions (roughly ~2 months of pushes
+# at current cadence) and prune the rest. `:latest` is always the most
+# recent version by construction, so it's inherently within the kept
+# set. Rollback path documented in deploy/README.md.
+#
+# Runs on a weekly schedule and on manual dispatch. Not tied to deploys
+# because retention should decouple from the hot deploy path — a bad
+# prune should never block a rollout.
+
+on:
+  schedule:
+    # Weekly, Mondays 08:00 UTC — off-hours for any US/EU dev, but
+    # early enough in the week that a broken prune has business days
+    # to be noticed and fixed.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+jobs:
+  prune:
+    name: Prune old backend image versions
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete old container package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: core-war-backend
+          package-type: container
+          # Keep the most recent N image versions regardless of tag.
+          # `:latest` is re-pushed on every master build and therefore
+          # is always among the most recent versions — no explicit
+          # protection needed. Kept generous (20) to preserve enough
+          # rollback headroom for at least two months at current push
+          # cadence.
+          min-versions-to-keep: 20

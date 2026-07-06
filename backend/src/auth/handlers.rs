@@ -1,4 +1,5 @@
 use crate::auth::jwt::{encode_access_token, generate_refresh_token, hash_refresh_token};
+use crate::auth::middleware::AuthUser;
 use crate::auth::password::{hash_password, verify_password, verify_password_against_dummy};
 use crate::errors::AppError;
 use crate::AppState;
@@ -21,6 +22,12 @@ pub struct RegisterRequest {
 pub struct LoginRequest {
     pub username_or_email: String,
     pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
 }
 
 #[derive(Serialize)]
@@ -314,6 +321,77 @@ pub async fn logout(
     }
 
     let jar = jar.add(clear_access_cookie()).add(clear_refresh_cookie());
+
+    Ok((jar, StatusCode::NO_CONTENT))
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    user: AuthUser,
+    jar: CookieJar,
+    Json(body): Json<ChangePasswordRequest>,
+) -> Result<(CookieJar, StatusCode), AppError> {
+    // Enforce the same rules as registration on the new password so a user
+    // can't downgrade to a weak one via this path.
+    validate_password(&body.new_password)?;
+
+    // Rejecting no-op changes early prevents accidental refresh-token wipes
+    // and gives the frontend a clear "different password required" signal.
+    if body.current_password == body.new_password {
+        return Err(AppError::BadRequest(
+            "New password must be different from the current password".into(),
+        ));
+    }
+
+    let password_hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(user.user_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found".into()))?;
+
+    if !verify_password(&body.current_password, &password_hash)? {
+        return Err(AppError::Unauthorized(
+            "Current password is incorrect".into(),
+        ));
+    }
+
+    let new_hash = hash_password(&body.new_password)?;
+
+    // Update the stored hash and revoke all refresh tokens for this user in
+    // a single transaction. Revoking every refresh token (not just the one on
+    // this device) is deliberate: a password change is the standard trigger
+    // for "log the user out everywhere else", which is the whole point of
+    // rotating the credential.
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(&new_hash)
+        .bind(user.user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM refresh_tokens WHERE user_id = $1")
+        .bind(user.user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    // Issue a fresh access + refresh pair so the *current* session stays
+    // logged in — otherwise the user would have to log back in on the device
+    // that just changed the password, which is jarring UX.
+    let access_token = encode_access_token(user.user_id, &user.username, &state.config.jwt_secret)?;
+    let refresh_token = generate_refresh_token();
+    let token_hash = hash_refresh_token(&refresh_token);
+    let expires_at = Utc::now() + Duration::days(7);
+
+    sqlx::query("INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)")
+        .bind(user.user_id)
+        .bind(&token_hash)
+        .bind(expires_at)
+        .execute(&state.db)
+        .await?;
+
+    let jar = jar
+        .add(build_access_cookie(access_token))
+        .add(build_refresh_cookie(refresh_token));
 
     Ok((jar, StatusCode::NO_CONTENT))
 }

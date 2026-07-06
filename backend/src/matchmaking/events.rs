@@ -1,8 +1,9 @@
 use crate::auth::socket::{get_auth, require_auth};
 use crate::matchmaking::queue::{QueueEntry, RedisQueue};
+use crate::matchmaking::runner::execute_and_persist_match;
 use crate::models::warrior::Warrior;
 use chrono::Utc;
-use core_war_engine::{parse_warrior, MatchResult, MatchState};
+use core_war_engine::parse_warrior;
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::{Data, SocketRef};
 use socketioxide::{socket::Sid, SocketIo};
@@ -300,43 +301,28 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
 
     let _ = io.to(room.clone()).emit("match:found", &found_event);
 
-    let red_source_for_battle = red_source.clone();
-    let blue_source_for_battle = blue_source.clone();
-    let battle_result = tokio::task::spawn_blocking(move || {
-        let red_parsed =
-            parse_warrior(&red_source_for_battle).map_err(|e| format!("Red parse: {e}"))?;
-        let blue_parsed =
-            parse_warrior(&blue_source_for_battle).map_err(|e| format!("Blue parse: {e}"))?;
-
-        let mut m = MatchState::new(CORE_SIZE, MAX_STEPS);
-        m.load_warrior(0, &red_parsed, RED_START);
-        m.load_warrior(1, &blue_parsed, BLUE_START);
-
-        while m.step() {}
-
-        let result_str = match m.result() {
-            MatchResult::Victory { winner_id: 0 } => "red_win",
-            MatchResult::Victory { .. } => "blue_win",
-            MatchResult::Tie => "tie",
-            MatchResult::AllDead => "all_dead",
-            MatchResult::Ongoing => unreachable!(),
-        };
-
-        Ok::<_, String>((result_str.to_string(), m.steps()))
-    })
-    .await;
-
-    let (result_str, steps_taken) = match battle_result {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            error!("Battle error: {e}");
-            return;
-        }
+    let outcome = match execute_and_persist_match(
+        &db,
+        red.user_id,
+        blue.user_id,
+        red.warrior_id,
+        blue.warrior_id,
+        &red_source,
+        &blue_source,
+        CORE_SIZE,
+        MAX_STEPS,
+    )
+    .await
+    {
+        Ok(o) => o,
         Err(e) => {
-            error!("Battle task panic: {e}");
+            error!("Failed to execute+persist match: {e}");
             return;
         }
     };
+
+    let result_str = outcome.result.clone();
+    let steps_taken = outcome.steps_taken as u64;
 
     // Emit the full replay payload. Clients use playback_start_time_ms to
     // pace the local wasm replay deterministically; match:result follows
@@ -372,25 +358,15 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
 
     let _ = io.to(room).emit("match:result", &result_event);
 
-    let _ = sqlx::query(
-        "INSERT INTO matches \
-           (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
-            core_size, max_steps, result, steps_taken) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-    )
-    .bind(red.warrior_id)
-    .bind(blue.warrior_id)
-    .bind(red.user_id)
-    .bind(blue.user_id)
-    .bind(CORE_SIZE as i32)
-    .bind(MAX_STEPS as i32)
-    .bind(&result_str)
-    .bind(steps_taken as i32)
-    .execute(&db)
-    .await;
-
     info!(
-        "match complete: {} vs {} -> {} ({} steps)",
-        red.username, blue.username, result_str, steps_taken
+        "match complete: {} vs {} -> {} ({} steps) — rating: red {}->{}, blue {}->{}",
+        red.username,
+        blue.username,
+        result_str,
+        steps_taken,
+        outcome.red_rating_before,
+        outcome.red_rating_after,
+        outcome.blue_rating_before,
+        outcome.blue_rating_after,
     );
 }

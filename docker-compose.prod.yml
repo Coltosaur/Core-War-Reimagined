@@ -20,7 +20,15 @@ services:
     # `docker compose up --build` — that build tags the local image with
     # this same name, which is harmless. If you fork, update the owner
     # segment to match your GitHub login (lowercase).
-    image: ghcr.io/coltosaur/core-war-backend:latest
+    #
+    # `BACKEND_IMAGE_TAG` is deliberately overridable: the deploy workflow
+    # sets it to the exact `master-<sha>` tag it just pushed, which makes
+    # each deploy race-immune (no dependence on the mutable `:latest`
+    # tag). For manual `docker pull` / local prod-mirror / doc examples,
+    # it falls back to `:latest`. For rollback, set BACKEND_IMAGE_TAG in
+    # `.env.production` on the droplet to any older `master-<sha>` tag
+    # from GHCR and `docker compose pull backend && up -d`.
+    image: ghcr.io/coltosaur/core-war-backend:${BACKEND_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: backend/Dockerfile

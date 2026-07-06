@@ -397,6 +397,55 @@ The script rsyncs (skipping `.env.production` and other excluded paths),
 then runs `docker compose up -d --build` over SSH so only changed layers
 rebuild.
 
+### 9a. Rollback to an earlier backend image
+
+Every push to master publishes an immutable `master-<sha>` tag alongside
+`:latest` (see the `Compute image tags` step in
+`.github/workflows/deploy-backend.yml`). The `docker-compose.prod.yml`
+backend service resolves `${BACKEND_IMAGE_TAG:-latest}`, so pinning to
+an older SHA is one env var away — no code change, no CI run.
+
+1. Pick a target SHA from **GitHub → your profile → Packages →
+   `core-war-backend` → Tags**. Anything of the form `master-abcdef1`
+   is a candidate. The list is bounded by the retention policy in
+   `.github/workflows/prune-ghcr.yml` (currently: last 20 versions,
+   ~2 months at present cadence).
+
+2. SSH into the droplet and pin the tag:
+
+   ```bash
+   ssh colt@<DROPLET_IP>
+   cd ~/corewar
+   # Add or update the line — no other secrets change.
+   echo 'BACKEND_IMAGE_TAG=master-abcdef1' >> .env.production
+   # (Or edit .env.production directly if BACKEND_IMAGE_TAG is already set.)
+   ```
+
+3. Pull the pinned image and restart just the backend:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.production pull backend
+   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
+   ```
+
+4. Verify the container came up healthy:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.production ps
+   curl -f http://localhost:3001/health/deep
+   ```
+
+To return to normal (deploy-managed) operation: the next `Deploy
+backend` workflow run exports `BACKEND_IMAGE_TAG=master-<tip-sha>` in
+the SSH session before the compose commands, and docker compose's
+shell-env-wins-over-`--env-file` rule means the workflow's value
+overrides anything in `.env.production` during the automated deploy.
+However, any *manual* `docker compose up -d` on the droplet (without
+`BACKEND_IMAGE_TAG` in the current shell) would still pick up whatever
+you left in `.env.production` — so once the incident is resolved,
+remove the `BACKEND_IMAGE_TAG=` line to avoid a surprise on the next
+manual restart.
+
 ## 10. Enable CI deploys (deploy-on-merge)
 
 Once the droplet is up and the manual deploy from section 7 worked, wire
@@ -580,9 +629,6 @@ If `npm audit` flags a new high/critical advisory:
   startup errors in `docker compose logs backend` and the CI deploy job's
   60s health-check loop catches them. Splitting into a separate
   pre-startup step is a nice-to-have, not a blocker. Tracked in #77.
-- **Backend image versioning + retention.** CI currently pushes only
-  `:latest` to GHCR, so each successful build overwrites the previous
-  image — rollback to a known-good image isn't possible. Tracked in #78.
 - **Zero-downtime deploys** (blue/green or rolling). Current `docker
   compose up -d` produces a ~5–15s window where `/health` returns
   connection refused. Fine at single-digit users; revisit if the user

@@ -34,11 +34,24 @@ jobs:
   build:
     name: Build (and push on master) backend image
     runs-on: ubuntu-latest
+    # Only one build can be in flight per ref. On a burst of master
+    # merges, older builds are canceled and only the tip actually gets
+    # built + pushed — no `:latest` race between concurrent finish
+    # times, and only one deploy queues downstream. Same-branch PR
+    # pushes get the same treatment (older CI is canceled when a new
+    # commit lands). See issue #78.
+    concurrency:
+      group: deploy-backend-build-${{ github.ref }}
+      cancel-in-progress: true
     permissions:
       contents: read
       packages: write
     outputs:
       image: ${{ steps.image.outputs.ref }}
+      # The exact SHA-pinned tag this build pushed, consumed by the
+      # deploy job so it's bound to THIS run's commit rather than
+      # racing for whatever `:latest` happens to point at.
+      tag: ${{ steps.image_tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +60,16 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "ref=${REGISTRY}/${OWNER_LC}/core-war-backend" >> "$GITHUB_OUTPUT"
+
+      - name: Compute immutable image tag
+        id: image_tag
+        # Matches the SHA tag docker/metadata-action produces below
+        # (`type=sha,prefix=master-` → default 7-char short SHA). Kept
+        # in sync manually — if either format changes, both need to
+        # move together.
+        run: |
+          SHORT=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "tag=master-${SHORT}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -113,8 +136,21 @@ jobs:
             "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}:~/corewar/"
 
       - name: Pull image + restart stack + verify health
+        env:
+          # Deploy pins to the exact SHA this build produced. Race-immune
+          # against concurrent master merges — `:latest` may have been
+          # overwritten by a parallel build that finished later, but the
+          # tag we pass through here is bound to THIS run's commit and
+          # was pushed to GHCR before this job started (build → deploy
+          # is a `needs:` edge). See issue #78.
+          IMAGE_TAG: ${{ needs.build.outputs.tag }}
         run: |
-          ssh "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" bash -s <<'REMOTE'
+          # Pass BACKEND_IMAGE_TAG through to the remote via the ssh
+          # command prefix — the outer shell expands $IMAGE_TAG (local
+          # runner env), the remote bash sees the literal assignment.
+          # This works even when the heredoc is quoted (which we want
+          # so remote-only variables like $SECONDS don't leak upward).
+          ssh "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}" "BACKEND_IMAGE_TAG=$IMAGE_TAG bash -s" <<'REMOTE'
           set -euo pipefail
           cd ~/corewar
 
@@ -123,6 +159,15 @@ jobs:
               echo "       bootstrap first (deploy/README.md section 7)." >&2
               exit 1
           fi
+
+          echo "==> Deploying backend at tag ${BACKEND_IMAGE_TAG}"
+          # Export so `docker compose` sees BACKEND_IMAGE_TAG via the
+          # compose file's `${BACKEND_IMAGE_TAG:-latest}` interpolation.
+          # (`--env-file` supplies the app's runtime secrets, but
+          # variable interpolation in the compose file itself uses the
+          # calling shell's env — those are two separate resolution
+          # paths, both required.)
+          export BACKEND_IMAGE_TAG
 
           echo "==> Pulling backend image"
           docker compose -f docker-compose.prod.yml --env-file .env.production pull backend

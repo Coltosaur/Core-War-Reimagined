@@ -163,32 +163,35 @@ fn parsed_scanner_finds_and_bombs_planted_marker() {
 }
 
 #[test]
-fn parsed_dwarf_outlasts_passive_dat_warrior_in_two_warrior_match() {
+fn parsed_dwarf_outlasts_mice_lite_in_two_warrior_match() {
     // This test exercises multi-warrior loading via the public API: two
     // separate parsed warriors loaded into different regions of the same
     // core, executing in round-robin alternation, with the dead-warrior
     // skip path kicking in after warrior 1 dies.
     let dwarf = parse_warrior(DWARF).expect("dwarf.red should parse");
 
-    // A deliberately suicidal warrior: a single DAT cell. The first time
-    // its process executes, it dies. (Parsed via the same public API, just
-    // from an inline source string instead of an .red file.)
-    let suicide = parse_warrior("DAT.F #0, #0").expect("suicide warrior should parse");
+    // Mice-Lite self-terminates after replicating three copies of the imp
+    // template — it walks its DJN counter down to zero and then falls
+    // through to its own DAT landing pad. Under round-robin alternation
+    // that death lands around total step 14 (7 blue turns × 2 for alternation),
+    // well within the step budget below.
+    let mice_lite = parse_warrior(MICE_LITE).expect("mice_lite.red should parse");
 
     let mut state = MatchState::new(64, 50);
     state.load_warrior(0, &dwarf, 0);
-    state.load_warrior(1, &suicide, 32);
+    state.load_warrior(1, &mice_lite, 32);
 
-    // Run several steps. The suicide warrior dies on its first turn
-    // (step 2); the dwarf is then the unique survivor and wins.
-    for _ in 0..10 {
+    // 20 steps is more than enough for mice-lite to hit its landing pad
+    // (~step 14) and for the dead-warrior skip path to leave the dwarf as
+    // the sole survivor.
+    for _ in 0..20 {
         state.step();
     }
 
     assert_eq!(
         state.result(),
         MatchResult::Victory { winner_id: 0 },
-        "dwarf should win against a passive DAT warrior",
+        "dwarf should win against a self-terminating mice-lite",
     );
 }
 

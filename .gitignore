@@ -40,8 +40,12 @@ dist/
 # Playwright MCP runtime artifacts
 .playwright-mcp/
 
-# Claude Code local config
-.claude/
+# Claude Code local config — ignore everything except committed team agents.
+# `.claude/agents/` is versioned so team subagent definitions (senior engineers,
+# QA) travel with the repo; per-user settings (settings.local.json), worktrees,
+# and any other local scratch stay ignored.
+.claude/*
+!.claude/agents/
 
 # MCP server config (contains local paths)
 .mcp.json

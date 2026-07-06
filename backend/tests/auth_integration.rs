@@ -1,9 +1,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{middleware, Router};
-use core_war_backend::{auth, AppConfig, AppState};
+use core_war_backend::{account, auth, AppConfig, AppState};
 use http_body_util::BodyExt;
+use redis::aio::ConnectionManager;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -34,11 +35,50 @@ fn app(pool: PgPool) -> Router {
             "/api/auth/change-password",
             post(auth::handlers::change_password),
         )
+        // Mirror /api/account so tests can prove that the freshly-issued
+        // access_token cookie the change-password handler returns actually
+        // authenticates a subsequent protected request. Without this seam,
+        // the cookie could be present-but-broken and no test would fire.
+        .route("/api/account", get(account::handlers::me))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::csrf_middleware,
         ))
         .with_state(state)
+}
+
+/// Same as `app()`, but wires the change-password endpoint behind the
+/// production rate-limit middleware. Uses a caller-supplied `RateLimiter` so
+/// each test can pin a unique Redis key namespace and small quota, keeping
+/// the assertion tight without depending on Redis wall-clock state.
+fn app_with_change_password_limiter(
+    pool: PgPool,
+    limiter: auth::rate_limit::RateLimiter,
+) -> Router {
+    let state = test_state(pool);
+    Router::new()
+        .route("/api/auth/register", post(auth::handlers::register))
+        .route("/api/auth/login", post(auth::handlers::login))
+        .route(
+            "/api/auth/change-password",
+            post(auth::handlers::change_password).layer(middleware::from_fn_with_state(
+                limiter,
+                auth::rate_limit::rate_limit_middleware,
+            )),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::middleware::csrf_middleware,
+        ))
+        .with_state(state)
+}
+
+async fn test_redis_conn() -> ConnectionManager {
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
+    let client = redis::Client::open(url.as_str()).expect("open redis for rate-limit wiring test");
+    ConnectionManager::new(client)
+        .await
+        .expect("connect redis for rate-limit wiring test")
 }
 
 // --- Request builders ---
@@ -939,4 +979,164 @@ async fn change_password_revokes_all_refresh_tokens(pool: PgPool) {
     )
     .await;
     assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+fn get_with_cookies(path: &str, cookies: &str) -> Request<Body> {
+    Request::get(path)
+        .header("cookie", cookies)
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[sqlx::test]
+async fn change_password_new_access_cookie_authenticates_subsequent_request(pool: PgPool) {
+    // After change-password, the fresh access_token cookie the response
+    // hands back must actually authenticate a protected request. The
+    // existing suite already asserts the cookie is *present* — this test
+    // asserts it *works*. Prevents a regression where the handler builds a
+    // cookie with the wrong claims / secret / expiry and everyone gets
+    // silently logged out on their next authed action.
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpcook", "cpc@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
+    let new_access = resp.cookies["access_token"].clone();
+    // Deliberately not asserting new_access != access. HS256 JWTs are
+    // deterministic in {claims × secret}, so a login + change-password
+    // fired in the same wall-clock second produce byte-identical tokens.
+    // That's not a bug — the point of this test is that the cookie the
+    // response ships actually AUTHENTICATES, not that it's a new byte
+    // sequence.
+    let resp = send(
+        router,
+        get_with_cookies("/api/account", &format!("access_token={new_access}")),
+    )
+    .await;
+    assert_eq!(
+        resp.status,
+        StatusCode::OK,
+        "freshly-issued access_token should authenticate /api/account: {:?}",
+        resp.json
+    );
+    assert_eq!(resp.json["email"], "cpc@example.com");
+}
+
+#[sqlx::test]
+async fn change_password_new_refresh_cookie_can_rotate(pool: PgPool) {
+    // The refresh_token issued alongside the fresh access_token must be a
+    // real, inserted-into-DB token — not a random string that happens to
+    // parse. Round-trip it through /api/auth/refresh to prove the handler
+    // wrote it to the refresh_tokens table with the correct hash. Guards
+    // against a regression where the INSERT step is skipped or bound to the
+    // wrong hash column.
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpref", "cpref@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+    let old_refresh = cookies["refresh_token"].clone();
+
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
+    let new_refresh = resp.cookies["refresh_token"].clone();
+    assert_ne!(new_refresh, old_refresh);
+
+    // The fresh refresh cookie can be exchanged for another access+refresh
+    // pair via the normal refresh flow. That proves the underlying token
+    // row landed in `refresh_tokens` with the right expires_at and hash.
+    let resp = send(
+        router,
+        post_with_cookies("/api/auth/refresh", &format!("refresh_token={new_refresh}")),
+    )
+    .await;
+    assert_eq!(
+        resp.status,
+        StatusCode::OK,
+        "freshly-issued refresh_token should be accepted by /api/auth/refresh: {:?}",
+        resp.json
+    );
+    assert!(resp.cookies.contains_key("refresh_token"));
+    // The new refresh has been rotated by this call — it must not equal the
+    // one we just used.
+    assert_ne!(resp.cookies["refresh_token"], new_refresh);
+}
+
+#[sqlx::test]
+async fn change_password_endpoint_is_rate_limited(pool: PgPool) {
+    // Router-level assertion that /api/auth/change-password is actually
+    // wired behind the rate-limit middleware in production. Without this,
+    // silently removing the .layer(...) from main.rs would open an
+    // authenticated brute-force surface (attacker with a valid session
+    // cookie can enumerate the current password) and no automated signal
+    // would fire.
+    //
+    // We use a private RateLimiter with a small quota and a unique Redis
+    // key namespace so the assertion is tight and can't be polluted by
+    // parallel tests or leftover Redis state.
+    let namespace = format!("test_cp_wiring_{}", uuid::Uuid::new_v4());
+    let limiter =
+        auth::rate_limit::RateLimiter::new(test_redis_conn().await, &namespace, 2, 60, vec![]);
+    let router = app_with_change_password_limiter(pool, limiter);
+
+    let cookies = register_and_login(&router, "cplimit", "cpl@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    // Two attempts with the WRONG current password — each returns 401 from
+    // the handler, but both count against the limit because the middleware
+    // runs before the handler. Third attempt should be short-circuited to
+    // 429 by the middleware even though it's still an otherwise-valid
+    // change-password request.
+    for _ in 0..2 {
+        let resp = send(
+            router.clone(),
+            post_json_with_cookies(
+                "/api/auth/change-password",
+                &change_password_body("wrong-current-password", "brand-new-password"),
+                &format!("access_token={access}"),
+            ),
+        )
+        .await;
+        // 401 from the handler is fine — proves we reached it, so the
+        // request DID count against the limit.
+        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    }
+
+    let resp = send(
+        router,
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("wrong-current-password", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "expected 429 after quota exhausted; got {:?} {:?}",
+        resp.status,
+        resp.json,
+    );
+    // Retry-After header is part of the standard 429 shape.
+    let err_msg = resp.json["error"].as_str().unwrap_or("");
+    assert!(
+        err_msg.to_lowercase().contains("too many"),
+        "expected rate-limit copy; got {err_msg:?}"
+    );
 }

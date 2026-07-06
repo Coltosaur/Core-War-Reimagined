@@ -1,11 +1,28 @@
 import { vi } from 'vitest';
 
-export const parseWarrior = vi.fn(() => ({
-  name: () => 'Test Warrior',
-  author: () => 'Test Author',
-  instructionCount: () => 1,
-  startOffset: () => 0,
-}));
+// Behavior-faithful `parseWarrior` mock. Prior to the #85 sweep, the mock
+// returned a successful parse for ANY input, including `''` — which is why
+// the "Builder shows EmptyWarrior on fresh load" bug slipped through the
+// hook-under-test's own coverage: every test file that used the shared mock
+// saw the buggy `runParse('')` path as "ok". Now the mock throws
+// EmptyWarrior on empty input the same way the real engine does, so any
+// component that accidentally calls `parseWarrior('')` will show up as a
+// failing test rather than a silent lie.
+//
+// If a test wants to override this behavior (e.g. simulate a parse error),
+// it can do so via `vi.mocked(parseWarrior).mockImplementation(...)` in a
+// `beforeEach`, exactly like useBuilder.test.tsx does today.
+const EMPTY_WARRIOR_MESSAGE = 'warrior source has no instructions';
+
+export const parseWarrior = vi.fn((source: string) => {
+  if (!source || !source.trim()) throw new Error(EMPTY_WARRIOR_MESSAGE);
+  return {
+    name: () => 'Test Warrior',
+    author: () => 'Test Author',
+    instructionCount: () => 1,
+    startOffset: () => 0,
+  };
+});
 
 export const engineVersion = vi.fn(() => '0.1.0-mock');
 

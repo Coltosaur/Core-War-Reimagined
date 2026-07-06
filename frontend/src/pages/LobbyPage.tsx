@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../api/AuthContext';
+import { installSocketAuthRecovery, type PendingSocketAction } from '../api/socketAuth';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
 import { io, type Socket } from 'socket.io-client';
 import type { MatchStartPayload } from './match/useMatchReplay';
@@ -105,6 +106,8 @@ export default function LobbyPage() {
   const [result, setResult] = useState<MatchResultData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
+  const socketTeardownRef = useRef<(() => void) | null>(null);
+  const pendingActionRef = useRef<PendingSocketAction | null>(null);
   const autoQueuedRef = useRef(false);
 
   const effectiveId = selectedId || firstUuid;
@@ -114,9 +117,16 @@ export default function LobbyPage() {
     const s = io(API_BASE, { withCredentials: true });
     socketRef.current = s;
 
-    s.on('queue:joined', () => setPhase('queued'));
-    s.on('queue:left', () => setPhase('idle'));
+    s.on('queue:joined', () => {
+      pendingActionRef.current = null;
+      setPhase('queued');
+    });
+    s.on('queue:left', () => {
+      pendingActionRef.current = null;
+      setPhase('idle');
+    });
     s.on('queue:error', (data: { error: string }) => {
+      pendingActionRef.current = null;
       setError(data.error);
       setPhase('idle');
     });
@@ -135,6 +145,20 @@ export default function LobbyPage() {
       setPhase('result');
     });
 
+    // Silent recovery on access-token expiry. Without this, an idle
+    // 15+ minute session lets the socket reconnect as anonymous and
+    // `require_auth` on the backend drops queue:join with no visible
+    // feedback (issue #60).
+    socketTeardownRef.current = installSocketAuthRecovery(s, {
+      getPendingAction: () => pendingActionRef.current,
+      onRecovered: () => setError(null),
+      onSessionExpired: () => {
+        pendingActionRef.current = null;
+        setPhase('idle');
+        setError('Your session has expired. Please log in again.');
+      },
+    });
+
     return s;
   }, [navigate]);
 
@@ -145,7 +169,12 @@ export default function LobbyPage() {
       if (!warriorId) return;
       setError(null);
       const s = connect();
-      s.emit('queue:join', { warrior_id: warriorId });
+      const payload = { warrior_id: warriorId };
+      // Record the pending action *before* emitting so the socket-auth
+      // recovery layer can replay it if the backend drops this emit because
+      // the connection is anonymous.
+      pendingActionRef.current = { event: 'queue:join', payload };
+      s.emit('queue:join', payload);
     },
     [connect],
   );
@@ -180,8 +209,11 @@ export default function LobbyPage() {
 
   useEffect(() => {
     return () => {
+      socketTeardownRef.current?.();
+      socketTeardownRef.current = null;
       socketRef.current?.disconnect();
       socketRef.current = null;
+      pendingActionRef.current = null;
     };
   }, []);
 

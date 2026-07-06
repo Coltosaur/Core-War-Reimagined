@@ -265,6 +265,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn change_password_limiter_config() {
+        // The PR description advertised 5 attempts / 15min for the
+        // change-password endpoint, matching the login limiter shape.
+        // Pin those numbers so a silent bump in either the count or the
+        // window fails this test — either would materially change the
+        // brute-force surface characterization.
+        let l = change_password_limiter(test_conn().await, vec![]);
+        assert_eq!(l.max_requests, 5);
+        assert_eq!(l.window_secs, 15 * 60);
+    }
+
+    #[tokio::test]
     async fn limiter_carries_trusted_proxies() {
         let proxies = vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([10, 0, 0, 2])];
         let l = login_limiter(test_conn().await, proxies.clone());

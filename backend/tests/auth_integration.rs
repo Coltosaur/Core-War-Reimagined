@@ -30,6 +30,10 @@ fn app(pool: PgPool) -> Router {
         .route("/api/auth/login", post(auth::handlers::login))
         .route("/api/auth/refresh", post(auth::handlers::refresh))
         .route("/api/auth/logout", post(auth::handlers::logout))
+        .route(
+            "/api/auth/change-password",
+            post(auth::handlers::change_password),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::csrf_middleware,
@@ -52,6 +56,15 @@ fn post_with_cookies(path: &str, cookies: &str) -> Request<Body> {
         .header("origin", FRONTEND_URL)
         .header("cookie", cookies)
         .body(Body::empty())
+        .unwrap()
+}
+
+fn post_json_with_cookies(path: &str, body: &Value, cookies: &str) -> Request<Body> {
+    Request::post(path)
+        .header("content-type", "application/json")
+        .header("origin", FRONTEND_URL)
+        .header("cookie", cookies)
+        .body(Body::from(body.to_string()))
         .unwrap()
 }
 
@@ -723,6 +736,205 @@ async fn full_flow_register_login_refresh_logout(pool: PgPool) {
         post_with_cookies(
             "/api/auth/refresh",
             &format!("refresh_token={refresh_token}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+// =============================================================================
+// Change-password tests
+// =============================================================================
+
+fn change_password_body(current: &str, new: &str) -> Value {
+    json!({"current_password": current, "new_password": new})
+}
+
+#[sqlx::test]
+async fn change_password_success_updates_hash_and_keeps_session(pool: PgPool) {
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpuser", "cp@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    // Change to a new password.
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
+
+    // The response must issue a fresh access + refresh pair so the caller's
+    // session survives the rotation.
+    assert!(
+        resp.cookies.contains_key("access_token"),
+        "expected fresh access_token cookie"
+    );
+    assert!(
+        resp.cookies.contains_key("refresh_token"),
+        "expected fresh refresh_token cookie"
+    );
+
+    // Old password no longer works.
+    let resp = send(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("cpuser", "password1234")),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+
+    // New password works.
+    let resp = send(
+        router,
+        post_json(
+            "/api/auth/login",
+            &login_body("cpuser", "brand-new-password"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn change_password_wrong_current_rejected(pool: PgPool) {
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpwrong", "cpw@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("wrong-current-password", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.json["error"], "Current password is incorrect");
+
+    // Old password still works — nothing was changed.
+    let resp = send(
+        router,
+        post_json("/api/auth/login", &login_body("cpwrong", "password1234")),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn change_password_rejects_weak_new_password(pool: PgPool) {
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpweak", "cpwk@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    // Too short.
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "short"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+
+    // All-numeric.
+    let resp = send(
+        router,
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "123456789012345"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn change_password_rejects_same_password(pool: PgPool) {
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cpsame", "cps@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+
+    let resp = send(
+        router,
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "password1234"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::BAD_REQUEST);
+    let msg = resp.json["error"].as_str().unwrap();
+    assert!(msg.to_lowercase().contains("different"));
+}
+
+#[sqlx::test]
+async fn change_password_requires_auth(pool: PgPool) {
+    let router = app(pool);
+
+    let resp = send(
+        router,
+        post_json(
+            "/api/auth/change-password",
+            &change_password_body("anything", "brand-new-password"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn change_password_revokes_all_refresh_tokens(pool: PgPool) {
+    let router = app(pool);
+    let cookies = register_and_login(&router, "cprevoke", "cpr@example.com", "password1234").await;
+    let access = cookies["access_token"].clone();
+    let old_refresh = cookies["refresh_token"].clone();
+
+    // Log in a *second* time to simulate a session on another device.
+    let resp = send(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("cprevoke", "password1234")),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+    let other_refresh = resp.cookies["refresh_token"].clone();
+
+    // Change the password.
+    let resp = send(
+        router.clone(),
+        post_json_with_cookies(
+            "/api/auth/change-password",
+            &change_password_body("password1234", "brand-new-password"),
+            &format!("access_token={access}"),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
+
+    // The refresh token from the initial login is invalidated.
+    let resp = send(
+        router.clone(),
+        post_with_cookies("/api/auth/refresh", &format!("refresh_token={old_refresh}")),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+
+    // The refresh token from the "other device" is also invalidated — this is
+    // the security-critical bit: changing your password kicks out every session.
+    let resp = send(
+        router,
+        post_with_cookies(
+            "/api/auth/refresh",
+            &format!("refresh_token={other_refresh}"),
         ),
     )
     .await;

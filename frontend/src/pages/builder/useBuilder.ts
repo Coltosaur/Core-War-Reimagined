@@ -28,8 +28,8 @@ export function useBuilder() {
   const { user } = useAuth();
   const library = useWarriorLibrary();
   const [selectedId, setSelectedId] = useState<string>(() => library[0]?.id ?? '');
-  const [source, setSource] = useState<string>('');
-  const [label, setLabel] = useState<string>('');
+  const [source, setSource] = useState<string>(() => library[0]?.source ?? '');
+  const [label, setLabel] = useState<string>(() => library[0]?.label ?? '');
   const [dirty, setDirty] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [parseStatus, setParseStatus] = useState<ParseStatus>(null);
@@ -64,6 +64,22 @@ export function useBuilder() {
     setLabel(warrior.label);
     setDirty(false);
   }, []);
+
+  // Mirror the selected warrior into local source/label state whenever the
+  // selection or the library snapshot changes and the user has no pending
+  // edits. Combined with the lazy-init of `source` and `label` above, this
+  // guarantees the React state matches what Monaco shows (via
+  // `defaultValue={selected?.source}`) from the very first render — so the
+  // parse-status effect below never sees an empty string and mis-reports
+  // EmptyWarrior on a fresh load. Gated on `!dirty` so in-flight edits are
+  // never clobbered by an async library update (e.g. syncFromServer).
+  useEffect(() => {
+    if (dirty) return;
+    const warrior = library.find((w) => w.id === selectedId);
+    if (!warrior) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    syncFromWarrior(warrior);
+  }, [selectedId, dirty, library, syncFromWarrior]);
 
   function runParse(text: string): void {
     const monaco = monacoRef.current;

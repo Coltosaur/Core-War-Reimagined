@@ -2,8 +2,8 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{header, Method};
 use axum::{middleware, routing::get, routing::post, Router};
 use core_war_backend::{
-    auth, config::Config, db, health, leaderboard, matches, matchmaking, profile, warriors,
-    AppConfig, AppState,
+    account, auth, config::Config, db, health, leaderboard, matches, matchmaking, profile,
+    warriors, AppConfig, AppState,
 };
 
 const MAX_REQUEST_BODY_BYTES: usize = 128 * 1024;
@@ -72,7 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proxies = state.config.trusted_proxies.clone();
     let login_limiter = auth::rate_limit::login_limiter(redis_conn.clone(), proxies.clone());
     let register_limiter = auth::rate_limit::register_limiter(redis_conn.clone(), proxies.clone());
-    let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn, proxies);
+    let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn.clone(), proxies.clone());
+    let change_password_limiter = auth::rate_limit::change_password_limiter(redis_conn, proxies);
 
     let app = Router::new()
         .route("/health", get(health::liveness))
@@ -100,6 +101,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/api/auth/logout", post(auth::handlers::logout))
         .route("/api/auth/me", get(auth::handlers::me))
+        .route(
+            "/api/auth/change-password",
+            post(auth::handlers::change_password).layer(middleware::from_fn_with_state(
+                change_password_limiter,
+                auth::rate_limit::rate_limit_middleware,
+            )),
+        )
+        .route("/api/account", get(account::handlers::me))
         .route(
             "/api/warriors",
             get(warriors::handlers::list).post(warriors::handlers::create),

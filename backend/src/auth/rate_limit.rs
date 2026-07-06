@@ -131,6 +131,16 @@ pub fn refresh_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpAddr>) ->
     RateLimiter::new(conn, "refresh", 10, 15 * 60, trusted_proxies)
 }
 
+/// Change-password: 5 attempts per 15 min, same shape as login. The endpoint
+/// verifies the current password so it's a plausible brute-force surface even
+/// with a valid session cookie — cap it accordingly.
+pub fn change_password_limiter(
+    conn: ConnectionManager,
+    trusted_proxies: Vec<IpAddr>,
+) -> RateLimiter {
+    RateLimiter::new(conn, "change_password", 5, 15 * 60, trusted_proxies)
+}
+
 pub async fn rate_limit_middleware(
     connect_info: Option<ConnectInfo<SocketAddr>>,
     axum::extract::State(limiter): axum::extract::State<RateLimiter>,

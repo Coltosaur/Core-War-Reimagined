@@ -47,7 +47,13 @@ fn run_battle(red_source: &str, blue_source: &str) -> Result<(String, i32), AppE
     m.load_warrior(0, &red, 0);
     m.load_warrior(1, &blue, CORE_SIZE / 2);
 
-    while m.step() {}
+    // Issue #87: engine's step() keeps running the survivor after a Victory,
+    // so this loop would otherwise always pin steps_taken at MAX_STEPS.
+    while m.step() {
+        if !matches!(m.result(), MatchResult::Ongoing) {
+            break;
+        }
+    }
 
     let result_str = match m.result() {
         MatchResult::Victory { winner_id: 0 } => "red_win",
@@ -184,15 +190,21 @@ mod tests {
     }
 
     #[test]
-    fn run_battle_completes_with_valid_result() {
+    fn run_battle_decisive_match_stops_short_of_max_steps() {
+        // Issue #87: without the non-Ongoing short-circuit this test would
+        // silently pass at steps == MAX_STEPS because the engine keeps
+        // stepping the survivor. Use Dwarf-vs-mice-lite (rather than
+        // Dwarf-vs-Imp, which is deceptively a tie at 8000/80k) so the
+        // decision reliably lands well before MAX_STEPS and any regression
+        // that lets the loop continue past Victory fails loudly here.
         let dwarf = ";name Dwarf\n  ORG start\nstart ADD.AB #4, bomb\n  MOV.I bomb, @bomb\n  JMP start\nbomb DAT.F #0, #0";
-        let imp = "MOV.I $0, $1";
-        let (result, steps) = run_battle(dwarf, imp).unwrap();
+        let mice_lite = ";name Mice-Lite\n        ORG    loop\ncounter DAT.F  #0, #3\ndest    DAT.F  #0, #8\nimp     MOV.I  $0, $1\nloop    MOV.I  imp, <dest\n        DJN.B  loop, counter\nlanding DAT.F  #0, #0\n        END";
+        let (result, steps) = run_battle(dwarf, mice_lite).unwrap();
+        assert_eq!(result, "red_win");
         assert!(
-            ["red_win", "blue_win", "tie", "all_dead"].contains(&result.as_str()),
-            "unexpected result: {result}"
+            steps < 50,
+            "mice-lite self-terminates quickly; got {steps} steps"
         );
-        assert!(steps > 0);
     }
 
     #[test]

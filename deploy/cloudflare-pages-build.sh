@@ -21,7 +21,7 @@
 #   Root directory:          /
 #   Environment variables:
 #       NODE_VERSION=20
-#       VITE_API_URL=https://api.corewar.coltcampbell.dev
+#       VITE_API_URL=https://api.corewar.example.com
 
 set -euo pipefail
 

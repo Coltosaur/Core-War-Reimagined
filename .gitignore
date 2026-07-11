@@ -46,6 +46,8 @@ dist/
 # and any other local scratch stay ignored.
 .claude/*
 !.claude/agents/
+!.claude/hooks/
+!.claude/settings.json
 
 # MCP server config (contains local paths)
 .mcp.json

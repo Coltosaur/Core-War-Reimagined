@@ -146,6 +146,7 @@ Backend release build: `cargo build --release` from `backend/`. Output binary at
 - All dev happens inside **WSL2 Ubuntu** on Windows 11. Keep files in the Linux filesystem (`~/dev/...`), never `/mnt/c/...`, for performance and to avoid file-watcher issues with Vite and `cargo watch`.
 - Backend reads `backend/.env` via `python-dotenv`. Defaults assume Postgres at `localhost:5432` (user/pass/db all `corewar`) and Redis at `localhost:6379`, matching `docker-compose.yml`.
 - Backend port is `3001`; frontend dev server is `5173`. Don't change one without updating CORS (`FRONTEND_URL`) and any frontend API base URL.
+- **Secrets policy:** `.env` files (`.env`, `.env.local`, `.env.production`, etc.) are off-limits — a `PreToolUse` hook at `.claude/hooks/protect-env.py` blocks Read / Edit / Write / Grep / Bash / NotebookEdit against them. Use the matching `*.example` file (e.g. `backend/.env.example`) to see the schema. This applies to subagents too; there is no workaround, and you should not attempt one.
 
 ## Key concepts
 

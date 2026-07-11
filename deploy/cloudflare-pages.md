@@ -11,7 +11,7 @@ frontend will just hit a non-resolving API host until the backend is up.
 
 - Free Cloudflare account.
 - Frontend code on master (Pages auto-deploys from a branch).
-- Backend hostname decided (`api.corewar.coltcampbell.dev`) — the
+- Backend hostname decided (`api.corewar.example.com`) — the
   frontend's `VITE_API_URL` env var points here.
 
 ## 1. Create the Pages project
@@ -34,7 +34,7 @@ Cloudflare dashboard → **Workers & Pages → Create application → Pages → 
    | Variable | Value |
    |---|---|
    | `NODE_VERSION` | `20` |
-   | `VITE_API_URL` | `https://api.corewar.coltcampbell.dev` |
+   | `VITE_API_URL` | `https://api.corewar.example.com` |
 
 Click **Save and Deploy**. The first build takes 4–6 minutes (Rust toolchain
 download + wasm-pack download + `cargo build --release` for the engine +
@@ -53,13 +53,13 @@ When the build finishes you'll get a `<project>.pages.dev` URL. Open it:
 - The browser will try to hit the backend at `VITE_API_URL` and fail until
   the droplet is up — that's expected at this stage.
 
-## 3. Custom domain (`corewar.coltcampbell.dev`)
+## 3. Custom domain (`corewar.example.com`)
 
 Cloudflare dashboard → Pages project → **Custom domains → Set up a custom domain**.
 
-1. Enter `corewar.coltcampbell.dev`.
+1. Enter `corewar.example.com`.
 2. Cloudflare gives you a CNAME target like `<project>.pages.dev`.
-3. In **Porkbun DNS** for `coltcampbell.dev`:
+3. In **Porkbun DNS** for `example.com`:
 
    | Type | Host | Answer | TTL |
    |---|---|---|---|
@@ -68,7 +68,7 @@ Cloudflare dashboard → Pages project → **Custom domains → Set up a custom 
 4. Back in Cloudflare, wait for it to verify (usually under 5 minutes). Pages
    provisions the TLS cert automatically.
 
-When done, `https://corewar.coltcampbell.dev` serves the production frontend.
+When done, `https://corewar.example.com` serves the production frontend.
 
 ## 4. Update backend CORS allowlist
 
@@ -76,7 +76,7 @@ The backend's `FRONTEND_URL` env var is the single allowed CORS origin. On
 the droplet, edit `~/corewar/.env.production`:
 
 ```ini
-FRONTEND_URL=https://corewar.coltcampbell.dev
+FRONTEND_URL=https://corewar.example.com
 ```
 
 Then restart the backend container:

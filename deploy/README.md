@@ -1,7 +1,7 @@
 # VPS bootstrap & manual deploy runbook
 
 This runbook stands the backend stack up on a fresh DigitalOcean droplet,
-hardens it, configures DNS for `api.corewar.coltcampbell.dev`, and walks
+hardens it, configures DNS for `api.corewar.example.com`, and walks
 through the first deploy and the steady-state redeploy.
 
 The deploy is fully manual at this stage. `deploy/deploy.sh` rsyncs the
@@ -14,22 +14,22 @@ deploys are independent — Pages can ship before this VPS exists; the app
 will just see a non-resolving API host until the droplet is up.
 
 > All `<placeholder>` values are things you fill in. Wherever the runbook
-> references `coltcampbell.dev`, replace with your domain if you forked.
+> references `example.com`, replace with your domain if you forked.
 
 ## Prerequisites
 
 Before starting:
 
 - DigitalOcean account with a payment method on file.
-- Domain `coltcampbell.dev` registered (Porkbun) with DNS management access.
+- Domain `example.com` registered (Porkbun) with DNS management access.
 - A dedicated SSH key pair for the droplet — **separate from any key you already use** (e.g. your GitHub key at `~/.ssh/id_ed25519`). Generate one with an explicit filename so the default location isn't clobbered:
   ```bash
-  ssh-keygen -t ed25519 -f ~/.ssh/droplet -C "colt@coltcampbell.dev"
+  ssh-keygen -t ed25519 -f ~/.ssh/droplet -C "you@example.com"
   ```
   Subsequent commands assume this key. To skip typing `-i ~/.ssh/droplet` every time, add a `~/.ssh/config` alias once the droplet's hostname resolves:
   ```
-  Host droplet api.corewar.coltcampbell.dev
-      HostName api.corewar.coltcampbell.dev
+  Host droplet api.corewar.example.com
+      HostName api.corewar.example.com
       User colt
       IdentityFile ~/.ssh/droplet
       IdentitiesOnly yes
@@ -215,7 +215,7 @@ docker pull ghcr.io/coltosaur/core-war-backend:latest
 
 ## 6. DNS records at Porkbun
 
-In the Porkbun control panel for `coltcampbell.dev` → **DNS**:
+In the Porkbun control panel for `example.com` → **DNS**:
 
 | Type | Host | Answer | TTL |
 |---|---|---|---|
@@ -225,8 +225,8 @@ In the Porkbun control panel for `coltcampbell.dev` → **DNS**:
 Verify propagation from your laptop (give it 1–5 minutes):
 
 ```bash
-dig +short api.corewar.coltcampbell.dev
-dig +short AAAA api.corewar.coltcampbell.dev
+dig +short api.corewar.example.com
+dig +short AAAA api.corewar.example.com
 ```
 
 Both should return the droplet's addresses before you proceed — Caddy can't
@@ -236,27 +236,27 @@ issue a Let's Encrypt cert until the hostname resolves to this box.
 
 CAA pins which CAs are allowed to issue certs for the apex and any
 subdomain. Without it, any compromised CA in the global trust store can
-mint a cert for `coltcampbell.dev` — CAA is a cheap belt-and-braces.
+mint a cert for `example.com` — CAA is a cheap belt-and-braces.
 
 Two CAs are in play here:
 
-- **Let's Encrypt** — issues for `api.corewar.coltcampbell.dev` via Caddy.
+- **Let's Encrypt** — issues for `api.corewar.example.com` via Caddy.
 - **Google Trust Services** (`pki.goog`) — issues for
-  `corewar.coltcampbell.dev` because Cloudflare Pages uses GTS.
+  `corewar.example.com` because Cloudflare Pages uses GTS.
 
-At the Porkbun apex (`coltcampbell.dev`):
+At the Porkbun apex (`example.com`):
 
 | Type | Host | Answer | TTL |
 |---|---|---|---|
 | `CAA` | (apex) | `0 issue "letsencrypt.org"` | 3600 |
 | `CAA` | (apex) | `0 issue "pki.goog"` | 3600 |
-| `CAA` | (apex) | `0 iodef "mailto:campbellcolt297@gmail.com"` | 3600 |
+| `CAA` | (apex) | `0 iodef "mailto:you@example.com"` | 3600 |
 
 The `iodef` record is optional — it tells a CA where to mail
 misissuance reports. Verify with:
 
 ```bash
-dig CAA coltcampbell.dev +short
+dig CAA example.com +short
 ```
 
 You should see all three records back. CAA is checked **at cert issuance
@@ -288,9 +288,9 @@ all of which break URL parsing (sqlx will reject the URL with
 `Configuration(InvalidPort)`).
 
 ```ini
-BACKEND_DOMAIN=api.corewar.coltcampbell.dev
-ACME_EMAIL=colt@coltcampbell.dev
-FRONTEND_URL=https://corewar.coltcampbell.dev
+BACKEND_DOMAIN=api.corewar.example.com
+ACME_EMAIL=you@example.com
+FRONTEND_URL=https://corewar.example.com
 JWT_SECRET=<openssl rand -hex 48>
 POSTGRES_USER=corewar
 POSTGRES_PASSWORD=<openssl rand -hex 24>
@@ -318,10 +318,10 @@ droplet — the build is CPU-bound on cargo) and bring the stack up.
 
 ```bash
 # Cheap liveness probe — public, no DB work.
-curl -i https://api.corewar.coltcampbell.dev/health
+curl -i https://api.corewar.example.com/health
 
 # Deep readiness probe — DB-probing, used by the container HEALTHCHECK.
-curl -i https://api.corewar.coltcampbell.dev/health/deep
+curl -i https://api.corewar.example.com/health/deep
 ```
 
 The first request can take **30+ seconds** while Caddy negotiates the
@@ -347,7 +347,7 @@ the container unhealthy.
 
 If the cert handshake fails:
 
-- `dig +short api.corewar.coltcampbell.dev` must return the droplet IP.
+- `dig +short api.corewar.example.com` must return the droplet IP.
 - Port 80 must be reachable from the public internet (Let's Encrypt's
   HTTP-01 challenge uses it). `sudo ufw status` should show 80/tcp ALLOW.
 - Inspect Caddy's logs: `docker compose -f docker-compose.prod.yml logs caddy`.
@@ -470,7 +470,7 @@ repository secret**:
 
 | Secret | Value |
 |---|---|
-| `DROPLET_HOST` | Droplet IPv4 (or `api.corewar.coltcampbell.dev` once DNS is in) |
+| `DROPLET_HOST` | Droplet IPv4 (or `api.corewar.example.com` once DNS is in) |
 | `DROPLET_USER` | The non-root user from section 2 (e.g. `colt`) |
 | `DROPLET_SSH_KEY` | **Private** half of an SSH key whose public half is in the droplet's `~/.ssh/authorized_keys`. Generate a fresh one for CI — don't reuse your personal key: `ssh-keygen -t ed25519 -f ~/.ssh/corewar_deploy -C corewar-deploy`. Copy `~/.ssh/corewar_deploy.pub` to the droplet's `~/.ssh/authorized_keys`, paste the contents of `~/.ssh/corewar_deploy` (the private file) here. |
 
@@ -516,7 +516,7 @@ liveness:
 2. **+ New Monitor**:
    - Type: HTTPS
    - Friendly name: `Core War backend`
-   - URL: `https://api.corewar.coltcampbell.dev/health/deep`
+   - URL: `https://api.corewar.example.com/health/deep`
    - Monitoring interval: 5 minutes (free-tier minimum)
 3. **Alert contacts**: at least email. Optional: Slack, Telegram, webhooks.
 4. **Advanced** (optional but recommended):
@@ -526,7 +526,7 @@ liveness:
      is fine.
 
 The same pattern will work for the frontend once Cloudflare Pages is up
-— add a second monitor for `https://corewar.coltcampbell.dev`.
+— add a second monitor for `https://corewar.example.com`.
 
 ## 12. Cloudflare Pages security headers (edge hardening, issue #69)
 
@@ -556,7 +556,7 @@ The CSP is the load-bearing one. Each non-obvious allowance:
   to self-host Monaco, drop the jsdelivr allowance.
 - `style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net` — Monaco
   injects inline styles and pulls CSS from the same CDN.
-- `connect-src 'self' https://api.corewar.coltcampbell.dev wss://api.corewar.coltcampbell.dev https://cdn.jsdelivr.net`
+- `connect-src 'self' https://api.corewar.example.com wss://api.corewar.example.com https://cdn.jsdelivr.net`
   — REST + Socket.IO to the backend (both schemes needed); jsdelivr is
   for Monaco's source maps, which devtools `fetch()`es when the
   inspector is open. Without the jsdelivr allowance on `connect-src`,
@@ -571,7 +571,7 @@ The CSP is the load-bearing one. Each non-obvious allowance:
 After any deploy that touches `_headers`, verify:
 
 ```bash
-curl -sI https://corewar.coltcampbell.dev | grep -iE 'strict-transport|content-security|x-frame|x-content|referrer|permissions'
+curl -sI https://corewar.example.com | grep -iE 'strict-transport|content-security|x-frame|x-content|referrer|permissions'
 ```
 
 All six headers should be present. Then load the site in a browser and

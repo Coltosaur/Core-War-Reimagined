@@ -51,3 +51,37 @@ dist/
 
 # MCP server config (contains local paths)
 .mcp.json
+
+# --- General hygiene: fail-closed against common accidental commits. ---
+# OS-generated metadata (Finder / Explorer thumbnails)
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor swap / autosave / temp
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# JetBrains + VS Code personal workspace files (shared configs would need to
+# be opt-in via `!.vscode/settings.json` etc. — none tracked today)
+.idea/
+.vscode/
+
+# Log files (Node package managers + generic)
+*.log
+npm-debug.log*
+yarn-error.log
+yarn-debug.log*
+pnpm-debug.log*
+
+# TypeScript incremental build metadata
+*.tsbuildinfo
+
+# Patch / backup / rejected-hunk droppings
+*.bak
+*.orig
+*.rej
+*.old

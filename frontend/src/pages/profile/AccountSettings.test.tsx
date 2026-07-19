@@ -155,6 +155,14 @@ describe('<AccountSettings /> change-password form', () => {
     expect(screen.getByText(/delete account/i)).toBeInTheDocument();
   });
 
+  it('renders "Not set" when the account has no email on file', async () => {
+    mockGetAccount.mockResolvedValue({ email: null });
+    render(<AccountSettings />);
+    await waitFor(() => {
+      expect(screen.getByTestId('account-email')).toHaveTextContent(/not set/i);
+    });
+  });
+
   it('logout button calls the auth context logout', async () => {
     const user = userEvent.setup();
     render(<AccountSettings />);

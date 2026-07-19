@@ -121,6 +121,47 @@ async fn account_returns_email_for_authed_user(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn account_returns_null_email_when_none_registered(pool: PgPool) {
+    // Users can register without an email (see auth_integration:
+    // register_without_email_succeeds). /api/account must round-trip that
+    // as JSON null, not as "" or a missing key — the frontend uses
+    // `email === null` as the "not set" signal.
+    let router = app(pool);
+    let resp = send(
+        router.clone(),
+        post_json(
+            "/api/auth/register",
+            &json!({
+                "username": "acctnoemail",
+                "password": "password1234",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CREATED);
+    let access = resp.cookies["access_token"].clone();
+
+    let resp = send(
+        router,
+        get_with_cookies("/api/account", &format!("access_token={access}")),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::OK);
+    assert!(
+        resp.json["email"].is_null(),
+        "expected null, got {:?}",
+        resp.json["email"]
+    );
+}
+
+#[sqlx::test]
+async fn account_requires_authentication(pool: PgPool) {
+    let router = app(pool);
+    let resp = send(router, get_no_auth("/api/account")).await;
+    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
 async fn account_normalizes_email_to_lowercase(pool: PgPool) {
     // Registration lowercases the email — /api/account should reflect that
     // stored form so the settings page can display it verbatim.
@@ -135,11 +176,4 @@ async fn account_normalizes_email_to_lowercase(pool: PgPool) {
     .await;
     assert_eq!(resp.status, StatusCode::OK);
     assert_eq!(resp.json["email"], "acct+mixed@example.com");
-}
-
-#[sqlx::test]
-async fn account_requires_authentication(pool: PgPool) {
-    let router = app(pool);
-    let resp = send(router, get_no_auth("/api/account")).await;
-    assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
 }

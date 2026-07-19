@@ -14,7 +14,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     pub username: String,
-    pub email: String,
+    // Optional until #83 (verification) ships. Empty strings from the UI are
+    // normalized to `None` in the handler so we never store `""` alongside
+    // real addresses.
+    #[serde(default)]
+    pub email: Option<String>,
     pub password: String,
 }
 
@@ -134,10 +138,19 @@ pub async fn register(
     Json(body): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let username = body.username.trim();
-    let email = body.email.trim().to_lowercase();
+    // Treat an omitted key and an empty string identically — the UI sends
+    // `""` when the user leaves the field blank, and we don't want that
+    // sneaking into the DB as a distinct "empty" email.
+    let email = body
+        .email
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
 
     validate_username(username)?;
-    validate_email(&email)?;
+    if let Some(ref e) = email {
+        validate_email(e)?;
+    }
     validate_password(&body.password)?;
 
     let password_hash = hash_password(&body.password)?;
@@ -146,7 +159,7 @@ pub async fn register(
         "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username",
     )
     .bind(username)
-    .bind(&email)
+    .bind(email.as_deref())
     .bind(&password_hash)
     .fetch_one(&state.db)
     .await

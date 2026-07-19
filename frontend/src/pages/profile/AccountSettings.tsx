@@ -185,7 +185,10 @@ function RuleItem({ rule }: { rule: PasswordRule }) {
 
 export default function AccountSettings() {
   const { logout } = useAuth();
-  const [email, setEmail] = useState<string | null>(null);
+  // Three states: `undefined` = still loading, `null` = loaded, no email on
+  // file, `string` = loaded, has email. Collapsing loading + not-set to a
+  // single `null` (as before) meant "Not set" flashed during load.
+  const [email, setEmail] = useState<string | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -254,8 +257,10 @@ export default function AccountSettings() {
         <span style={VALUE_STYLE} data-testid="account-email">
           {loadError ? (
             <span style={ERROR_STYLE}>{loadError}</span>
-          ) : email === null ? (
+          ) : email === undefined ? (
             <span style={{ color: '#666' }}>Loading...</span>
+          ) : email === null ? (
+            <span style={{ color: '#666', fontStyle: 'italic' }}>Not set</span>
           ) : (
             email
           )}

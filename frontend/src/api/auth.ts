@@ -7,7 +7,9 @@ export type AuthUser = {
 
 export type RegisterInput = {
   username: string;
-  email: string;
+  // Optional until #83 (email verification) ships. Omit the key or send an
+  // empty string; the backend normalizes both to a stored NULL.
+  email?: string;
   password: string;
 };
 

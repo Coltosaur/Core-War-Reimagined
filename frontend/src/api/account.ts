@@ -1,7 +1,9 @@
 import { api } from './client';
 
 export type Account = {
-  email: string;
+  // `null` when the user registered without an email (email is optional
+  // until #83 ships).
+  email: string | null;
 };
 
 export type ChangePasswordInput = {

@@ -321,12 +321,74 @@ async fn register_validation_errors(pool: PgPool) {
 
 #[sqlx::test]
 async fn register_missing_fields(pool: PgPool) {
+    // username without password → 422 (missing required field). Email is
+    // optional as of the make-email-optional change, so leaving it off
+    // must NOT flip this to 422; the missing-password is the actual reason.
     let resp = send(
         app(pool),
         post_json("/api/auth/register", &json!({"username": "test"})),
     )
     .await;
     assert_eq!(resp.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[sqlx::test]
+async fn register_without_email_succeeds(pool: PgPool) {
+    // Email is optional. Two flavors: omit the key entirely, and pass an
+    // empty string (which the handler normalizes to None so it can't be
+    // stored as a distinct "empty" address).
+    let router = app(pool);
+
+    let resp = send(
+        router.clone(),
+        post_json(
+            "/api/auth/register",
+            &json!({"username": "noemail1", "password": "password1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CREATED);
+    assert_eq!(resp.json["username"], "noemail1");
+
+    let resp = send(
+        router,
+        post_json(
+            "/api/auth/register",
+            &json!({"username": "noemail2", "email": "", "password": "password1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CREATED);
+    assert_eq!(resp.json["username"], "noemail2");
+}
+
+#[sqlx::test]
+async fn register_multiple_without_email_no_conflict(pool: PgPool) {
+    // Postgres UNIQUE treats NULLs as distinct — so two emailless users
+    // must not trip the email uniqueness constraint. Regression guard: if
+    // someone "fixes" the schema by adding a partial-unique-on-NULL or by
+    // storing "" instead of NULL, this test flips to 409.
+    let router = app(pool);
+
+    let resp = send(
+        router.clone(),
+        post_json(
+            "/api/auth/register",
+            &json!({"username": "nullone", "password": "password1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CREATED);
+
+    let resp = send(
+        router,
+        post_json(
+            "/api/auth/register",
+            &json!({"username": "nulltwo", "password": "password1234"}),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::CREATED);
 }
 
 #[sqlx::test]

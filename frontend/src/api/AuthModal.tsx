@@ -21,7 +21,12 @@ export default function AuthModal({ onClose }: Props) {
       if (mode === 'login') {
         await login({ username_or_email: username, password });
       } else {
-        await register({ username, email, password });
+        const trimmedEmail = email.trim();
+        await register({
+          username,
+          password,
+          ...(trimmedEmail ? { email: trimmedEmail } : {}),
+        });
       }
       onClose();
     } catch (err) {
@@ -57,14 +62,16 @@ export default function AuthModal({ onClose }: Props) {
 
           {mode === 'register' && (
             <label style={LABEL}>
-              Email
+              Email <span style={OPTIONAL_HINT}>(optional)</span>
               <input
                 style={INPUT}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
               />
+              <span style={HELPER_TEXT}>
+                Not used yet — password recovery and verification arrive later.
+              </span>
             </label>
           )}
 
@@ -204,6 +211,18 @@ const TOGGLE: React.CSSProperties = {
   textAlign: 'center',
   fontSize: '0.75rem',
   color: '#888',
+};
+
+const OPTIONAL_HINT: React.CSSProperties = {
+  color: '#666',
+  textTransform: 'none',
+  fontSize: '0.7rem',
+};
+
+const HELPER_TEXT: React.CSSProperties = {
+  color: '#666',
+  fontSize: '0.65rem',
+  marginTop: '0.15rem',
 };
 
 const LINK_BTN: React.CSSProperties = {

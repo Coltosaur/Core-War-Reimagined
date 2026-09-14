@@ -3,12 +3,8 @@ import { useAuth } from '../../api/AuthContext';
 import { ApiError } from '../../api/client';
 import { getAccount, changePassword } from '../../api/account';
 import { SECTION_HEADER } from './profileStyles';
-import {
-  PASSWORD_MIN_LEN,
-  checkPasswordRules,
-  passwordMeetsRules,
-  type PasswordRule,
-} from './passwordRules';
+import { PASSWORD_MIN_LEN, passwordMeetsRules } from '../../auth/passwordRules';
+import PasswordChecklist from '../../auth/PasswordChecklist';
 
 /**
  * Own-profile-only account settings panel. Renders email, change-password
@@ -72,16 +68,6 @@ const INPUT_BASE: React.CSSProperties = {
   fontSize: '0.85rem',
   fontFamily: 'inherit',
   outline: 'none',
-};
-
-const CHECKLIST_STYLE: React.CSSProperties = {
-  listStyle: 'none',
-  padding: 0,
-  margin: '0.25rem 0 0 0',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.15rem',
-  fontSize: '0.7rem',
 };
 
 const SUBMIT_BTN: React.CSSProperties = {
@@ -160,29 +146,6 @@ function inputStyle(showValid: boolean | null): React.CSSProperties {
   return INPUT_BASE;
 }
 
-function RuleItem({ rule }: { rule: PasswordRule }) {
-  const color = rule.ok ? '#4caf50' : '#e94560';
-  return (
-    <li style={{ color, display: 'flex', gap: '0.35rem', alignItems: 'baseline' }}>
-      <span aria-hidden style={{ fontFamily: 'monospace' }}>
-        {rule.ok ? '[x]' : '[ ]'}
-      </span>
-      <span>{rule.label}</span>
-      <span
-        style={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          overflow: 'hidden',
-          clip: 'rect(0 0 0 0)',
-        }}
-      >
-        {rule.ok ? '(satisfied)' : '(not satisfied)'}
-      </span>
-    </li>
-  );
-}
-
 export default function AccountSettings() {
   const { logout } = useAuth();
   // Three states: `undefined` = still loading, `null` = loaded, no email on
@@ -210,7 +173,6 @@ export default function AccountSettings() {
     };
   }, []);
 
-  const rules = checkPasswordRules(newPassword);
   const newPasswordValid = passwordMeetsRules(newPassword);
   const canSubmit =
     !submitting &&
@@ -298,14 +260,10 @@ export default function AccountSettings() {
             minLength={PASSWORD_MIN_LEN}
             aria-describedby="password-rules"
           />
-          <ul id="password-rules" style={CHECKLIST_STYLE} aria-live="polite">
-            {rules
-              .filter((r) => r.visible)
-              .map((r) => (
-                <RuleItem key={r.id} rule={r} />
-              ))}
-          </ul>
         </label>
+        {/* Outside the <label> on purpose: nested inside, the rule text joins
+            the input's accessible name and is announced as part of it. */}
+        <PasswordChecklist id="password-rules" password={newPassword} />
 
         {formError && <div style={ERROR_STYLE}>{formError}</div>}
         {formSuccess && (

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/protect-env.py"
+            "command": "h=\"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/protect-env.py\"; [ -x \"$h\" ] || { echo \"protect-env hook missing or not executable at $h - denying by default\" >&2; exit 2; }; exec \"$h\""
           }
         ]
       }

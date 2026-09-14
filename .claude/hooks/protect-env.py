@@ -17,6 +17,13 @@ exist for symlinks, `find -exec`, base64-encoded paths, etc. Closing
 those requires a real shell parser or full sandboxing; this hook
 raises the cost of casual/unintended access without pretending to be
 unbypassable.
+
+Failure policy: fail CLOSED. If this hook cannot parse its input or
+raises an unexpected error, it denies the tool call rather than
+letting it through. A secrets guard that silently allows the call
+when it cannot run is worse than no guard, because it still looks
+like protection. The invoking command in .claude/settings.json
+applies the same rule if this file is missing or not executable.
 """
 
 from __future__ import annotations
@@ -101,9 +108,20 @@ def deny(reason: str) -> None:
 
 def main() -> None:
     try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        sys.exit(0)
+        payload = json.loads(sys.stdin.read())
+    except ValueError:  # JSONDecodeError subclasses ValueError
+        deny(
+            "protect-env hook could not parse its hook input, so it cannot "
+            "confirm this call does not touch a secrets file. Denying by "
+            "default. If this fires on every call, the hook payload format "
+            "has changed - fix .claude/hooks/protect-env.py."
+        )
+
+    if not isinstance(payload, dict):
+        deny(
+            "protect-env hook received a non-object hook payload, so it "
+            "cannot verify this call. Denying by default."
+        )
 
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
@@ -152,4 +170,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        # deny() and the normal allow path both exit through here.
+        raise
+    except Exception as exc:  # noqa: BLE001 - deliberate catch-all
+        deny(
+            f"protect-env hook errored ({type(exc).__name__}: {exc}), so it "
+            f"cannot confirm this call does not touch a secrets file. "
+            f"Denying by default."
+        )

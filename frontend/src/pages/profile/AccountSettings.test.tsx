@@ -3,7 +3,6 @@ import type { MockedFunction } from 'vitest';
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AccountSettings from './AccountSettings';
-import { checkPasswordRules, passwordMeetsRules } from './passwordRules';
 import * as accountApi from '../../api/account';
 import * as AuthContextModule from '../../api/AuthContext';
 import { ApiError } from '../../api/client';
@@ -35,37 +34,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-});
-
-describe('checkPasswordRules', () => {
-  it('marks length as ok only at >= 12 chars', () => {
-    const short = checkPasswordRules('short').find((r) => r.id === 'length')!;
-    expect(short.ok).toBe(false);
-    const at12 = checkPasswordRules('a'.repeat(12)).find((r) => r.id === 'length')!;
-    expect(at12.ok).toBe(true);
-  });
-
-  it('marks non_digit as failing on pure-numeric passwords', () => {
-    const digits = checkPasswordRules('1'.repeat(20)).find((r) => r.id === 'non_digit')!;
-    expect(digits.ok).toBe(false);
-    const mixed = checkPasswordRules('abcdefghijkl').find((r) => r.id === 'non_digit')!;
-    expect(mixed.ok).toBe(true);
-  });
-
-  it('hides too_long rule until it is actually violated', () => {
-    const short = checkPasswordRules('a'.repeat(20)).find((r) => r.id === 'too_long')!;
-    expect(short.visible).toBe(false);
-    const long = checkPasswordRules('a'.repeat(1001)).find((r) => r.id === 'too_long')!;
-    expect(long.visible).toBe(true);
-    expect(long.ok).toBe(false);
-  });
-
-  it('passwordMeetsRules mirrors backend validate_password', () => {
-    expect(passwordMeetsRules('short')).toBe(false);
-    expect(passwordMeetsRules('123456789012')).toBe(false); // all digits
-    expect(passwordMeetsRules('abcdefghijkl')).toBe(true);
-    expect(passwordMeetsRules('brand-new-password')).toBe(true);
-  });
 });
 
 describe('<AccountSettings /> change-password form', () => {

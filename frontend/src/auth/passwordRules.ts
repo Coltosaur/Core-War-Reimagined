@@ -18,13 +18,27 @@ export type PasswordRule = {
   visible: boolean;
 };
 
+const encoder = new TextEncoder();
+
+/**
+ * Backend length checks are `str::len()` — UTF-8 *bytes*, not characters.
+ * JS `String.length` counts UTF-16 code units, so the two disagree on any
+ * non-ASCII input ("é" is 2 bytes but 1 unit; "🦖" is 4 bytes but 2 units).
+ * Measuring bytes here keeps the checklist from failing a password the
+ * server would have accepted.
+ */
+export function passwordByteLength(pw: string): number {
+  return encoder.encode(pw).length;
+}
+
 export function checkPasswordRules(pw: string): PasswordRule[] {
+  const byteLen = passwordByteLength(pw);
   const hasNonDigit = /[^0-9]/.test(pw);
   return [
     {
       id: 'length',
       label: `At least ${PASSWORD_MIN_LEN} characters`,
-      ok: pw.length >= PASSWORD_MIN_LEN,
+      ok: byteLen >= PASSWORD_MIN_LEN,
       visible: true,
     },
     {
@@ -36,8 +50,8 @@ export function checkPasswordRules(pw: string): PasswordRule[] {
     {
       id: 'too_long',
       label: `At most ${PASSWORD_MAX_LEN} characters`,
-      ok: pw.length <= PASSWORD_MAX_LEN,
-      visible: pw.length > PASSWORD_MAX_LEN,
+      ok: byteLen <= PASSWORD_MAX_LEN,
+      visible: byteLen > PASSWORD_MAX_LEN,
     },
   ];
 }

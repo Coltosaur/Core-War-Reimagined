@@ -1,0 +1,4 @@
+# Everything public is crawlable. This file intentionally lists no Disallow
+# paths: robots.txt is public, and scanners read it as a map of what to probe.
+User-agent: *
+Allow: /

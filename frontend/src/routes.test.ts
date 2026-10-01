@@ -1,6 +1,9 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import scannerPaths from './deploy/scannerPaths.json';
+
+type CrawlerPath = keyof typeof scannerPaths.crawlerFiles;
 
 // public/_redirects is an allowlist of SPA routes: anything it doesn't
 // rewrite is served by Cloudflare Pages as a real 404. That
@@ -48,6 +51,59 @@ describe('SPA route allowlist (public/_redirects)', () => {
   it('has no splat rule that would turn every 404 into a soft 404', () => {
     for (const rule of rules) {
       expect(rule.from, rule.from).not.toContain('*');
+    }
+  });
+});
+
+// Pages matching for the rule shapes we allow: literal segments plus
+// `:placeholder` segments, which match exactly one non-empty segment. Splats
+// are rejected above, so this doesn't need to handle them.
+function ruleMatches(from: string, path: string): boolean {
+  const ruleSegments = from.split('/');
+  const pathSegments = path.split('/');
+  return (
+    ruleSegments.length === pathSegments.length &&
+    ruleSegments.every((seg, i) =>
+      seg.startsWith(':') ? pathSegments[i] !== '' : seg === pathSegments[i],
+    )
+  );
+}
+
+// Paths that vulnerability scanners and crawlers request (see
+// src/deploy/scannerPaths.json, also used by scripts/check-scanner-paths.mjs
+// against a live server). Each must be a real 404, not a soft-404 200.
+describe('scanner paths', () => {
+  const crawlerPaths = Object.keys(scannerPaths.crawlerFiles);
+  const crawlerPathsExpecting404 = Object.entries(scannerPaths.crawlerFiles)
+    .filter(([, status]) => status === 404)
+    .map(([path]) => path);
+
+  it('matches every rule against a real route, so the matcher is not vacuous', () => {
+    for (const rule of rules) {
+      expect(
+        scannerPaths.realRoutes.some((p) => ruleMatches(rule.from, p)),
+        `no realRoutes entry exercises ${rule.from}`,
+      ).toBe(true);
+    }
+  });
+
+  it('never rewrites a scanner path to the app', () => {
+    for (const path of [...scannerPaths.probes, ...crawlerPathsExpecting404]) {
+      const hit = rules.find((r) => ruleMatches(r.from, path));
+      expect(hit?.from, `${path} would be served with 200`).toBeUndefined();
+    }
+  });
+
+  it('ships a static file for exactly the crawler paths that expect 200', () => {
+    for (const path of crawlerPaths) {
+      const shipped = existsSync(new URL(`../public${path}`, import.meta.url));
+      expect(shipped, path).toBe(scannerPaths.crawlerFiles[path as CrawlerPath] === 200);
+    }
+  });
+
+  it('ships no static file at any probe path', () => {
+    for (const path of scannerPaths.probes) {
+      expect(existsSync(new URL(`../public${path}`, import.meta.url)), path).toBe(false);
     }
   });
 });

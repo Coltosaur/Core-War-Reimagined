@@ -8,7 +8,6 @@ import {
   updateUserWarrior,
   deleteUserWarrior,
   duplicateWarrior,
-  syncFromServer,
   createServerWarrior,
   updateServerWarrior,
   deleteServerWarrior,
@@ -47,12 +46,6 @@ export function useBuilder() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (user) {
-      syncFromServer();
-    }
-  }, [user]);
 
   const selected = library.find((w) => w.id === selectedId);
 

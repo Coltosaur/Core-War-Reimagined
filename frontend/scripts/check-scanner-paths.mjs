@@ -13,6 +13,9 @@
 // against production:
 //   node frontend/scripts/check-scanner-paths.mjs https://corewar.coltcampbell.dev
 //
+// Branch preview deployments (*.pages.dev) sit behind Cloudflare Access, so
+// every path there answers 302 to a login page; this can't check previews.
+//
 // Requests are sequential to stay polite to the target. Exits 0 on success,
 // 1 on any failure.
 
@@ -44,7 +47,10 @@ for (const [path, expected] of expectations) {
 
   const problems = [];
   if (res.status !== expected) {
-    const location = res.headers.get('location');
+    // Drop the query string: redirect targets such as a Cloudflare Access
+    // login carry long signed tokens that bury the useful part.
+    const rawLocation = res.headers.get('location');
+    const location = rawLocation && new URL(rawLocation, BASE_URL).href.split('?')[0];
     problems.push(
       `status ${res.status}, expected ${expected}${location ? ` (→ ${location})` : ''}`,
     );

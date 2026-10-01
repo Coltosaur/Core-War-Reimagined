@@ -94,6 +94,27 @@ describe('scanner paths', () => {
     }
   });
 
+  // nonCanonicalRoutes are alternate spellings of real routes, e.g. a trailing
+  // slash. Rules match exactly, so these 404 rather than serving the page
+  // under a second URL. Deliberate: internal links never use them.
+  it('does not serve real routes under non-canonical spellings', () => {
+    for (const path of scannerPaths.nonCanonicalRoutes) {
+      const hit = rules.find((r) => ruleMatches(r.from, path));
+      expect(hit?.from, `${path} would be served with 200`).toBeUndefined();
+    }
+  });
+
+  it('only lists non-canonical spellings of real routes', () => {
+    // Guards against the list drifting into plain junk paths, which belong
+    // in probes, or outliving the route it was paired with.
+    for (const path of scannerPaths.nonCanonicalRoutes) {
+      expect(
+        rules.some((r) => ruleMatches(r.from, path.replace(/\/$/, ''))),
+        path,
+      ).toBe(true);
+    }
+  });
+
   it('ships a static file for exactly the crawler paths that expect 200', () => {
     for (const path of crawlerPaths) {
       const shipped = existsSync(new URL(`../public${path}`, import.meta.url));

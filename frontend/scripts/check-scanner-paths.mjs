@@ -1,6 +1,7 @@
 // Checks how a deployed frontend answers the paths vulnerability scanners
 // and crawlers request (src/deploy/scannerPaths.json): every probe must be a
-// real 404, crawler files must match their expected status, and real routes
+// real 404, non-canonical spellings of real routes (e.g. a trailing slash)
+// must 404 too, crawler files must match their expected status, and real routes
 // must still be 200. Redirects count as failures, since a 308 to `/` is how
 // a soft 404 sneaks back in. Every response must also carry the security
 // headers from public/_headers.
@@ -28,6 +29,7 @@ const BASE_URL = (process.argv[2] ?? process.env.SITE_URL ?? 'http://localhost:8
 
 const expectations = [
   ...scannerPaths.probes.map((path) => [path, 404]),
+  ...scannerPaths.nonCanonicalRoutes.map((path) => [path, 404]),
   ...Object.entries(scannerPaths.crawlerFiles),
   ...scannerPaths.realRoutes.map((path) => [path, 200]),
 ];

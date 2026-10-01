@@ -54,9 +54,9 @@
     "/dump.sql",
     "/db.sqlite",
     "/swagger.json",
-    "/graphql",
-    "/battle/"
+    "/graphql"
   ],
+  "nonCanonicalRoutes": ["/battle/"],
   "crawlerFiles": {
     "/robots.txt": 200,
     "/favicon.ico": 404,

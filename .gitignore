@@ -37,6 +37,9 @@ node_modules/
 # build output
 dist/
 
+# wrangler pages dev local state
+.wrangler/
+
 # Playwright MCP runtime artifacts
 .playwright-mcp/
 

@@ -1,9 +1,29 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { copyFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+// Cloudflare Pages serves dist/404.html, with a real 404 status, for any
+// path that public/_redirects doesn't rewrite. Making it a copy of the
+// built index.html means the SPA still boots on a 404, so visitors get the
+// full app shell and the NotFoundPage instead of a bare error.
+function spaNotFoundPage(): Plugin {
+  let outDir = 'dist';
+  return {
+    name: 'spa-not-found-page',
+    apply: 'build',
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir);
+    },
+    closeBundle() {
+      copyFileSync(join(outDir, 'index.html'), join(outDir, '404.html'));
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), spaNotFoundPage()],
   server: {
     fs: {
       // The wasm-pack output (engine/pkg/) lives outside frontend/.

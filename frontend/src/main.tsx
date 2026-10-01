@@ -5,6 +5,7 @@ import './index.css';
 import AppLayout from './AppLayout';
 import { AuthProvider } from './api/AuthContext';
 import HomePage from './pages/HomePage';
+import NotFoundPage from './pages/NotFoundPage';
 
 // eslint-disable-next-line react-refresh/only-export-components
 const BattlefieldPage = React.lazy(() => import('./pages/battlefield/BattlefieldPage'));
@@ -92,6 +93,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 </Suspense>
               }
             />
+            {/* Every route above also needs a rewrite in public/_redirects,
+                or production serves it as a 404 (enforced by
+                src/routes.test.ts). */}
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

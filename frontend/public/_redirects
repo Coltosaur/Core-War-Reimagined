@@ -1,5 +1,23 @@
-# SPA fallback: every unmatched route serves index.html so React Router
-# handles client-side routing (/match/:id, /profile/:user, etc.). The 200
-# status code makes this a server-side rewrite, not a redirect — the URL
-# in the browser stays the same.
-/*    /index.html   200
+# SPA rewrites: each client-side route serves index.html so React Router
+# can render it. The 200 status makes these server-side rewrites, not
+# redirects — the URL in the browser stays the same.
+#
+# The target is `/`, not `/index.html`: Pages' pretty-URL handling answers a
+# rewrite to /index.html with a 308 redirect to `/`, which would bounce
+# every deep link to the home page (verified with `wrangler pages dev`).
+#
+# This is deliberately an allowlist, not a `/*` catch-all. Any path not
+# listed here (and not a real static file) falls through to dist/404.html,
+# which Cloudflare Pages serves with a genuine 404 status. A catch-all would
+# answer every junk URL with 200 OK (a "soft 404").
+#
+# Every <Route path> in src/main.tsx must have a rule here, or production
+# serves that page as a 404. src/routes.test.ts enforces this.
+/battle               /             200
+/builder              /             200
+/learn                /             200
+/leaderboard          /             200
+/profile              /             200
+/users/:username      /             200
+/lobby                /             200
+/match/:matchId       /             200

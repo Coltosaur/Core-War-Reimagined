@@ -22,6 +22,11 @@ on:
     - cron: '0 8 * * 1'
   workflow_dispatch:
 
+# Deny-by-default GITHUB_TOKEN: every job declares exactly the scopes it
+# needs, so a new job (or a repo default flipped to read-write) can't
+# silently gain write access.
+permissions: {}
+
 jobs:
   prune:
     name: Prune old backend image versions
@@ -30,7 +35,7 @@ jobs:
       packages: write
     steps:
       - name: Delete old container package versions
-        uses: actions/delete-package-versions@v5
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
         with:
           package-name: core-war-backend
           package-type: container

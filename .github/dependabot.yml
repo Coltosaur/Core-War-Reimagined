@@ -1,0 +1,18 @@
+# Keeps the SHA-pinned actions in .github/workflows/ current. Pins block a
+# moved or hijacked tag from changing what runs; this opens a weekly PR
+# when a pinned action has a new release, so pinning doesn't mean falling
+# behind on fixes. Updates are grouped into one PR to keep the noise down.
+#
+# dtolnay/rust-toolchain is pinned to a commit on its `stable` branch, not a
+# release tag, so Dependabot won't bump it. That's low-risk: the action only
+# runs rustup, and the toolchain itself still resolves to current stable.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+    assignees: [Coltosaur]

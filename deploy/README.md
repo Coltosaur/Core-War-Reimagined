@@ -463,20 +463,49 @@ pull the compiled image), GitHub → your profile → **Packages** →
 `core-war-backend` → **Package settings → Change visibility → Public**.
 Source is already public; the binary doesn't expose anything new.
 
-### Required GitHub Actions secrets
+### `production` environment + secrets
 
-Repo → **Settings → Secrets and variables → Actions → Secrets → New
-repository secret**:
+The deploy job runs in a GitHub **environment** named `production`, and
+its secrets live there rather than at repo level. Repo → **Settings →
+Environments → production**:
+
+- **Deployment branches and tags → Selected branches and tags →** add
+  `master`. A deploy started from any other branch (e.g. a
+  `workflow_dispatch` on a feature branch) is rejected before the job
+  starts, and can't read the secrets.
+- **Environment secrets:**
 
 | Secret | Value |
 |---|---|
 | `DROPLET_HOST` | Droplet IPv4 (or `api.corewar.example.com` once DNS is in) |
 | `DROPLET_USER` | The non-root user from section 2 (e.g. `colt`) |
 | `DROPLET_SSH_KEY` | **Private** half of an SSH key whose public half is in the droplet's `~/.ssh/authorized_keys`. Generate a fresh one for CI — don't reuse your personal key: `ssh-keygen -t ed25519 -f ~/.ssh/corewar_deploy -C corewar-deploy`. Copy `~/.ssh/corewar_deploy.pub` to the droplet's `~/.ssh/authorized_keys`, paste the contents of `~/.ssh/corewar_deploy` (the private file) here. |
+| `DROPLET_KNOWN_HOSTS` | The droplet's SSH **host** key line(s), so CI verifies it's talking to the real droplet instead of trusting whatever answers. See below. |
+
+**Getting `DROPLET_KNOWN_HOSTS`.** Your laptop already trusts the droplet
+from section 2, so reuse that entry. Look it up by the *exact* string
+stored in `DROPLET_HOST` (IP or hostname — they're separate entries):
+
+```bash
+ssh-keygen -F <DROPLET_HOST value> | grep -v '^#'
+```
+
+Paste the output (one or more lines) as the secret. It's a public key —
+the droplet hands it to anyone who connects — so it isn't sensitive; it
+lives in a secret only to keep the address out of the repo. If the lookup
+prints nothing, fetch it with `ssh-keyscan -H <DROPLET_HOST value>` and
+check its fingerprint (`ssh-keygen -lf <file>`) against the one the
+droplet reports for itself (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`)
+before trusting it.
+
+If the droplet is rebuilt, its host key changes: deploys will fail with
+`Host key verification failed` until the secret is updated. That's the
+check doing its job.
 
 ### Required GitHub Actions variable
 
-Same page → **Variables → New repository variable**:
+Repo → **Settings → Secrets and variables → Actions → Variables → New
+repository variable** (repo-level, not on the environment):
 
 | Variable | Value |
 |---|---|

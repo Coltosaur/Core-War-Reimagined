@@ -4,6 +4,7 @@ import BattleControls from './BattleControls';
 import BattleStatus from './BattleStatus';
 import InspectorPanel from './InspectorPanel';
 import { GRID_CONTAINER_STYLE, PARSE_ERROR_STYLE, TITLE_STYLE, TOOLTIP_STYLE } from './styles';
+import { useIsNarrow } from '../../ui/useIsNarrow';
 
 const PAGE_STYLE: React.CSSProperties = {
   display: 'flex',
@@ -22,7 +23,23 @@ const MAIN_STYLE: React.CSSProperties = {
   overflow: 'auto',
 };
 
+// Small screens: stack the inspector under the battle column and let the
+// page scroll as a whole instead of pinning everything to 100vh.
+const NARROW_PAGE_STYLE: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  minHeight: '100%',
+};
+
+const NARROW_MAIN_STYLE: React.CSSProperties = {
+  ...MAIN_STYLE,
+  flex: 'none',
+  padding: '1rem 0.75rem',
+  overflow: 'visible',
+};
+
 export default function BattlefieldPage() {
+  const narrow = useIsNarrow();
   const {
     ready,
     running,
@@ -56,8 +73,8 @@ export default function BattlefieldPage() {
   } = useBattle();
 
   return (
-    <div style={PAGE_STYLE}>
-      <div style={MAIN_STYLE}>
+    <div style={narrow ? NARROW_PAGE_STYLE : PAGE_STYLE}>
+      <div style={narrow ? NARROW_MAIN_STYLE : MAIN_STYLE}>
         <h1 style={TITLE_STYLE}>CORE WAR</h1>
 
         <WarriorSelector
@@ -107,6 +124,7 @@ export default function BattlefieldPage() {
         warriors={processes}
         onCellSelect={selectCell}
         onClearCell={clearCell}
+        stacked={narrow}
       />
     </div>
   );

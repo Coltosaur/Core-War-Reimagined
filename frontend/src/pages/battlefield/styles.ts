@@ -11,6 +11,8 @@ export const ROOT_STYLE: React.CSSProperties = {
 
 export const GRID_CONTAINER_STYLE: React.CSSProperties = {
   border: '1px solid #333',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
   lineHeight: 0,
   position: 'relative',
   cursor: 'crosshair',

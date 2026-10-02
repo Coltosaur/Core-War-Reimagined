@@ -54,6 +54,15 @@ export function cellAddressAtPixel(x: number, y: number): number {
   return row * GRID_COLS + col;
 }
 
+/** Like `cellAddressAtPixel`, but for a grid that is displayed at
+ *  `displayWidth` CSS pixels instead of its native size — on small screens
+ *  the canvas is scaled down to fit, so pointer coordinates have to be mapped
+ *  back to native grid pixels before the cell lookup. */
+export function cellAddressAtDisplayPixel(x: number, y: number, displayWidth: number): number {
+  const scale = displayWidth > 0 ? (GRID_COLS * CELL_SCALE) / displayWidth : 1;
+  return cellAddressAtPixel(x * scale, y * scale);
+}
+
 /** Read a cell from the match state and return a formatted tooltip string.
  *  Example: "#0042  ADD.AB #4, $3"
  */

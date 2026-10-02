@@ -17,11 +17,12 @@ permissions: {}
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Same-repo PRs only. GitHub withholds secrets and OIDC tokens from
+    # `pull_request` runs triggered by forks, so this job can only fail there.
+    # Don't "fix" that with `pull_request_target` — it would hand the OAuth
+    # token to a run driven by fork-controlled content. For fork PRs, a
+    # maintainer can comment `@claude review this PR` (claude.yml) instead.
+    if: github.event.pull_request.head.repo.full_name == github.repository
 
     runs-on: ubuntu-latest
     permissions:

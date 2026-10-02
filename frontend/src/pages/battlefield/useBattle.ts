@@ -2,11 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import init, { parseWarrior, MatchState, type ParsedWarrior } from 'core-war-engine';
 import { createCoreRenderer, type CoreRenderer } from '../../core/coreRenderer';
-import { cellAddressAtPixel, formatCellTooltip } from '../../core/redcodeFormat';
-import { CORE_SIZE } from '../../core/constants';
+import { cellAddressAtDisplayPixel, formatCellTooltip } from '../../core/redcodeFormat';
+import { CELL_SCALE, CORE_SIZE, GRID_COLS } from '../../core/constants';
 import { useWarriorLibrary, type Warrior } from '../../warriors/library';
 import { ONGOING } from './styles';
 import type { CellInfo } from './InspectorPanel';
+
+// Hit-test against the canvas's *displayed* box: on small screens it is
+// CSS-scaled down to fit (see coreRenderer), so pointer coordinates are mapped
+// back to native grid pixels before looking up the cell.
+function cellAddressAtEvent(e: React.MouseEvent<HTMLDivElement>): number {
+  const canvas = e.currentTarget.querySelector('canvas');
+  const box = (canvas ?? e.currentTarget).getBoundingClientRect();
+  const displayWidth = canvas ? box.width : GRID_COLS * CELL_SCALE;
+  return cellAddressAtDisplayPixel(e.clientX - box.left, e.clientY - box.top, displayWidth);
+}
 
 function readCellFromMatch(match: MatchState, addr: number): CellInfo {
   return {
@@ -83,7 +93,7 @@ export function useBattle() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const addr = cellAddressAtPixel(x, y);
+    const addr = cellAddressAtEvent(e);
 
     if (addr < 0) {
       tip.style.display = 'none';
@@ -108,10 +118,7 @@ export function useBattle() {
   }, []);
 
   const handleGridClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const addr = cellAddressAtPixel(x, y);
+    const addr = cellAddressAtEvent(e);
     if (addr >= 0) {
       setSelectedCell(addr);
       if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));

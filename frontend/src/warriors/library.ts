@@ -206,9 +206,12 @@ let serverWarriors: Warrior[] = initialCache.warriors;
 let serverOwner: string | null = initialCache.userId;
 // Bumped by every server-namespace mutation. A sync whose fetch started
 // before a create/update/delete landed would otherwise overwrite that
-// mutation with a pre-mutation list, so it bails and lets the next sync
-// reconcile instead.
+// mutation with a pre-mutation list, so it discards that response and
+// re-fetches (see syncFromServer).
 let serverVersion = 0;
+// A sync re-fetches at most this many times when mutations keep landing
+// mid-fetch; after that the list is left as-is until the next sync.
+const MAX_SYNC_ATTEMPTS = 3;
 
 const listeners = new Set<() => void>();
 
@@ -303,15 +306,26 @@ export function clearServerWarriors(): void {
  * drafts are preserved — and persists the result so it survives a reload on
  * any page. Entries deleted on another device disappear here (stale-entry
  * reconciliation). Network failures leave the cached list in place.
+ *
+ * If a create/update/delete lands while the list request is in flight, the
+ * response predates it and is discarded; the list is then re-fetched (the
+ * server already has the mutation by then), up to MAX_SYNC_ATTEMPTS times.
+ * A logout or account switch mid-fetch ends the sync — the new owner's own
+ * sync takes over.
  */
 export async function syncFromServer(): Promise<void> {
-  const startVersion = serverVersion;
   const owner = serverOwner;
-  try {
-    const resp = await warriorsApi.listWarriors(1, 100);
-    // A mutation, logout, or account switch happened while we were waiting —
-    // this response is stale relative to local state.
-    if (serverVersion !== startVersion || serverOwner !== owner) return;
+  for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt++) {
+    const startVersion = serverVersion;
+    let resp: Awaited<ReturnType<typeof warriorsApi.listWarriors>>;
+    try {
+      resp = await warriorsApi.listWarriors(1, 100);
+    } catch {
+      // Offline / 5xx — keep showing the cached list.
+      return;
+    }
+    if (serverOwner !== owner) return;
+    if (serverVersion !== startVersion) continue;
     serverWarriors = resp.warriors.map((w) => ({
       id: `server:${w.id}`,
       label: w.name,
@@ -319,14 +333,21 @@ export async function syncFromServer(): Promise<void> {
       isPreset: false,
     }));
     emit();
-  } catch {
-    // Offline / 5xx — keep showing the cached list.
+    return;
   }
 }
 
+// Server mutations capture the owner before awaiting the API and drop the
+// local apply if the account changed meanwhile, so one user's result never
+// lands in another user's list or persisted cache. The server-side change
+// itself still happened under the original session; the next sync for that
+// user will show it.
+
 export async function createServerWarrior(label: string, source: string): Promise<Warrior> {
+  const owner = serverOwner;
   const sw = await warriorsApi.createWarrior(label, source);
   const w: Warrior = { id: `server:${sw.id}`, label: sw.name, source: sw.source, isPreset: false };
+  if (serverOwner !== owner) return w;
   serverWarriors = [...serverWarriors, w];
   serverVersion++;
   emit();
@@ -341,7 +362,9 @@ export async function updateServerWarrior(
   const apiPatch: { name?: string; source?: string } = {};
   if (patch.label !== undefined) apiPatch.name = patch.label;
   if (patch.source !== undefined) apiPatch.source = patch.source;
+  const owner = serverOwner;
   const sw = await warriorsApi.updateWarrior(serverId, apiPatch);
+  if (serverOwner !== owner) return;
   serverWarriors = serverWarriors.map((w) =>
     w.id === localId ? { ...w, label: sw.name, source: sw.source } : w,
   );
@@ -351,7 +374,9 @@ export async function updateServerWarrior(
 
 export async function deleteServerWarrior(localId: string): Promise<void> {
   const serverId = localId.replace('server:', '');
+  const owner = serverOwner;
   await warriorsApi.deleteWarrior(serverId);
+  if (serverOwner !== owner) return;
   serverWarriors = serverWarriors.filter((w) => w.id !== localId);
   serverVersion++;
   emit();

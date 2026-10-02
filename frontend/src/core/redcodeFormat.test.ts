@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatInstruction, cellAddressAtPixel } from './redcodeFormat';
+import { formatInstruction, cellAddressAtPixel, cellAddressAtDisplayPixel } from './redcodeFormat';
 import { CELL_SCALE, GRID_COLS } from './constants';
 
 describe('formatInstruction', () => {
@@ -66,5 +66,26 @@ describe('cellAddressAtPixel', () => {
     const x = CELL_SCALE * (GRID_COLS - 1);
     const y = CELL_SCALE * (GRID_COLS - 1);
     expect(cellAddressAtPixel(x, y)).toBe((GRID_COLS - 1) * GRID_COLS + (GRID_COLS - 1));
+  });
+});
+
+describe('cellAddressAtDisplayPixel', () => {
+  const NATIVE_WIDTH = GRID_COLS * CELL_SCALE;
+
+  it('matches cellAddressAtPixel when displayed at native size', () => {
+    expect(cellAddressAtDisplayPixel(CELL_SCALE * 5, CELL_SCALE * 2, NATIVE_WIDTH)).toBe(
+      cellAddressAtPixel(CELL_SCALE * 5, CELL_SCALE * 2),
+    );
+  });
+
+  it('maps coordinates on a half-size grid back to the same cell', () => {
+    const half = NATIVE_WIDTH / 2;
+    expect(cellAddressAtDisplayPixel((CELL_SCALE * 5) / 2, (CELL_SCALE * 2) / 2, half)).toBe(
+      2 * GRID_COLS + 5,
+    );
+  });
+
+  it('falls back to native scale for a zero display width', () => {
+    expect(cellAddressAtDisplayPixel(0, 0, 0)).toBe(0);
   });
 });

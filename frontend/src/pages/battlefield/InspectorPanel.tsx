@@ -24,6 +24,8 @@ type Props = {
   warriors: ProcessInfo[];
   onCellSelect: (addr: number) => void;
   onClearCell: () => void;
+  /** Small-screen layout: panel sits below the grid at full width. */
+  stacked?: boolean;
 };
 
 const PANEL_STYLE: React.CSSProperties = {
@@ -35,6 +37,14 @@ const PANEL_STYLE: React.CSSProperties = {
   flexDirection: 'column',
   overflow: 'auto',
   fontSize: '0.8rem',
+};
+
+const STACKED_PANEL_STYLE: React.CSSProperties = {
+  ...PANEL_STYLE,
+  width: '100%',
+  borderLeft: 'none',
+  borderTop: '1px solid #222',
+  overflow: 'visible',
 };
 
 const SECTION_HEADER_STYLE: React.CSSProperties = {
@@ -180,9 +190,15 @@ function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) 
   );
 }
 
-export default function InspectorPanel({ cellInfo, warriors, onCellSelect, onClearCell }: Props) {
+export default function InspectorPanel({
+  cellInfo,
+  warriors,
+  onCellSelect,
+  onClearCell,
+  stacked = false,
+}: Props) {
   return (
-    <aside style={PANEL_STYLE}>
+    <aside style={stacked ? STACKED_PANEL_STYLE : PANEL_STYLE}>
       <div style={SECTION_HEADER_STYLE}>Cell Inspector</div>
       {cellInfo ? (
         <CellDetail cell={cellInfo} onClear={onClearCell} />

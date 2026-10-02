@@ -8,7 +8,6 @@ import {
   updateUserWarrior,
   deleteUserWarrior,
   duplicateWarrior,
-  syncFromServer,
   createServerWarrior,
   updateServerWarrior,
   deleteServerWarrior,
@@ -47,12 +46,6 @@ export function useBuilder() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (user) {
-      syncFromServer();
-    }
-  }, [user]);
 
   const selected = library.find((w) => w.id === selectedId);
 
@@ -237,13 +230,27 @@ start   MOV.I  $0, $1
     }
   };
 
-  const handleTestInBattle = () => {
-    if (!selected) return;
+  // Battles read the warrior from the library by id, and navigating away
+  // unmounts the Builder (dropping unsaved React state), so pending edits must
+  // be written to the library first. For a saved server warrior that means
+  // saving to the server — same as handleSave — so the battle runs exactly the
+  // code the user is looking at. If that save fails, stay here with the edits
+  // intact rather than silently battling the old version.
+  const handleTestInBattle = async () => {
+    if (!selected || saving) return;
     let targetId = selected.id;
     if (dirty) {
       if (selected.isPreset) {
         const created = createUserWarrior(label || 'Untitled', source);
         targetId = created.id;
+      } else if (isServerWarrior(selected.id)) {
+        setSaving(true);
+        try {
+          await updateServerWarrior(selected.id, { label: label || 'Untitled', source });
+          setDirty(false);
+        } finally {
+          setSaving(false);
+        }
       } else {
         updateUserWarrior(selected.id, { label: label || 'Untitled', source });
       }

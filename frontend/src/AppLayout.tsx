@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from './api/AuthContext';
 import AuthModal from './api/AuthModal';
+import { useServerWarriorSync } from './warriors/useServerWarriorSync';
 
 const SHELL_STYLE: React.CSSProperties = {
   display: 'flex',
@@ -103,6 +104,7 @@ const USERNAME_STYLE: React.CSSProperties = {
 
 export default function AppLayout() {
   const { user, loading, logout } = useAuth();
+  useServerWarriorSync();
   const [showAuth, setShowAuth] = useState(false);
 
   return (

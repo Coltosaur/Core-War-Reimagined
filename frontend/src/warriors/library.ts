@@ -126,41 +126,104 @@ found   MOV.I  bomb, @ptr     ; drop the bomb on the non-empty cell
   },
 ];
 
+// Two localStorage keys, one per id namespace:
+//   - STORAGE_KEY holds local `user:*` drafts (anonymous, never synced).
+//   - SERVER_CACHE_KEY holds a stale-while-revalidate copy of the logged-in
+//     user's `server:*` warriors, tagged with the owning user_id so a
+//     different account on the same browser never sees someone else's list.
+// Keeping them separate means a sync can replace the server namespace
+// wholesale without touching drafts, and logout can drop the cache without
+// touching drafts either.
 const STORAGE_KEY = 'corewar.warriors.v1';
+const SERVER_CACHE_KEY = 'corewar.serverWarriors.v1';
 
 type StoredWarrior = { id: string; label: string; source: string };
+type ServerCache = { userId: string; warriors: StoredWarrior[] };
 
-function loadUserWarriors(): Warrior[] {
+function isServerId(id: string): boolean {
+  return id.startsWith('server:');
+}
+
+function readStoredList(raw: unknown): Warrior[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (w): w is StoredWarrior =>
+        !!w &&
+        typeof w.id === 'string' &&
+        typeof w.label === 'string' &&
+        typeof w.source === 'string',
+    )
+    .map(({ id, label, source }) => ({ id, label, source, isPreset: false }));
+}
+
+function loadLocalDrafts(): Warrior[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as StoredWarrior[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((w) => ({ ...w, isPreset: false }));
+    // Older builds never wrote server:* here, but filter defensively so the
+    // namespaces can't bleed into each other.
+    return readStoredList(JSON.parse(raw)).filter((w) => !isServerId(w.id));
   } catch {
     return [];
   }
 }
 
-function saveUserWarriors(list: Warrior[]): void {
-  const serialized: StoredWarrior[] = list
-    .filter((w) => !w.isPreset)
-    .map(({ id, label, source }) => ({ id, label, source }));
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
+function loadServerCache(): { userId: string | null; warriors: Warrior[] } {
+  try {
+    const raw = localStorage.getItem(SERVER_CACHE_KEY);
+    if (!raw) return { userId: null, warriors: [] };
+    const parsed = JSON.parse(raw) as Partial<ServerCache>;
+    if (typeof parsed?.userId !== 'string') return { userId: null, warriors: [] };
+    const warriors = readStoredList(parsed.warriors).filter((w) => isServerId(w.id));
+    return { userId: parsed.userId, warriors };
+  } catch {
+    return { userId: null, warriors: [] };
+  }
 }
 
-let userWarriors: Warrior[] = loadUserWarriors();
+function toStored(list: Warrior[]): StoredWarrior[] {
+  return list.map(({ id, label, source }) => ({ id, label, source }));
+}
+
+function persist(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStored(localDrafts)));
+    if (serverOwner) {
+      const cache: ServerCache = { userId: serverOwner, warriors: toStored(serverWarriors) };
+      localStorage.setItem(SERVER_CACHE_KEY, JSON.stringify(cache));
+    } else {
+      localStorage.removeItem(SERVER_CACHE_KEY);
+    }
+  } catch {
+    // Quota exceeded / storage disabled — in-memory state is still correct.
+  }
+}
+
+let localDrafts: Warrior[] = loadLocalDrafts();
+const initialCache = loadServerCache();
+let serverWarriors: Warrior[] = initialCache.warriors;
+let serverOwner: string | null = initialCache.userId;
+// Bumped by every server-namespace mutation. A sync whose fetch started
+// before a create/update/delete landed would otherwise overwrite that
+// mutation with a pre-mutation list, so it discards that response and
+// re-fetches (see syncFromServer).
+let serverVersion = 0;
+// A sync re-fetches at most this many times when mutations keep landing
+// mid-fetch; after that the list is left as-is until the next sync.
+const MAX_SYNC_ATTEMPTS = 3;
+
 const listeners = new Set<() => void>();
 
 function emit(): void {
-  saveUserWarriors(userWarriors);
+  persist();
   snapshot = computeSnapshot();
   listeners.forEach((l) => l());
 }
 
 let snapshot: Warrior[] = computeSnapshot();
 function computeSnapshot(): Warrior[] {
-  return [...PRESETS, ...userWarriors];
+  return [...PRESETS, ...localDrafts, ...serverWarriors];
 }
 
 function subscribe(listener: () => void): () => void {
@@ -190,18 +253,18 @@ function randomId(): string {
 
 export function createUserWarrior(label: string, source: string): Warrior {
   const w: Warrior = { id: randomId(), label, source, isPreset: false };
-  userWarriors = [...userWarriors, w];
+  localDrafts = [...localDrafts, w];
   emit();
   return w;
 }
 
 export function updateUserWarrior(id: string, patch: { label?: string; source?: string }): void {
-  userWarriors = userWarriors.map((w) => (w.id === id && !w.isPreset ? { ...w, ...patch } : w));
+  localDrafts = localDrafts.map((w) => (w.id === id ? { ...w, ...patch } : w));
   emit();
 }
 
 export function deleteUserWarrior(id: string): void {
-  userWarriors = userWarriors.filter((w) => w.id !== id);
+  localDrafts = localDrafts.filter((w) => w.id !== id);
   emit();
 }
 
@@ -212,28 +275,82 @@ export function duplicateWarrior(sourceId: string): Warrior | undefined {
   return createUserWarrior(label, src.source);
 }
 
+/**
+ * Point the server cache at `userId`. If the cached list belongs to a
+ * different account (or there is no owner yet), it is dropped immediately so
+ * one user's warriors never render under another user's session. Call before
+ * `syncFromServer()` once the authenticated user is known.
+ */
+export function setServerOwner(userId: string): void {
+  if (serverOwner === userId) return;
+  serverOwner = userId;
+  serverWarriors = [];
+  serverVersion++;
+  emit();
+}
+
+/**
+ * Drop the cached server warriors (logout / forced logout). Local `user:*`
+ * drafts are untouched.
+ */
+export function clearServerWarriors(): void {
+  if (serverOwner === null && serverWarriors.length === 0) return;
+  serverOwner = null;
+  serverWarriors = [];
+  serverVersion++;
+  emit();
+}
+
+/**
+ * Revalidate the server namespace. Replaces only `server:*` entries — local
+ * drafts are preserved — and persists the result so it survives a reload on
+ * any page. Entries deleted on another device disappear here (stale-entry
+ * reconciliation). Network failures leave the cached list in place.
+ *
+ * If a create/update/delete lands while the list request is in flight, the
+ * response predates it and is discarded; the list is then re-fetched (the
+ * server already has the mutation by then), up to MAX_SYNC_ATTEMPTS times.
+ * A logout or account switch mid-fetch ends the sync — the new owner's own
+ * sync takes over.
+ */
 export async function syncFromServer(): Promise<void> {
-  try {
-    const resp = await warriorsApi.listWarriors(1, 100);
-    userWarriors = resp.warriors.map((w) => ({
+  const owner = serverOwner;
+  for (let attempt = 0; attempt < MAX_SYNC_ATTEMPTS; attempt++) {
+    const startVersion = serverVersion;
+    let resp: Awaited<ReturnType<typeof warriorsApi.listWarriors>>;
+    try {
+      resp = await warriorsApi.listWarriors(1, 100);
+    } catch {
+      // Offline / 5xx — keep showing the cached list.
+      return;
+    }
+    if (serverOwner !== owner) return;
+    if (serverVersion !== startVersion) continue;
+    serverWarriors = resp.warriors.map((w) => ({
       id: `server:${w.id}`,
       label: w.name,
       source: w.source,
       isPreset: false,
     }));
-    snapshot = computeSnapshot();
-    listeners.forEach((l) => l());
-  } catch {
-    // silently fall back to localStorage
+    emit();
+    return;
   }
 }
 
+// Server mutations capture the owner before awaiting the API and drop the
+// local apply if the account changed meanwhile, so one user's result never
+// lands in another user's list or persisted cache. The server-side change
+// itself still happened under the original session; the next sync for that
+// user will show it.
+
 export async function createServerWarrior(label: string, source: string): Promise<Warrior> {
+  const owner = serverOwner;
   const sw = await warriorsApi.createWarrior(label, source);
   const w: Warrior = { id: `server:${sw.id}`, label: sw.name, source: sw.source, isPreset: false };
-  userWarriors = [...userWarriors, w];
-  snapshot = computeSnapshot();
-  listeners.forEach((l) => l());
+  if (serverOwner !== owner) return w;
+  serverWarriors = [...serverWarriors, w];
+  serverVersion++;
+  emit();
   return w;
 }
 
@@ -245,18 +362,22 @@ export async function updateServerWarrior(
   const apiPatch: { name?: string; source?: string } = {};
   if (patch.label !== undefined) apiPatch.name = patch.label;
   if (patch.source !== undefined) apiPatch.source = patch.source;
+  const owner = serverOwner;
   const sw = await warriorsApi.updateWarrior(serverId, apiPatch);
-  userWarriors = userWarriors.map((w) =>
+  if (serverOwner !== owner) return;
+  serverWarriors = serverWarriors.map((w) =>
     w.id === localId ? { ...w, label: sw.name, source: sw.source } : w,
   );
-  snapshot = computeSnapshot();
-  listeners.forEach((l) => l());
+  serverVersion++;
+  emit();
 }
 
 export async function deleteServerWarrior(localId: string): Promise<void> {
   const serverId = localId.replace('server:', '');
+  const owner = serverOwner;
   await warriorsApi.deleteWarrior(serverId);
-  userWarriors = userWarriors.filter((w) => w.id !== localId);
-  snapshot = computeSnapshot();
-  listeners.forEach((l) => l());
+  if (serverOwner !== owner) return;
+  serverWarriors = serverWarriors.filter((w) => w.id !== localId);
+  serverVersion++;
+  emit();
 }

@@ -143,7 +143,9 @@ describe('server warrior persistence (#58)', () => {
     const { api, lib } = await loadLibrary();
     lib.setServerOwner('u1');
     let resolveList!: (v: ReturnType<typeof listResponse>) => void;
-    api.listWarriors.mockReturnValue(new Promise((r) => (resolveList = r)));
+    api.listWarriors
+      .mockReturnValueOnce(new Promise((r) => (resolveList = r)))
+      .mockResolvedValueOnce(listResponse([sw('n', 'New')]));
     const pending = lib.syncFromServer();
 
     api.createWarrior.mockResolvedValue(sw('n', 'New'));
@@ -152,5 +154,87 @@ describe('server warrior persistence (#58)', () => {
     await pending;
 
     expect(ids(lib.listWarriors())).toEqual(['server:n']);
+  });
+
+  // Review finding 2 on #111: a sync that bailed because of a concurrent
+  // mutation was never retried, so on a fresh login (list just emptied by
+  // setServerOwner) clicking "New" while the first fetch was in flight left
+  // the user with only the new warrior until a reload.
+  it('a sync interrupted by a mutation re-fetches instead of giving up', async () => {
+    const { api, lib } = await loadLibrary();
+    lib.setServerOwner('u1');
+    let resolveFirst!: (v: ReturnType<typeof listResponse>) => void;
+    api.listWarriors
+      .mockReturnValueOnce(new Promise((r) => (resolveFirst = r)))
+      .mockResolvedValueOnce(listResponse([sw('a', 'A'), sw('b', 'B'), sw('n', 'New')]));
+    const pending = lib.syncFromServer();
+
+    api.createWarrior.mockResolvedValue(sw('n', 'New'));
+    await lib.createServerWarrior('New', 'NOP');
+    resolveFirst(listResponse([sw('a', 'A'), sw('b', 'B')]));
+    await pending;
+
+    expect(api.listWarriors).toHaveBeenCalledTimes(2);
+    expect(ids(lib.listWarriors())).toEqual(['server:a', 'server:b', 'server:n']);
+  });
+
+  it('a sync that keeps getting interrupted stops retrying after a bound', async () => {
+    const { api, lib } = await loadLibrary();
+    lib.setServerOwner('u1');
+    api.listWarriors.mockImplementation(async () => {
+      // Every fetch races a mutation.
+      lib.clearServerWarriors();
+      lib.setServerOwner('u1');
+      return listResponse([]);
+    });
+    await lib.syncFromServer();
+    expect(vi.mocked(api.listWarriors).mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  // Review finding 3 on #111: create/update/delete applied their result even
+  // if the account changed while the request was in flight, leaking the old
+  // user's warrior into the new user's list and persisted cache.
+  describe('account switch while a save is in flight', () => {
+    async function heldOwnerSwitch<T>(
+      start: (lib: Awaited<ReturnType<typeof loadLibrary>>['lib']) => Promise<T>,
+      hold: (api: Awaited<ReturnType<typeof loadLibrary>>['api']) => (v: ServerWarrior) => void,
+    ) {
+      const { api, lib } = await loadLibrary();
+      lib.setServerOwner('u1');
+      const release = hold(api);
+      const pending = start(lib);
+      lib.setServerOwner('u2');
+      release(sw('x', 'Leaked'));
+      await pending;
+      return lib;
+    }
+
+    it('createServerWarrior does not add to the new user', async () => {
+      const lib = await heldOwnerSwitch(
+        (l) => l.createServerWarrior('Leaked', 'NOP'),
+        (api) => {
+          let r!: (v: ServerWarrior) => void;
+          api.createWarrior.mockReturnValue(new Promise((res) => (r = res)));
+          return (v) => r(v);
+        },
+      );
+      expect(ids(lib.listWarriors())).toEqual([]);
+      expect(JSON.parse(localStorage.getItem(SERVER_KEY)!)).toEqual({
+        userId: 'u2',
+        warriors: [],
+      });
+    });
+
+    it('updateServerWarrior does not touch the new user', async () => {
+      const lib = await heldOwnerSwitch(
+        (l) => l.updateServerWarrior('server:x', { label: 'Leaked' }),
+        (api) => {
+          let r!: (v: ServerWarrior) => void;
+          api.updateWarrior.mockReturnValue(new Promise((res) => (r = res)));
+          return (v) => r(v);
+        },
+      );
+      expect(ids(lib.listWarriors())).toEqual([]);
+    });
   });
 });

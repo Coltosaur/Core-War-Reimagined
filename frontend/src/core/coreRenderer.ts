@@ -54,7 +54,13 @@ export function createCoreRenderer(container: HTMLElement): CoreRenderer {
     backgroundColor: 0x0a0a0a,
     antialias: false,
   });
-  container.appendChild(app.view as HTMLCanvasElement);
+  const canvas = app.view as HTMLCanvasElement;
+  // Scale down (never up) to fit narrow containers on small screens; the
+  // pixel-art sprite keeps NEAREST sampling, so cells stay crisp.
+  canvas.style.display = 'block';
+  canvas.style.maxWidth = '100%';
+  canvas.style.height = 'auto';
+  container.appendChild(canvas);
 
   // Offscreen canvas: one pixel per core cell.
   const offscreen = document.createElement('canvas');

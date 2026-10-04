@@ -5,10 +5,11 @@ import AuthModal from './api/AuthModal';
 
 const SHELL_STYLE: React.CSSProperties = {
   display: 'flex',
-  height: '100vh',
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-  backgroundColor: '#0a0a0a',
-  color: '#e0e0e0',
+  // dvh, not vh: on mobile, 100vh is the height with the browser toolbar
+  // hidden, so a 100vh shell runs underneath the visible toolbar.
+  height: '100dvh',
+  fontFamily: 'var(--font-mono)',
+  color: 'var(--text)',
 };
 
 const SIDEBAR_STYLE: React.CSSProperties = {
@@ -41,6 +42,9 @@ const navLinkStyle = (active: boolean): React.CSSProperties => ({
   color: active ? '#e94560' : '#888',
   backgroundColor: active ? '#1a1a1a' : 'transparent',
   textDecoration: 'none',
+  // Opt out of base.css's link hover underline; nav items have their own
+  // active/hover treatment.
+  borderBottom: 'none',
   transition: 'background-color 0.15s, color 0.15s',
 });
 
@@ -126,7 +130,7 @@ export default function AppLayout() {
             <>
               <Link
                 to="/profile"
-                style={{ ...USERNAME_STYLE, textDecoration: 'none' }}
+                style={{ ...USERNAME_STYLE, textDecoration: 'none', borderBottom: 'none' }}
                 title="Dashboard"
               >
                 {user.username}

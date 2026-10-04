@@ -116,6 +116,10 @@ export function useBuilder() {
   const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    // Monaco measures glyph widths once, at mount. If the self-hosted
+    // JetBrains Mono finishes loading afterwards, the cached fallback-font
+    // metrics misplace the cursor and selections until we remeasure.
+    void document.fonts.ready.then(() => monaco.editor.remeasureFonts());
     if (wasmReady) runParse(editor.getValue());
   };
 

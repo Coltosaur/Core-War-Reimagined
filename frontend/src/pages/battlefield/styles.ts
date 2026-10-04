@@ -22,7 +22,7 @@ export const TOOLTIP_STYLE: React.CSSProperties = {
   pointerEvents: 'none',
   backgroundColor: 'rgba(0, 0, 0, 0.85)',
   color: '#e0e0e0',
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
   fontSize: '0.75rem',
   padding: '0.25rem 0.5rem',
   borderRadius: '3px',

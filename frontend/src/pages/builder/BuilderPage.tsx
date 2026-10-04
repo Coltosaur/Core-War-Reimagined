@@ -5,6 +5,7 @@ import WarriorListPanel from './WarriorListPanel';
 import EditorToolbar from './EditorToolbar';
 import EditorStatus from './EditorStatus';
 import { useBuilder } from './useBuilder';
+import { fontMono } from '../../styles/tokens';
 import { EDITOR_CONTAINER_STYLE, MAIN_STYLE, PAGE_STYLE } from './styles';
 
 export default function BuilderPage() {
@@ -68,7 +69,7 @@ export default function BuilderPage() {
             onMount={handleEditorDidMount}
             options={{
               minimap: { enabled: false },
-              fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+              fontFamily: fontMono,
               fontSize: 14,
               lineNumbers: 'on',
               scrollBeyondLastLine: false,

@@ -216,8 +216,14 @@
     padding: var(--space-2) var(--space-2) var(--space-4);
   }
 
+  /* The rail is too narrow to truncate without hiding who you are; wrap
+     instead (phones have room for the ellipsis version). */
   .username {
     max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+    line-height: var(--lh-tight);
   }
 
   .authButton {

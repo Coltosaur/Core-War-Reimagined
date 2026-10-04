@@ -29,7 +29,7 @@
   --necrotic: #b8ff5a;
   --necrotic-dim: #7fbf3f;
   --necrotic-glow: rgba(184, 255, 90, 0.28);
-  --gold: #c9a24a;
+  --violet: #b8acf6;
 
   /* Type — one family throughout; the all-monospace look is the identity. */
   --font-mono: 'JetBrains Mono', ui-monospace, 'Fira Code', monospace;
@@ -71,7 +71,10 @@
   --shadow-blood: 0 0 24px var(--blood-glow);
   --shadow-necrotic: 0 0 24px var(--necrotic-glow);
 
-  /* Layout */
+  /* Layout. The one breakpoint is 48rem (768px): below it, phone layout
+     (top bar + bottom tab bar); at or above, the desktop side rail. Media
+     queries can't read custom properties, so modules repeat the 48rem
+     literal — search for it when changing this. */
   --content-width: 68rem;
   --prose-width: 42rem;
 

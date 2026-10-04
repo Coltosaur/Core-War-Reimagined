@@ -2,157 +2,87 @@ import { useState } from 'react';
 import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from './api/AuthContext';
 import AuthModal from './api/AuthModal';
-import { useServerWarriorSync } from './warriors/useServerWarriorSync';
-
-const SHELL_STYLE: React.CSSProperties = {
-  display: 'flex',
-  // dvh, not vh: on mobile, 100vh is the height with the browser toolbar
-  // hidden, so a 100vh shell runs underneath the visible toolbar.
-  height: '100dvh',
-  fontFamily: 'var(--font-mono)',
-  color: 'var(--text)',
-};
-
-const SIDEBAR_STYLE: React.CSSProperties = {
-  width: '80px',
-  flexShrink: 0,
-  backgroundColor: '#111',
-  borderRight: '1px solid #222',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  padding: '1rem 0',
-  gap: '0.25rem',
-};
-
-const MAIN_STYLE: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  overflow: 'auto',
-};
-
-const navLinkStyle = (active: boolean): React.CSSProperties => ({
-  width: '64px',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '0.2rem',
-  padding: '0.5rem 0',
-  borderRadius: '6px',
-  color: active ? '#e94560' : '#888',
-  backgroundColor: active ? '#1a1a1a' : 'transparent',
-  textDecoration: 'none',
-  // Opt out of base.css's link hover underline; nav items have their own
-  // active/hover treatment.
-  borderBottom: 'none',
-  transition: 'background-color 0.15s, color 0.15s',
-});
-
-const ICON_STYLE: React.CSSProperties = {
-  fontSize: '1.3rem',
-  lineHeight: 1,
-};
-
-const LABEL_STYLE: React.CSSProperties = {
-  fontSize: '0.65rem',
-  letterSpacing: '0.05em',
-  textTransform: 'uppercase',
-};
+import styles from './AppLayout.module.css';
 
 type Item = { to: string; label: string; icon: string };
 
+// U+FE0E (text presentation selector) keeps iOS and Android from swapping
+// these symbols for color emoji, which would clash with the monochrome nav.
+const TEXT = '︎';
+
 const ITEMS: Item[] = [
-  { to: '/', label: 'Home', icon: '⌂' },
-  { to: '/battle', label: 'Battle', icon: '⚔' },
-  { to: '/builder', label: 'Builder', icon: '✎' },
-  { to: '/learn', label: 'Learn', icon: 'ℹ' },
-  { to: '/lobby', label: 'Play', icon: '▶' },
-  { to: '/leaderboard', label: 'Ranks', icon: '♛' },
+  { to: '/', label: 'Home', icon: `⌂${TEXT}` },
+  { to: '/battle', label: 'Battle', icon: `⚔${TEXT}` },
+  { to: '/builder', label: 'Builder', icon: `✎${TEXT}` },
+  { to: '/learn', label: 'Learn', icon: `ℹ${TEXT}` },
+  { to: '/lobby', label: 'Play', icon: `▶${TEXT}` },
+  { to: '/leaderboard', label: 'Ranks', icon: `♛${TEXT}` },
 ];
 
-const AUTH_SECTION: React.CSSProperties = {
-  marginTop: 'auto',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: '0.25rem',
-  padding: '0.5rem 0',
-};
-
-const AUTH_BTN: React.CSSProperties = {
-  width: '64px',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '0.2rem',
-  padding: '0.5rem 0',
-  borderRadius: '6px',
-  color: '#888',
-  backgroundColor: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-  transition: 'background-color 0.15s, color 0.15s',
-};
-
-const USERNAME_STYLE: React.CSSProperties = {
-  fontSize: '0.6rem',
-  color: '#4fc3f7',
-  textAlign: 'center',
-  wordBreak: 'break-all',
-  maxWidth: '70px',
-  lineHeight: 1.2,
-};
+const navItemClass = ({ isActive }: { isActive: boolean }) =>
+  isActive ? `${styles.navItem} ${styles.active}` : styles.navItem;
 
 export default function AppLayout() {
   const { user, loading, logout } = useAuth();
-  useServerWarriorSync();
   const [showAuth, setShowAuth] = useState(false);
 
   return (
-    <div style={SHELL_STYLE}>
-      <nav style={SIDEBAR_STYLE}>
+    <div className={styles.shell}>
+      <div className={styles.brandCell}>
+        <Link to="/" className={styles.brand}>
+          CORE WAR
+        </Link>
+      </div>
+
+      <nav className={styles.nav} aria-label="Main">
         {ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/'}
             title={item.label}
-            style={({ isActive }) => navLinkStyle(isActive)}
+            className={navItemClass}
           >
-            <span style={ICON_STYLE}>{item.icon}</span>
-            <span style={LABEL_STYLE}>{item.label}</span>
+            <span className={styles.icon} aria-hidden>
+              {item.icon}
+            </span>
+            <span className={styles.label}>{item.label}</span>
           </NavLink>
         ))}
-
-        <div style={AUTH_SECTION}>
-          {loading ? null : user ? (
-            <>
-              <Link
-                to="/profile"
-                style={{ ...USERNAME_STYLE, textDecoration: 'none', borderBottom: 'none' }}
-                title="Dashboard"
-              >
-                {user.username}
-              </Link>
-              <button style={AUTH_BTN} onClick={logout} title="Log out">
-                <span style={ICON_STYLE}>{'←'}</span>
-                <span style={LABEL_STYLE}>Logout</span>
-              </button>
-            </>
-          ) : (
-            <button style={AUTH_BTN} onClick={() => setShowAuth(true)} title="Log in or register">
-              <span style={ICON_STYLE}>{'→'}</span>
-              <span style={LABEL_STYLE}>Log In</span>
-            </button>
-          )}
-        </div>
       </nav>
-      <main style={MAIN_STYLE}>
+
+      <div className={styles.auth}>
+        {loading ? null : user ? (
+          <>
+            <Link to="/profile" className={styles.username} title="Dashboard">
+              {user.username}
+            </Link>
+            <button type="button" className={styles.authButton} onClick={logout} title="Log out">
+              <span className={styles.icon} aria-hidden>
+                ←
+              </span>
+              <span>Logout</span>
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className={styles.authButton}
+            onClick={() => setShowAuth(true)}
+            title="Log in or register"
+          >
+            <span className={styles.icon} aria-hidden>
+              →
+            </span>
+            <span>Log In</span>
+          </button>
+        )}
+      </div>
+
+      <main className={styles.main}>
         <Outlet />
       </main>
+
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </div>
   );

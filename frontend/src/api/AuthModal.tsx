@@ -194,7 +194,7 @@ const MODAL: React.CSSProperties = {
   maxWidth: '90vw',
   maxHeight: '90vh',
   overflowY: 'auto',
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
 };
 
 const HEADER: React.CSSProperties = {

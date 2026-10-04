@@ -18,6 +18,7 @@
 // the older install(PIXI) API was deprecated.
 import '@pixi/unsafe-eval';
 import { Application, BaseTexture, Sprite, Texture, SCALE_MODES } from 'pixi.js';
+import { colors, hexToNumber } from '../styles/tokens';
 import { CORE_SIZE, GRID_COLS, GRID_ROWS, CELL_SCALE } from './constants';
 
 // Warrior color palette: index = ownership value from the engine.
@@ -51,7 +52,7 @@ export function createCoreRenderer(container: HTMLElement): CoreRenderer {
   const app = new Application({
     width: GRID_COLS * CELL_SCALE,
     height: GRID_ROWS * CELL_SCALE,
-    backgroundColor: 0x0a0a0a,
+    backgroundColor: hexToNumber(colors.bg),
     antialias: false,
   });
   container.appendChild(app.view as HTMLCanvasElement);

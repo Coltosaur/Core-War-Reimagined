@@ -32,14 +32,14 @@ const STATUS_ROW: React.CSSProperties = {
   gap: '2rem',
   fontSize: '0.85rem',
   color: '#bbb',
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
 };
 
 const WARRIOR_ROW: React.CSSProperties = {
   display: 'flex',
   gap: '2rem',
   fontSize: '0.85rem',
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
 };
 
 // Wrap the imperative PixiJS canvas so overlays can be positioned over it.

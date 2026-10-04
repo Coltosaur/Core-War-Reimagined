@@ -1,7 +1,11 @@
 import React, { Suspense } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import './index.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/600.css';
+import '@fontsource/jetbrains-mono/700.css';
+import './styles/tokens.css';
+import './styles/base.css';
 import AppLayout from './AppLayout';
 import { AuthProvider } from './api/AuthContext';
 import HomePage from './pages/HomePage';

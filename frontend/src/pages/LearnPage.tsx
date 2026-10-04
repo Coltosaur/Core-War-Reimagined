@@ -38,7 +38,7 @@ const LEDE_STYLE: React.CSSProperties = {
 };
 
 const CODE_INLINE: React.CSSProperties = {
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
   fontSize: '0.88em',
   backgroundColor: '#1a1a1a',
   color: '#e94560',
@@ -48,7 +48,7 @@ const CODE_INLINE: React.CSSProperties = {
 };
 
 const CODE_BLOCK: React.CSSProperties = {
-  fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+  fontFamily: 'var(--font-mono)',
   fontSize: '0.85rem',
   backgroundColor: '#0f0f0f',
   color: '#e0e0e0',

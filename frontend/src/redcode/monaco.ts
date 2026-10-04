@@ -1,4 +1,5 @@
 import type * as MonacoNs from 'monaco-editor';
+import { colors } from '../styles/tokens';
 import { OPCODES, MODIFIERS, ADDRESSING_MODES, PSEUDO_OPS, type CheatEntry } from './cheatSheet';
 
 export const REDCODE_LANGUAGE_ID = 'redcode';
@@ -64,8 +65,8 @@ export function registerRedcode(monaco: typeof MonacoNs): void {
       { token: 'delimiter', foreground: '888888' },
     ],
     colors: {
-      'editor.background': '#0f0f0f',
-      'editor.foreground': '#e0e0e0',
+      'editor.background': colors.surfaceInset,
+      'editor.foreground': colors.text,
       'editorLineNumber.foreground': '#444',
       'editorCursor.foreground': '#e94560',
       'editor.selectionBackground': '#4fc3f733',

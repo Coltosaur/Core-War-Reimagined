@@ -3,7 +3,9 @@ use sqlx::postgres::PgPoolOptions;
 use std::env;
 use uuid::Uuid;
 
-const IMP_SOURCE: &str = include_str!("../../../engine/tests/warriors/imp.red");
+// Mice-Lite rather than Imp: Imp ties Dwarf at production settings, and the
+// matchmaking bots need a decisive, repeatable outcome.
+const MICE_LITE_SOURCE: &str = include_str!("../../../engine/tests/warriors/mice_lite.red");
 const DWARF_SOURCE: &str = include_str!("../../../engine/tests/warriors/dwarf.red");
 
 struct SeedUser {
@@ -17,8 +19,8 @@ const SEED_USERS: &[SeedUser] = &[
     SeedUser {
         username: "_test_red",
         email: "_test_red@local.test",
-        warrior_name: "Imp",
-        warrior_source: IMP_SOURCE,
+        warrior_name: "Mice-Lite",
+        warrior_source: MICE_LITE_SOURCE,
     },
     SeedUser {
         username: "_test_blue",

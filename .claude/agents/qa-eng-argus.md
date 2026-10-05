@@ -99,7 +99,7 @@ Existing test infrastructure to build on (do not reinvent):
 - **Backend matchmaking pipeline:** `backend/src/matchmaking/runner.rs::execute_and_persist_match` is the testable seam. `backend/tests/matchmaking_integration.rs` shows the pattern for exercising it against a real DB.
 - **Backend socket smoke test:** `node frontend/scripts/test-backend.mjs` — hits `/health` + opens Socket.IO.
 - **Matchmaking end-to-end:** `node frontend/scripts/matchmaking-e2e.mjs` — spawns bot-red + bot-blue, drives full pipeline. `TEST_USER_PASSWORD` is in `backend/.env`.
-- **Test users:** `_test_red` (Imp warrior) and `_test_blue` (Dwarf warrior). Seed with `cargo run --bin seed-test-users --features dev-fixtures` in `backend/` — idempotent, safe to re-run.
+- **Test users:** `_test_red` (Mice-Lite warrior) and `_test_blue` (Dwarf warrior). Seed with `cargo run --bin seed-test-users --features dev-fixtures` in `backend/` — idempotent, safe to re-run.
 - **Playwright MCP:** `.mcp.json` — copy from `.mcp.json.example`. Use for anything UI-facing.
 - **Frontend unit + component:** Vitest + Testing Library, `npm test` in `frontend/`.
 

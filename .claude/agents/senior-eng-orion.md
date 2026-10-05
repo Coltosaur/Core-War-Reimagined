@@ -78,7 +78,7 @@ docker compose up -d                                # 1. Postgres + Redis
 (cd backend  && cargo run)                          # 4. Backend on :3001
 ```
 
-Test users (dev-only): `_test_red` (Imp), `_test_blue` (Dwarf). Seed with `cargo run --bin seed-test-users --features dev-fixtures` in `backend/`. Password lives in `backend/.env` as `TEST_USER_PASSWORD`.
+Test users (dev-only): `_test_red` (Mice-Lite), `_test_blue` (Dwarf). Seed with `cargo run --bin seed-test-users --features dev-fixtures` in `backend/`. Password lives in `backend/.env` as `TEST_USER_PASSWORD`.
 
 Available skills you should reach for:
 - `/verify` — before claiming a nontrivial change works. Drives the actual flow, not just tests.

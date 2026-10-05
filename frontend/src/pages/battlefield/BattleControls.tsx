@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { ONGOING } from './styles';
-import controls from './controls.module.css';
+import controls from '../../components/controls.module.css';
 
 type Props = {
   running: boolean;

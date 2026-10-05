@@ -1,158 +1,62 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { OPCODES, MODIFIERS, ADDRESSING_MODES, PSEUDO_OPS, type CheatEntry } from './cheatSheet';
+import styles from './CheatSheetPanel.module.css';
 
-const PANEL_STYLE: React.CSSProperties = {
-  flexShrink: 0,
-  borderLeft: '1px solid #222',
-  backgroundColor: '#0d0d0d',
-  display: 'flex',
-  flexDirection: 'column',
-  overflow: 'hidden',
-  transition: 'width 0.15s',
-};
-
-const COLLAPSED_STYLE: React.CSSProperties = {
-  ...PANEL_STYLE,
-  width: '36px',
-  cursor: 'pointer',
-};
-
-const OPEN_STYLE: React.CSSProperties = {
-  ...PANEL_STYLE,
-  width: '320px',
-};
-
-const VERTICAL_TEXT_STYLE: React.CSSProperties = {
-  writingMode: 'vertical-rl',
-  transform: 'rotate(180deg)',
-  padding: '0.75rem 0',
-  fontSize: '0.7rem',
-  letterSpacing: '0.15em',
-  color: '#888',
-  textTransform: 'uppercase',
-  textAlign: 'center',
-};
-
-const HEADER_STYLE: React.CSSProperties = {
-  padding: '0.6rem 0.9rem',
-  fontSize: '0.75rem',
-  letterSpacing: '0.08em',
-  color: '#bbb',
-  textTransform: 'uppercase',
-  borderBottom: '1px solid #222',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  cursor: 'pointer',
-  userSelect: 'none',
-};
-
-const SECTION_STYLE: React.CSSProperties = {
-  padding: '0.4rem 0',
-  borderBottom: '1px solid #1a1a1a',
-};
-
-const SECTION_HEADER_STYLE: React.CSSProperties = {
-  padding: '0.3rem 0.9rem',
-  fontSize: '0.65rem',
-  letterSpacing: '0.1em',
-  color: '#666',
-  textTransform: 'uppercase',
-};
-
-const ROW_STYLE: React.CSSProperties = {
-  padding: '0.3rem 0.9rem',
-  display: 'grid',
-  gridTemplateColumns: '3rem 1fr',
-  gap: '0.5rem',
-  fontSize: '0.8rem',
-  alignItems: 'baseline',
-};
-
-const SYMBOL_STYLE: React.CSSProperties = {
-  color: '#e94560',
-  fontWeight: 600,
-  textAlign: 'right',
-};
-
-const DESC_STYLE: React.CSSProperties = {
-  color: '#bbb',
-  lineHeight: 1.4,
-};
-
-const NAME_STYLE: React.CSSProperties = {
-  color: '#4fc3f7',
-  fontSize: '0.7rem',
-  textTransform: 'lowercase',
-  marginLeft: '0.3rem',
-};
-
-const TOGGLE_STYLE: React.CSSProperties = {
-  background: 'transparent',
-  color: '#888',
-  border: '1px solid #333',
-  borderRadius: '4px',
-  padding: '0.15rem 0.5rem',
-  fontSize: '0.7rem',
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-};
-
-const SCROLL_STYLE: React.CSSProperties = {
-  overflowY: 'auto',
-  flex: 1,
-};
+// Open by default where there's room beside the editor; closed on phones,
+// where it would push the editor down.
+const DESKTOP_QUERY = '(min-width: 48rem)';
+const startsOpen = () =>
+  typeof window !== 'undefined' && (window.matchMedia?.(DESKTOP_QUERY).matches ?? false);
 
 type SectionProps = { title: string; entries: CheatEntry[] };
 
 function Section({ title, entries }: SectionProps) {
   return (
-    <div style={SECTION_STYLE}>
-      <div style={SECTION_HEADER_STYLE}>{title}</div>
-      {entries.map((e) => (
-        <div key={e.symbol} style={ROW_STYLE}>
-          <span style={SYMBOL_STYLE}>{e.symbol}</span>
-          <span>
-            <span style={DESC_STYLE}>{e.desc}</span>
-            <span style={NAME_STYLE}>{e.name}</span>
-          </span>
-        </div>
-      ))}
-    </div>
+    <section className={styles.section}>
+      <h3 className={styles.sectionTitle}>{title}</h3>
+      <dl className={styles.entries}>
+        {entries.map((e) => (
+          <div key={e.symbol} className={styles.row}>
+            <dt className={styles.symbol}>{e.symbol}</dt>
+            <dd className={styles.desc}>
+              {e.desc}
+              <span className={styles.name}>{e.name}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 
 export default function CheatSheetPanel() {
-  const [open, setOpen] = useState(true);
-
-  if (!open) {
-    return (
-      <div style={COLLAPSED_STYLE} onClick={() => setOpen(true)} title="Show cheat sheet">
-        <div style={VERTICAL_TEXT_STYLE}>Cheat Sheet</div>
-      </div>
-    );
-  }
+  const [open, setOpen] = useState(startsOpen);
+  const bodyId = useId();
 
   return (
-    <div style={OPEN_STYLE}>
-      <div style={HEADER_STYLE} onClick={() => setOpen(false)}>
-        <span>Redcode Cheat Sheet</span>
-        <button
-          style={TOGGLE_STYLE}
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen(false);
-          }}
-        >
-          hide
-        </button>
-      </div>
-      <div style={SCROLL_STYLE}>
+    <aside
+      className={open ? `${styles.panel} ${styles.open}` : styles.panel}
+      aria-label="Redcode cheat sheet"
+    >
+      <button
+        type="button"
+        className={styles.header}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((o) => !o)}
+        title={open ? 'Hide cheat sheet' : 'Show cheat sheet'}
+      >
+        <span className={styles.title}>Redcode Cheat Sheet</span>
+        <span className={styles.hint} aria-hidden>
+          {open ? 'hide' : 'show'}
+        </span>
+      </button>
+      <div id={bodyId} className={styles.body} hidden={!open}>
         <Section title="Opcodes" entries={OPCODES} />
         <Section title="Modifiers" entries={MODIFIERS} />
         <Section title="Addressing Modes" entries={ADDRESSING_MODES} />
         <Section title="Pseudo-ops" entries={PSEUDO_OPS} />
       </div>
-    </div>
+    </aside>
   );
 }

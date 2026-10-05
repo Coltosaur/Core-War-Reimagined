@@ -6,7 +6,7 @@ import EditorToolbar from './EditorToolbar';
 import EditorStatus from './EditorStatus';
 import { useBuilder } from './useBuilder';
 import { fontMono } from '../../styles/tokens';
-import { EDITOR_CONTAINER_STYLE, MAIN_STYLE, PAGE_STYLE } from './styles';
+import styles from './BuilderPage.module.css';
 
 export default function BuilderPage() {
   const {
@@ -34,7 +34,7 @@ export default function BuilderPage() {
   } = useBuilder();
 
   return (
-    <div style={PAGE_STYLE}>
+    <div className={styles.page}>
       <WarriorListPanel
         presets={presets}
         userWarriors={userWarriors}
@@ -43,7 +43,7 @@ export default function BuilderPage() {
         onNew={handleNew}
       />
 
-      <section style={MAIN_STYLE}>
+      <section className={styles.main}>
         <EditorToolbar
           label={label}
           selected={selected}
@@ -57,7 +57,7 @@ export default function BuilderPage() {
           onImport={handleImport}
         />
 
-        <div style={EDITOR_CONTAINER_STYLE}>
+        <div className={styles.editor}>
           <Editor
             key={selectedId}
             height="100%"

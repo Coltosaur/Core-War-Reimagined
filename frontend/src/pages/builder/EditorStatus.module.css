@@ -1,0 +1,35 @@
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: 2rem;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-inset);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-100);
+}
+
+.loading {
+  color: var(--text-dim);
+}
+
+.ok {
+  color: var(--necrotic);
+}
+
+.error {
+  color: var(--blood-light);
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.unsaved {
+  margin-left: auto;
+  color: var(--violet);
+}

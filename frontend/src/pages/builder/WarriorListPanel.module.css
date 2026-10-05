@@ -1,0 +1,51 @@
+.list {
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border);
+}
+
+.group {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  font-style: italic;
+}
+
+.footer {
+  padding: var(--space-3) var(--space-4);
+}
+.footer button {
+  width: 100%;
+}
+
+@media (min-width: 48rem) {
+  /* The sidebar's own right border frames it; a bottom rule partway down
+     the column just looks like a stray line. Scoped under .list so it
+     outranks CollapsiblePanel's own border regardless of stylesheet order
+     (that module ships in a chunk shared with other pages). */
+  .list .panel {
+    border-bottom: 0;
+  }
+
+  .list {
+    overflow: auto;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+  }
+}

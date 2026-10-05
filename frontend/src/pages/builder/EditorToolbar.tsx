@@ -1,12 +1,7 @@
 import { useRef } from 'react';
 import type { Warrior } from '../../warriors/library';
-import {
-  BUTTON_STYLE,
-  DANGER_BUTTON_STYLE,
-  INPUT_STYLE,
-  PRIMARY_BUTTON_STYLE,
-  TOOLBAR_STYLE,
-} from './styles';
+import controls from '../../components/controls.module.css';
+import styles from './EditorToolbar.module.css';
 
 type Props = {
   label: string;
@@ -61,18 +56,22 @@ export default function EditorToolbar({
     downloadFile(filename, source);
   };
 
+  const button = controls.button;
+
   return (
-    <div style={TOOLBAR_STYLE}>
+    <div className={styles.toolbar}>
       <input
-        style={INPUT_STYLE}
+        className={`${controls.input} ${styles.name}`}
         value={label}
         onChange={(e) => onLabelChange(e.target.value)}
         placeholder="Warrior name"
+        aria-label="Warrior name"
         disabled={!selected || selected.isPreset}
       />
       {selected && !selected.isPreset && (
         <button
-          style={PRIMARY_BUTTON_STYLE}
+          type="button"
+          className={`${button} ${controls.primary}`}
           onClick={onSave}
           disabled={!canSave}
           title="Save changes"
@@ -80,28 +79,28 @@ export default function EditorToolbar({
           Save
         </button>
       )}
-      <button style={BUTTON_STYLE} onClick={onDuplicate} disabled={!selected}>
+      <button type="button" className={button} onClick={onDuplicate} disabled={!selected}>
         Duplicate
       </button>
       {selected && !selected.isPreset && (
-        <button style={DANGER_BUTTON_STYLE} onClick={onDelete}>
+        <button type="button" className={`${button} ${controls.danger}`} onClick={onDelete}>
           Delete
         </button>
       )}
-      <button style={BUTTON_STYLE} onClick={handleExport} disabled={!selected} title="Export .red">
+      <button
+        type="button"
+        className={button}
+        onClick={handleExport}
+        disabled={!selected}
+        title="Export .red"
+      >
         Export
       </button>
-      <button style={BUTTON_STYLE} onClick={handleImportClick} title="Import .red">
+      <button type="button" className={button} onClick={handleImportClick} title="Import .red">
         Import
       </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".red,.rd"
-        style={{ display: 'none' }}
-        onChange={handleFileChange}
-      />
-      <button style={BUTTON_STYLE} onClick={onTestInBattle} disabled={!selected}>
+      <input ref={fileInputRef} type="file" accept=".red,.rd" hidden onChange={handleFileChange} />
+      <button type="button" className={button} onClick={onTestInBattle} disabled={!selected}>
         Test in Battlefield &rarr;
       </button>
     </div>

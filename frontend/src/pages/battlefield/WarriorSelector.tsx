@@ -1,6 +1,6 @@
 import type { Warrior } from '../../warriors/library';
 import { warriorText } from '../../core/warriorColors';
-import controls from './controls.module.css';
+import controls from '../../components/controls.module.css';
 
 type Props = {
   redId: string;

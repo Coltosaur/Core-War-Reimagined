@@ -1,19 +1,6 @@
 import type { Warrior } from '../../warriors/library';
 import type { ParseStatus } from './useBuilder';
-import { STATUS_STYLE } from './styles';
-
-const LOADING_STYLE: React.CSSProperties = { color: '#666' };
-const SUCCESS_STYLE: React.CSSProperties = { color: '#a5d6a7' };
-const ERROR_STYLE: React.CSSProperties = { color: '#e94560' };
-const PRESET_HINT_STYLE: React.CSSProperties = {
-  marginLeft: 'auto',
-  color: '#666',
-  fontStyle: 'italic',
-};
-const UNSAVED_STYLE: React.CSSProperties = {
-  marginLeft: 'auto',
-  color: '#f0c040',
-};
+import styles from './EditorStatus.module.css';
 
 type Props = {
   wasmReady: boolean;
@@ -24,21 +11,21 @@ type Props = {
 
 export default function EditorStatus({ wasmReady, parseStatus, selected, dirty }: Props) {
   return (
-    <div style={STATUS_STYLE}>
-      {!wasmReady && <span style={LOADING_STYLE}>Loading engine...</span>}
+    <div className={styles.status} role="status">
+      {!wasmReady && <span className={styles.loading}>Loading engine...</span>}
       {wasmReady && parseStatus?.ok && (
-        <span style={SUCCESS_STYLE}>
+        <span className={styles.ok}>
           ✓ parsed
           {parseStatus.name ? ` — ${parseStatus.name}` : ''}
         </span>
       )}
       {wasmReady && parseStatus && !parseStatus.ok && (
-        <span style={ERROR_STYLE}>✗ {parseStatus.message}</span>
+        <span className={styles.error}>✗ {parseStatus.message}</span>
       )}
       {selected?.isPreset && (
-        <span style={PRESET_HINT_STYLE}>Classic warrior — read-only. Use Duplicate to edit.</span>
+        <span className={styles.hint}>Classic warrior — read-only. Use Duplicate to edit.</span>
       )}
-      {dirty && !selected?.isPreset && <span style={UNSAVED_STYLE}>● unsaved changes</span>}
+      {dirty && !selected?.isPreset && <span className={styles.unsaved}>● unsaved changes</span>}
     </div>
   );
 }

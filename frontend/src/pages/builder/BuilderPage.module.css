@@ -1,0 +1,40 @@
+/*
+ * Phones: one scrolling column — warrior list (collapsed), toolbar, editor,
+ * status, cheat sheet (collapsed). The editor gets a fixed share of the
+ * screen since Monaco needs an explicit height.
+ * Desktop (48rem+): list | editor | cheat sheet, filling the shell's main
+ * area, with the editor taking whatever height is left.
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor {
+  height: 60dvh;
+  min-height: 18rem;
+}
+
+@media (min-width: 48rem) {
+  .page {
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr) auto;
+    height: 100%;
+  }
+
+  .main {
+    min-height: 0;
+  }
+
+  .editor {
+    flex: 1;
+    height: auto;
+    min-height: 0;
+  }
+}

@@ -1,12 +1,8 @@
 import type { Warrior } from '../../warriors/library';
+import CollapsiblePanel from '../../components/CollapsiblePanel';
+import controls from '../../components/controls.module.css';
 import WarriorListItem from './WarriorListItem';
-import {
-  EMPTY_STATE_STYLE,
-  LIST_FOOTER_STYLE,
-  LIST_HEADER_STYLE,
-  LIST_STYLE,
-  NEW_BUTTON_STYLE,
-} from './styles';
+import styles from './WarriorListPanel.module.css';
 
 type Props = {
   presets: Warrior[];
@@ -24,23 +20,40 @@ export default function WarriorListPanel({
   onNew,
 }: Props) {
   return (
-    <aside style={LIST_STYLE}>
-      <div style={LIST_HEADER_STYLE}>Classic (read-only)</div>
-      {presets.map((w) => (
-        <WarriorListItem key={w.id} warrior={w} active={w.id === selectedId} onSelect={onSelect} />
-      ))}
-      <div style={LIST_HEADER_STYLE}>My Warriors</div>
-      {userWarriors.length === 0 && (
-        <div style={EMPTY_STATE_STYLE}>None yet. Duplicate a classic or create a new one.</div>
-      )}
-      {userWarriors.map((w) => (
-        <WarriorListItem key={w.id} warrior={w} active={w.id === selectedId} onSelect={onSelect} />
-      ))}
-      <div style={LIST_FOOTER_STYLE}>
-        <button style={NEW_BUTTON_STYLE} onClick={onNew}>
-          + New Warrior
-        </button>
-      </div>
+    <aside className={styles.list} aria-label="Warriors">
+      <CollapsiblePanel title="Warriors" className={styles.panel}>
+        <h3 className={styles.group}>Classic (read-only)</h3>
+        <ul className={styles.items}>
+          {presets.map((w) => (
+            <WarriorListItem
+              key={w.id}
+              warrior={w}
+              active={w.id === selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+        <h3 className={styles.group}>My Warriors</h3>
+        {userWarriors.length === 0 ? (
+          <p className={styles.empty}>None yet. Duplicate a classic or create a new one.</p>
+        ) : (
+          <ul className={styles.items}>
+            {userWarriors.map((w) => (
+              <WarriorListItem
+                key={w.id}
+                warrior={w}
+                active={w.id === selectedId}
+                onSelect={onSelect}
+              />
+            ))}
+          </ul>
+        )}
+        <div className={styles.footer}>
+          <button type="button" className={controls.button} onClick={onNew}>
+            + New Warrior
+          </button>
+        </div>
+      </CollapsiblePanel>
     </aside>
   );
 }

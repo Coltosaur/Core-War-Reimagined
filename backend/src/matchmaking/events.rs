@@ -1,5 +1,5 @@
 use crate::auth::socket::{get_auth, require_auth};
-use crate::matchmaking::queue::{QueueEntry, RedisQueue};
+use crate::matchmaking::queue::{JoinOutcome, QueueEntry, RedisQueue};
 use crate::matchmaking::runner::execute_and_persist_match;
 use crate::models::warrior::Warrior;
 use chrono::Utc;
@@ -141,8 +141,9 @@ pub fn register_events(socket: &SocketRef, io: SocketIo, queue: RedisQueue, db: 
                     socket_id: socket.id.to_string(),
                 };
 
-                let match_pair = match q.join(entry).await {
-                    Ok(pair) => pair,
+                let is_live = |e: &QueueEntry| socket_is_live(&io, &e.socket_id);
+                let outcome = match q.join_live(entry, is_live).await {
+                    Ok(outcome) => outcome,
                     Err(e) => {
                         error!("Redis error in queue:join: {e}");
                         let _ = socket.emit(
@@ -153,8 +154,17 @@ pub fn register_events(socket: &SocketRef, io: SocketIo, queue: RedisQueue, db: 
                     }
                 };
 
-                match match_pair {
-                    None => {
+                match outcome {
+                    JoinOutcome::Queued | JoinOutcome::Replaced { .. } => {
+                        if let JoinOutcome::Replaced { previous } = &outcome {
+                            // Same user, another live socket (a second tab):
+                            // tell it it's no longer the one queued.
+                            if previous.socket_id != socket.id.to_string() {
+                                if let Some(old) = live_socket(&io, &previous.socket_id) {
+                                    let _ = old.emit("queue:left", &serde_json::json!({}));
+                                }
+                            }
+                        }
                         let pos = q
                             .position(user.user_id)
                             .await
@@ -170,7 +180,7 @@ pub fn register_events(socket: &SocketRef, io: SocketIo, queue: RedisQueue, db: 
                         );
                         info!("user {} joined queue (position {})", user.username, pos + 1);
                     }
-                    Some((red, blue)) => {
+                    JoinOutcome::Matched(red, blue) => {
                         info!("match found: {} vs {}", red.username, blue.username);
                         run_matched_battle(io, pool, red, blue).await;
                     }
@@ -208,12 +218,22 @@ pub fn register_events(socket: &SocketRef, io: SocketIo, queue: RedisQueue, db: 
         let q = q3.clone();
         async move {
             if let Some(user) = get_auth(&socket) {
-                if let Err(e) = q.leave(user.user_id).await {
+                // Only this socket's entry: the user may already have
+                // re-joined from a newer connection.
+                if let Err(e) = q.leave_socket(user.user_id, &socket.id.to_string()).await {
                     error!("Redis error on disconnect cleanup: {e}");
                 }
             }
         }
     });
+}
+
+fn live_socket(io: &SocketIo, socket_id: &str) -> Option<SocketRef> {
+    io.get_socket(Sid::from_str(socket_id).ok()?)
+}
+
+fn socket_is_live(io: &SocketIo, socket_id: &str) -> bool {
+    live_socket(io, socket_id).is_some()
 }
 
 async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: QueueEntry) {

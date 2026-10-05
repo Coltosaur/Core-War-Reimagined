@@ -1,0 +1,240 @@
+/*
+ * App shell. Mobile-first: below 48rem the shell is a column of
+ * top bar / scrolling main / bottom tab bar; from 48rem up it's a row of
+ * side rail / scrolling main, and the top bar's contents fold into the rail.
+ *
+ * The bars are grid tracks, not position: fixed, so they can never cover
+ * page content and need no matching padding on every page.
+ */
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'brand auth'
+    'main main'
+    'nav nav';
+  /* dvh, not vh: on mobile, 100vh is the height with the browser toolbar
+     hidden, so a 100vh shell runs underneath the visible toolbar. */
+  height: 100dvh;
+}
+
+/* Brand and auth are separate grid items that together read as one top
+   bar on phones; on desktop the brand hides and auth drops to the foot of
+   the rail. Keeping them separate (rather than one wrapper) lets DOM order
+   — brand, nav, auth, main — match the desktop visual order. */
+.brandCell,
+.auth {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brandCell {
+  grid-area: brand;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: var(--fs-200);
+  letter-spacing: 0.25em;
+  color: var(--blood-bright);
+  text-shadow: 0 0 12px var(--blood-glow);
+}
+.brand:hover,
+.brand:focus-visible {
+  border-bottom-color: transparent;
+  text-shadow: 0 0 16px var(--blood-glow);
+}
+
+.main {
+  grid-area: main;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* Bottom tab bar on phones. */
+.nav {
+  grid-area: nav;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  /* Keep tabs clear of the iPhone home indicator. The page doesn't opt
+     into viewport-fit=cover, so browsers already keep it out of the
+     system navigation area; this is the backstop if that ever changes. */
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* The on-screen keyboard leaves little room; give it all to the input. */
+.shell:has(:is(input, textarea, select, [contenteditable='true']):focus) .nav {
+  display: none;
+}
+
+.navItem {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 3.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  color: var(--text-dim);
+  border-bottom: none;
+  transition:
+    color var(--dur-fast) var(--easing),
+    background-color var(--dur-fast) var(--easing);
+}
+.navItem:hover,
+.navItem:focus-visible {
+  color: var(--text);
+  text-shadow: none;
+}
+.navItem.active {
+  color: var(--necrotic);
+}
+
+.icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.label {
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Auth controls: right end of the top bar on phones, foot of the rail on
+   desktop. */
+.auth {
+  grid-area: auth;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.username {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-100);
+  color: var(--violet);
+}
+.username:hover,
+.username:focus-visible {
+  border-bottom-color: var(--violet);
+  text-shadow: none;
+}
+
+.authButton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--fs-100);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--easing),
+    border-color var(--dur-fast) var(--easing);
+}
+.authButton:hover,
+.authButton:focus-visible {
+  color: var(--necrotic);
+  border-color: var(--necrotic);
+}
+.authButton .icon {
+  font-size: var(--fs-200);
+}
+
+/* Desktop: side rail. */
+@media (min-width: 48rem) {
+  .shell {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'nav main'
+      'auth main';
+  }
+
+  /* Too cramped for the wordmark in a 5rem rail; Home links there anyway. */
+  .brandCell {
+    display: none;
+  }
+
+  .nav,
+  .auth {
+    border-top: none;
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+  }
+
+  .nav {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-4) 0 0;
+  }
+
+  /* No on-screen keyboard to make room for on desktop. */
+  .shell:has(:is(input, textarea, select, [contenteditable='true']):focus) .nav {
+    display: flex;
+  }
+
+  .navItem {
+    flex: 0 0 auto;
+    width: 4rem;
+    min-height: 0;
+    padding: var(--space-2) 0;
+    border-radius: var(--radius-md);
+  }
+  .navItem:hover,
+  .navItem.active {
+    background: var(--surface-raised);
+  }
+
+  .icon {
+    font-size: 1.3rem;
+  }
+
+  .label {
+    font-size: 0.65rem;
+  }
+
+  .auth {
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-2) var(--space-4);
+  }
+
+  /* The rail is too narrow to truncate without hiding who you are; wrap
+     instead (phones have room for the ellipsis version). */
+  .username {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+    line-height: var(--lh-tight);
+  }
+
+  .authButton {
+    flex-direction: column;
+    gap: 0.2rem;
+    width: 4rem;
+    padding: var(--space-2) 0;
+    border-color: transparent;
+    font-size: 0.65rem;
+  }
+  .authButton .icon {
+    font-size: 1.3rem;
+  }
+}

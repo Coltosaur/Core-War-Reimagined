@@ -19,7 +19,7 @@ export const colors = {
   bloodBright: '#c8102e',
   necrotic: '#b8ff5a',
   necroticDim: '#7fbf3f',
-  gold: '#c9a24a',
+  violet: '#b8acf6',
 } as const;
 
 /**

@@ -297,8 +297,11 @@ POSTGRES_PASSWORD=<openssl rand -hex 24>
 POSTGRES_DB=corewar
 DATABASE_URL=postgresql://corewar:<same hex password>@postgres:5432/corewar
 REDIS_URL=redis://redis:6379
-TRUSTED_PROXIES=
 ```
+
+`TRUSTED_PROXIES` isn't set here: `docker-compose.prod.yml` sets it to
+Docker's address pools so the rate limiters can see each visitor's address
+through Caddy (#116).
 
 `POSTGRES_PASSWORD` and the password portion of `DATABASE_URL` MUST match
 byte-for-byte. If you change one, change both — and `down -v` the postgres
@@ -383,6 +386,13 @@ docker compose -f docker-compose.prod.yml --env-file .env.production down
 
 # Nuke the database (only if you mean it — volumes go too)
 docker compose -f docker-compose.prod.yml --env-file .env.production down -v
+
+# Check the auth rate limiters see real visitor addresses: expect one key
+# per public IP. A key for a 172.x / 192.168.x address means Caddy isn't
+# trusted and every visitor shares that bucket (the backend also logs a
+# TRUSTED_PROXIES warning once).
+docker compose -f docker-compose.prod.yml --env-file .env.production exec redis \
+  redis-cli --scan --pattern 'rate_limit:*'
 ```
 
 Steady-state redeploy from your laptop after pushing code (escape hatch

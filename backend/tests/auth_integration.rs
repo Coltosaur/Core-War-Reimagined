@@ -1,4 +1,5 @@
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use axum::{middleware, Router};
@@ -8,6 +9,7 @@ use redis::aio::ConnectionManager;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use tower::ServiceExt;
 
 const FRONTEND_URL: &str = "http://localhost:5173";
@@ -131,7 +133,11 @@ fn extract_cookies(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
     map
 }
 
-async fn send(router: Router, req: Request<Body>) -> TestResponse {
+async fn send(router: Router, mut req: Request<Body>) -> TestResponse {
+    // `oneshot` skips the server, so attach the peer address the real one
+    // (`app::serve`) would. The rate limiter refuses requests without it.
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let cookies = extract_cookies(resp.headers());
@@ -1143,7 +1149,7 @@ async fn change_password_new_refresh_cookie_can_rotate(pool: PgPool) {
 async fn change_password_endpoint_is_rate_limited(pool: PgPool) {
     // Router-level assertion that /api/auth/change-password is actually
     // wired behind the rate-limit middleware in production. Without this,
-    // silently removing the .layer(...) from main.rs would open an
+    // silently removing the .layer(...) from app.rs would open an
     // authenticated brute-force surface (attacker with a valid session
     // cookie can enumerate the current password) and no automated signal
     // would fire.

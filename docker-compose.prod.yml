@@ -34,6 +34,17 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: .env.production
+    environment:
+      # Caddy is the backend's only client, so every request's peer address
+      # is Caddy's. Trusting it lets the rate limiters read the visitor's
+      # address from the X-Forwarded-For header Caddy sets; without this,
+      # every visitor shares one login bucket (#116). Docker assigns Caddy's
+      # address from these default pools, so trust the pools rather than an
+      # address that changes. Safe because the backend publishes no host
+      # port: only containers on this host can reach it at all.
+      # Set here rather than in .env.production so it can't be forgotten;
+      # this overrides any value there.
+      TRUSTED_PROXIES: "172.16.0.0/12,192.168.0.0/16"
     expose:
       - "3001"
     depends_on:

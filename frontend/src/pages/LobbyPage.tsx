@@ -117,8 +117,11 @@ export default function LobbyPage() {
     const s = io(API_BASE, { withCredentials: true });
     socketRef.current = s;
 
+    // pendingActionRef stays set while queued, not just until the server
+    // acknowledges: the server drops a connection's queue entry when it
+    // disconnects, and the auth-recovery layer replays the pending action on
+    // every reconnect to put the player back (#127).
     s.on('queue:joined', () => {
-      pendingActionRef.current = null;
       setPhase('queued');
     });
     s.on('queue:left', () => {
@@ -131,6 +134,7 @@ export default function LobbyPage() {
       setPhase('idle');
     });
     s.on('match:found', (data: MatchFoundData) => {
+      pendingActionRef.current = null;
       setMatchInfo(data);
       setPhase('matched');
     });
@@ -145,10 +149,11 @@ export default function LobbyPage() {
       setPhase('result');
     });
 
-    // Silent recovery on access-token expiry. Without this, an idle
-    // 15+ minute session lets the socket reconnect as anonymous and
-    // `require_auth` on the backend drops queue:join with no visible
-    // feedback (issue #60).
+    // Silent recovery on access-token expiry and on reconnects. Without
+    // this, an idle 15+ minute session lets the socket reconnect as
+    // anonymous and `require_auth` on the backend drops queue:join with no
+    // visible feedback (issue #60), and a reconnect while queued leaves the
+    // page showing "Searching" for a queue entry that no longer exists (#127).
     socketTeardownRef.current = installSocketAuthRecovery(s, {
       getPendingAction: () => pendingActionRef.current,
       onRecovered: () => setError(null),
@@ -196,6 +201,7 @@ export default function LobbyPage() {
   }, [location.state, location.pathname, effectiveId, joinQueue, navigate]);
 
   function leaveQueue() {
+    pendingActionRef.current = null;
     socketRef.current?.emit('queue:leave');
     setPhase('idle');
   }

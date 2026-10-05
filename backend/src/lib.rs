@@ -1,4 +1,5 @@
 pub mod account;
+pub mod app;
 pub mod auth;
 pub mod config;
 pub mod db;
@@ -8,11 +9,12 @@ pub mod leaderboard;
 pub mod matches;
 pub mod matchmaking;
 mod models;
+pub mod net;
 pub mod profile;
 pub mod warriors;
 
+use net::IpNet;
 use sqlx::PgPool;
-use std::net::IpAddr;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,5 +26,5 @@ pub struct AppState {
 pub struct AppConfig {
     pub frontend_url: String,
     pub jwt_secret: Vec<u8>,
-    pub trusted_proxies: Vec<IpAddr>,
+    pub trusted_proxies: Vec<IpNet>,
 }

@@ -1,5 +1,5 @@
+use crate::net::IpNet;
 use std::env;
-use std::net::IpAddr;
 
 #[derive(Debug)]
 pub struct Config {
@@ -8,7 +8,7 @@ pub struct Config {
     pub frontend_url: String,
     pub port: u16,
     pub jwt_secret: Vec<u8>,
-    pub trusted_proxies: Vec<IpAddr>,
+    pub trusted_proxies: Vec<IpNet>,
 }
 
 impl Config {
@@ -33,12 +33,19 @@ impl Config {
             return Err(ConfigError::WeakJwtSecret);
         }
 
+        // A typo here must stop startup rather than be skipped: a dropped
+        // entry silently stops trusting the proxy, and every client then
+        // shares the proxy's rate-limit bucket.
         let trusted_proxies = get("TRUSTED_PROXIES")
             .map(|s| {
                 s.split(',')
-                    .filter_map(|entry| entry.trim().parse::<IpAddr>().ok())
-                    .collect()
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(|entry| entry.parse::<IpNet>())
+                    .collect::<Result<Vec<_>, _>>()
             })
+            .transpose()
+            .map_err(|e| ConfigError::InvalidTrustedProxy(e.to_string()))?
             .unwrap_or_default();
 
         Ok(Self {
@@ -56,6 +63,7 @@ impl Config {
 pub enum ConfigError {
     Missing(&'static str),
     WeakJwtSecret,
+    InvalidTrustedProxy(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -65,6 +73,7 @@ impl std::fmt::Display for ConfigError {
             Self::WeakJwtSecret => {
                 write!(f, "JWT_SECRET must be at least 32 bytes")
             }
+            Self::InvalidTrustedProxy(detail) => write!(f, "TRUSTED_PROXIES: {detail}"),
         }
     }
 }
@@ -196,28 +205,41 @@ mod tests {
             ("DATABASE_URL", "postgresql://localhost/test"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
-            ("TRUSTED_PROXIES", "10.0.0.1, 172.16.0.1"),
+            ("TRUSTED_PROXIES", "10.0.0.1, 172.16.0.0/12,"),
         ]);
         let config = Config::from_lookup(lookup).unwrap();
         assert_eq!(
             config.trusted_proxies,
-            vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([172, 16, 0, 1]),]
+            vec![
+                "10.0.0.1".parse::<IpNet>().unwrap(),
+                "172.16.0.0/12".parse::<IpNet>().unwrap(),
+            ]
         );
     }
 
     #[test]
-    fn trusted_proxies_skips_invalid_entries() {
+    fn blank_trusted_proxies_is_empty() {
+        let lookup = make_lookup(&[
+            ("DATABASE_URL", "postgresql://localhost/test"),
+            ("REDIS_URL", "redis://localhost:6379"),
+            ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
+            ("TRUSTED_PROXIES", ""),
+        ]);
+        let config = Config::from_lookup(lookup).unwrap();
+        assert!(config.trusted_proxies.is_empty());
+    }
+
+    #[test]
+    fn invalid_trusted_proxy_fails_startup() {
         let lookup = make_lookup(&[
             ("DATABASE_URL", "postgresql://localhost/test"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "this-is-a-secret-that-is-at-least-32-bytes!"),
             ("TRUSTED_PROXIES", "10.0.0.1, not-an-ip, 192.168.1.1"),
         ]);
-        let config = Config::from_lookup(lookup).unwrap();
-        assert_eq!(
-            config.trusted_proxies,
-            vec![IpAddr::from([10, 0, 0, 1]), IpAddr::from([192, 168, 1, 1]),]
-        );
+        let err = Config::from_lookup(lookup).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidTrustedProxy(_)));
+        assert!(err.to_string().contains("not-an-ip"));
     }
 
     #[test]

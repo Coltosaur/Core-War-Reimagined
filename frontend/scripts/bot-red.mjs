@@ -1,4 +1,4 @@
-// Matchmaking bot — plays as the seeded `_test_red` user with the Imp warrior.
+// Matchmaking bot — plays as the seeded `_test_red` user with the Mice-Lite warrior.
 // Run as a separate Node process. See bot-common.mjs for the shared flow.
 
 import { runBot } from './bot-common.mjs';
@@ -18,5 +18,5 @@ await runBot({
   role: 'red',
   username: '_test_red',
   password,
-  expectedWarriorName: 'Imp',
+  expectedWarriorName: 'Mice-Lite',
 });

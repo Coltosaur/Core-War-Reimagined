@@ -77,6 +77,11 @@
   text-align: right;
 }
 
+/* A small text link that sits among controls (e.g. "Edit"). */
+.link {
+  font-size: var(--fs-100);
+}
+
 .field,
 .speed {
   display: flex;

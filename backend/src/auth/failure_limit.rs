@@ -181,14 +181,14 @@ impl FailureLimiter {
     }
 
     /// Reads the targeted account, returning the request rebuilt if its
-    /// body had to be consumed. `Err` is a response to send as-is.
-    async fn account_of(&self, request: Request) -> Result<(Option<String>, Request), Response> {
+    /// body had to be consumed. `Err` is the status to reject it with.
+    async fn account_of(&self, request: Request) -> Result<(Option<String>, Request), StatusCode> {
         match &self.account_source {
             AccountSource::LoginBody { db } => {
                 let (parts, body) = request.into_parts();
                 let bytes = axum::body::to_bytes(body, MAX_REQUEST_BODY_BYTES)
                     .await
-                    .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
+                    .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
                 // A body that doesn't parse has no account; the handler
                 // rejects it, and only the IP counter applies.
                 let account = match serde_json::from_slice::<LoginTarget>(&bytes) {
@@ -273,7 +273,7 @@ pub async fn failure_limit_middleware(
 
     let (account, request) = match limiter.account_of(request).await {
         Ok(found) => found,
-        Err(response) => return response,
+        Err(status) => return status.into_response(),
     };
 
     if let Err(retry_after) = limiter.check(ip, account.as_deref()).await {

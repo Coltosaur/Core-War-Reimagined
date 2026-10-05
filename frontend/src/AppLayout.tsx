@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, Link } from 'react-router-dom';
 import { useAuth } from './api/AuthContext';
 import AuthModal from './api/AuthModal';
+import { useServerWarriorSync } from './warriors/useServerWarriorSync';
 import styles from './AppLayout.module.css';
 
 type Item = { to: string; label: string; icon: string };
@@ -24,6 +25,9 @@ const navItemClass = ({ isActive }: { isActive: boolean }) =>
 
 export default function AppLayout() {
   const { user, loading, logout } = useAuth();
+  // App-level owner of the server warrior cache: every route, not just the
+  // Builder, needs the logged-in user's saved warriors (#58).
+  useServerWarriorSync();
   const [showAuth, setShowAuth] = useState(false);
 
   return (

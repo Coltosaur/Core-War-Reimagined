@@ -1,12 +1,6 @@
 import { useCallback } from 'react';
-import {
-  BUTTON_STYLE,
-  CONTROLS_STYLE,
-  ONGOING,
-  SPEED_INPUT_STYLE,
-  SPEED_LABEL_STYLE,
-  SPEED_SLIDER_STYLE,
-} from './styles';
+import { ONGOING } from './styles';
+import controls from './controls.module.css';
 
 type Props = {
   running: boolean;
@@ -51,35 +45,38 @@ export default function BattleControls({
     [setStepsPerFrame, spfRef],
   );
 
+  const stepDisabled = running || resultCode !== ONGOING;
+
   return (
-    <div style={CONTROLS_STYLE}>
+    <div className={controls.row}>
       {!running ? (
-        <button style={BUTTON_STYLE} onClick={play}>
+        <button type="button" className={`${controls.button} ${controls.primary}`} onClick={play}>
           Play
         </button>
       ) : (
-        <button style={BUTTON_STYLE} onClick={pause}>
+        <button type="button" className={`${controls.button} ${controls.primary}`} onClick={pause}>
           Pause
         </button>
       )}
-      <button style={BUTTON_STYLE} onClick={stepOnce} disabled={running || resultCode !== ONGOING}>
+      <button type="button" className={controls.button} onClick={stepOnce} disabled={stepDisabled}>
         Step
       </button>
-      <button style={BUTTON_STYLE} onClick={stepMany} disabled={running || resultCode !== ONGOING}>
+      <button type="button" className={controls.button} onClick={stepMany} disabled={stepDisabled}>
         +100
       </button>
-      <button style={BUTTON_STYLE} onClick={reset}>
+      <button type="button" className={controls.button} onClick={reset}>
         Reset
       </button>
-      <label style={SPEED_LABEL_STYLE}>
-        Speed:
+      <label className={controls.speed}>
+        Speed
         <input
           type="range"
           min={1}
           max={500}
           value={stepsPerFrame}
           onChange={handleSliderChange}
-          style={SPEED_SLIDER_STYLE}
+          className={controls.slider}
+          aria-label="Steps per frame"
         />
         <input
           type="number"
@@ -87,7 +84,8 @@ export default function BattleControls({
           max={500}
           value={stepsPerFrame}
           onChange={handleInputChange}
-          style={SPEED_INPUT_STYLE}
+          className={controls.number}
+          aria-label="Steps per frame (exact)"
         />
         /frame
       </label>

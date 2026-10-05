@@ -1,0 +1,61 @@
+/*
+ * A titled section that collapses on phones and is always open on desktop,
+ * where there's room to show everything. Below 48rem the title is a toggle
+ * button; from 48rem up it's a plain heading and the body ignores the
+ * collapsed state.
+ */
+.panel {
+  border-bottom: 1px solid var(--border);
+}
+
+.toggle,
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.toggle {
+  min-height: 2.75rem;
+  cursor: pointer;
+}
+.toggle:hover {
+  color: var(--text-muted);
+}
+
+.chevron {
+  transition: transform var(--dur-fast) var(--easing);
+}
+.toggle[aria-expanded='true'] .chevron {
+  transform: rotate(90deg);
+}
+
+.heading {
+  display: none;
+}
+
+@media (min-width: 48rem) {
+  .toggle {
+    display: none;
+  }
+  .heading {
+    display: flex;
+  }
+  /* Author styles beat the UA's [hidden] rule, so desktop always shows the
+     body regardless of the phone-side collapsed state. */
+  .body[hidden] {
+    display: block;
+  }
+}

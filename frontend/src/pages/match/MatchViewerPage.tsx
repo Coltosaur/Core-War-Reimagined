@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../api/AuthContext';
-import { GRID_CONTAINER_STYLE, PARSE_ERROR_STYLE } from '../battlefield/styles';
+import gridStyles from '../../core/CoreGrid.module.css';
+import { PARSE_ERROR_STYLE } from '../battlefield/styles';
 import { useMatchReplay, type MatchStartPayload } from './useMatchReplay';
 
 const PAGE_STYLE: React.CSSProperties = {
@@ -47,7 +48,8 @@ const WARRIOR_ROW: React.CSSProperties = {
 // so React never reconciles away the canvas Pixi appends imperatively.
 const GRID_WRAP_STYLE: React.CSSProperties = {
   position: 'relative',
-  display: 'inline-block',
+  width: '100%',
+  maxWidth: '700px',
   lineHeight: 0,
 };
 
@@ -173,7 +175,7 @@ export default function MatchViewerPage() {
       {parseError && <div style={PARSE_ERROR_STYLE}>{parseError}</div>}
 
       <div style={GRID_WRAP_STYLE}>
-        <div ref={gridRef} style={GRID_CONTAINER_STYLE} />
+        <div ref={gridRef} className={gridStyles.grid} />
 
         {!ready && !parseError && <div style={LOADING_OVERLAY_STYLE}>Loading engine…</div>}
 

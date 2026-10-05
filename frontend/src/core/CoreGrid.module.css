@@ -1,0 +1,43 @@
+/*
+ * The core-memory grid container, shared by the Battlefield and Match
+ * pages. The PixiJS canvas renders at its native size (GRID_COLS x
+ * GRID_ROWS cells at CELL_SCALE px) and CSS scales it to fit: full width
+ * up to native size, aspect ratio locked, nearest-neighbor so cells stay
+ * crisp squares instead of blurring into each other.
+ *
+ * 700px = GRID_COLS (100) * CELL_SCALE (7). 5 / 4 = GRID_COLS / GRID_ROWS.
+ */
+.grid {
+  position: relative;
+  width: 100%;
+  max-width: 700px;
+  aspect-ratio: 5 / 4;
+  line-height: 0;
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  cursor: crosshair;
+  /* A tap selects a cell; don't also double-tap-zoom the page. */
+  touch-action: manipulation;
+}
+
+.grid canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.tooltip {
+  display: none;
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-2);
+  background: rgba(7, 7, 10, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-100);
+  line-height: var(--lh-normal);
+  white-space: nowrap;
+}

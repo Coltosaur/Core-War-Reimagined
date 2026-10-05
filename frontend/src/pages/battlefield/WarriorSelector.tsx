@@ -1,24 +1,6 @@
 import type { Warrior } from '../../warriors/library';
-import { CONTROLS_STYLE, SELECT_STYLE, WARRIOR_HEX } from './styles';
-
-const SELECTOR_STYLE: React.CSSProperties = {
-  ...CONTROLS_STYLE,
-  gap: '0.75rem',
-};
-
-const RED_LABEL_STYLE: React.CSSProperties = {
-  color: WARRIOR_HEX[1],
-  fontSize: '0.85rem',
-};
-
-const BLUE_LABEL_STYLE: React.CSSProperties = {
-  color: WARRIOR_HEX[2],
-  fontSize: '0.85rem',
-};
-
-const VS_STYLE: React.CSSProperties = {
-  color: '#555',
-};
+import { warriorText } from '../../core/warriorColors';
+import controls from './controls.module.css';
 
 type Props = {
   redId: string;
@@ -40,7 +22,7 @@ function WarriorDropdown({
   onChange: (id: string) => void;
 }) {
   return (
-    <select style={SELECT_STYLE} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select className={controls.select} value={value} onChange={(e) => onChange(e.target.value)}>
       <optgroup label="Classic">
         {warriors.map((w) => (
           <option key={w.id} value={w.id}>
@@ -69,9 +51,9 @@ export default function WarriorSelector({
   onPickChange,
 }: Props) {
   return (
-    <div style={SELECTOR_STYLE}>
-      <label style={RED_LABEL_STYLE}>
-        Red:{' '}
+    <div className={controls.row}>
+      <label className={controls.field} style={{ color: warriorText(0) }}>
+        Red
         <WarriorDropdown
           warriors={presets}
           userWarriors={userWarriors}
@@ -79,9 +61,9 @@ export default function WarriorSelector({
           onChange={(id) => onPickChange(0, id)}
         />
       </label>
-      <span style={VS_STYLE}>vs</span>
-      <label style={BLUE_LABEL_STYLE}>
-        Blue:{' '}
+      <span className={controls.field}>vs</span>
+      <label className={controls.field} style={{ color: warriorText(1) }}>
+        Green
         <WarriorDropdown
           warriors={presets}
           userWarriors={userWarriors}

@@ -3,24 +3,8 @@ import WarriorSelector from './WarriorSelector';
 import BattleControls from './BattleControls';
 import BattleStatus from './BattleStatus';
 import InspectorPanel from './InspectorPanel';
-import { GRID_CONTAINER_STYLE, PARSE_ERROR_STYLE, TITLE_STYLE, TOOLTIP_STYLE } from './styles';
-
-const PAGE_STYLE: React.CSSProperties = {
-  display: 'flex',
-  height: '100vh',
-  minHeight: 0,
-};
-
-const MAIN_STYLE: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  padding: '1.5rem',
-  gap: '1rem',
-  overflow: 'auto',
-};
+import gridStyles from '../../core/CoreGrid.module.css';
+import styles from './BattlefieldPage.module.css';
 
 export default function BattlefieldPage() {
   const {
@@ -56,9 +40,9 @@ export default function BattlefieldPage() {
   } = useBattle();
 
   return (
-    <div style={PAGE_STYLE}>
-      <div style={MAIN_STYLE}>
-        <h1 style={TITLE_STYLE}>CORE WAR</h1>
+    <div className={styles.page}>
+      <div className={styles.arena}>
+        <h1 className={styles.title}>Battlefield</h1>
 
         <WarriorSelector
           redId={redId}
@@ -68,16 +52,22 @@ export default function BattlefieldPage() {
           onPickChange={handlePickChange}
         />
 
-        {parseError && <div style={PARSE_ERROR_STYLE}>{parseError}</div>}
+        {parseError && (
+          <div role="alert" className={styles.parseError}>
+            {parseError}
+          </div>
+        )}
 
-        <div
-          ref={gridRef}
-          style={GRID_CONTAINER_STYLE}
-          onMouseMove={handleGridMouseMove}
-          onMouseLeave={handleGridMouseLeave}
-          onClick={handleGridClick}
-        >
-          <div ref={tooltipRef} style={TOOLTIP_STYLE} />
+        <div className={styles.gridDock}>
+          <div
+            ref={gridRef}
+            className={gridStyles.grid}
+            onMouseMove={handleGridMouseMove}
+            onMouseLeave={handleGridMouseLeave}
+            onClick={handleGridClick}
+          >
+            <div ref={tooltipRef} className={gridStyles.tooltip} />
+          </div>
         </div>
 
         <BattleControls
@@ -107,6 +97,7 @@ export default function BattlefieldPage() {
         warriors={processes}
         onCellSelect={selectCell}
         onClearCell={clearCell}
+        className={styles.inspector}
       />
     </div>
   );

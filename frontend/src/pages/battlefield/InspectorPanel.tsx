@@ -1,5 +1,7 @@
 import { formatInstruction } from '../../core/redcodeFormat';
-import { WARRIOR_HEX } from './styles';
+import CollapsiblePanel from '../../components/CollapsiblePanel';
+import { NEUTRAL_TEXT, warriorText } from '../../core/warriorColors';
+import styles from './InspectorPanel.module.css';
 
 export type CellInfo = {
   addr: number;
@@ -24,74 +26,7 @@ type Props = {
   warriors: ProcessInfo[];
   onCellSelect: (addr: number) => void;
   onClearCell: () => void;
-};
-
-const PANEL_STYLE: React.CSSProperties = {
-  width: '260px',
-  flexShrink: 0,
-  borderLeft: '1px solid #222',
-  backgroundColor: '#0d0d0d',
-  display: 'flex',
-  flexDirection: 'column',
-  overflow: 'auto',
-  fontSize: '0.8rem',
-};
-
-const SECTION_HEADER_STYLE: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  fontSize: '0.7rem',
-  letterSpacing: '0.1em',
-  color: '#666',
-  textTransform: 'uppercase',
-  borderBottom: '1px solid #222',
-  backgroundColor: '#111',
-};
-
-const CELL_DETAIL_STYLE: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  borderBottom: '1px solid #222',
-};
-
-const ROW_STYLE: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  padding: '0.15rem 0',
-};
-
-const LABEL_STYLE: React.CSSProperties = {
-  color: '#666',
-};
-
-const VALUE_STYLE: React.CSSProperties = {
-  color: '#e0e0e0',
-};
-
-const INSTR_STYLE: React.CSSProperties = {
-  color: '#e94560',
-  fontWeight: 600,
-  fontSize: '0.85rem',
-  padding: '0.3rem 0',
-};
-
-const CLEAR_BUTTON_STYLE: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: '#666',
-  cursor: 'pointer',
-  fontSize: '0.75rem',
-  padding: 0,
-};
-
-const PROCESS_ITEM_STYLE: React.CSSProperties = {
-  padding: '0.15rem 0.75rem',
-  cursor: 'pointer',
-  fontSize: '0.75rem',
-};
-
-const EMPTY_STYLE: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  color: '#555',
-  fontStyle: 'italic',
+  className?: string;
 };
 
 const OPCODE_NAMES = [
@@ -126,19 +61,29 @@ const MODE_NAMES = [
   'B-Postinc (>)',
 ];
 
+const pad4 = (n: number) => String(n).padStart(4, '0');
+
 function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) {
   const ownerLabel = cell.owner === 0 ? 'None' : `Warrior ${cell.owner - 1}`;
-  const ownerColor = WARRIOR_HEX[cell.owner] ?? '#888';
+  const ownerColor = cell.owner === 0 ? NEUTRAL_TEXT : warriorText(cell.owner - 1);
+  const rows: [string, string | number][] = [
+    ['Opcode', OPCODE_NAMES[cell.opcode] ?? '???'],
+    ['Modifier', `.${MODIFIER_NAMES[cell.modifier] ?? '?'}`],
+    ['A-mode', MODE_NAMES[cell.aMode] ?? '?'],
+    ['A-value', cell.aValue],
+    ['B-mode', MODE_NAMES[cell.bMode] ?? '?'],
+    ['B-value', cell.bValue],
+  ];
 
   return (
-    <div style={CELL_DETAIL_STYLE}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: '#4fc3f7' }}>#{String(cell.addr).padStart(4, '0')}</span>
-        <button style={CLEAR_BUTTON_STYLE} onClick={onClear}>
+    <div className={styles.detail}>
+      <div className={styles.detailHeader}>
+        <span className={styles.addr}>#{pad4(cell.addr)}</span>
+        <button type="button" className={styles.clear} onClick={onClear}>
           clear
         </button>
       </div>
-      <div style={INSTR_STYLE}>
+      <div className={styles.instruction}>
         {formatInstruction(
           cell.opcode,
           cell.modifier,
@@ -148,79 +93,69 @@ function CellDetail({ cell, onClear }: { cell: CellInfo; onClear: () => void }) 
           cell.bValue,
         )}
       </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>Opcode</span>
-        <span style={VALUE_STYLE}>{OPCODE_NAMES[cell.opcode] ?? '???'}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>Modifier</span>
-        <span style={VALUE_STYLE}>.{MODIFIER_NAMES[cell.modifier] ?? '?'}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>A-mode</span>
-        <span style={VALUE_STYLE}>{MODE_NAMES[cell.aMode] ?? '?'}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>A-value</span>
-        <span style={VALUE_STYLE}>{cell.aValue}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>B-mode</span>
-        <span style={VALUE_STYLE}>{MODE_NAMES[cell.bMode] ?? '?'}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>B-value</span>
-        <span style={VALUE_STYLE}>{cell.bValue}</span>
-      </div>
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>Owner</span>
+      {rows.map(([label, value]) => (
+        <div key={label} className={styles.row}>
+          <span className={styles.label}>{label}</span>
+          <span>{value}</span>
+        </div>
+      ))}
+      <div className={styles.row}>
+        <span className={styles.label}>Owner</span>
         <span style={{ color: ownerColor }}>{ownerLabel}</span>
       </div>
     </div>
   );
 }
 
-export default function InspectorPanel({ cellInfo, warriors, onCellSelect, onClearCell }: Props) {
+export default function InspectorPanel({
+  cellInfo,
+  warriors,
+  onCellSelect,
+  onClearCell,
+  className,
+}: Props) {
   return (
-    <aside style={PANEL_STYLE}>
-      <div style={SECTION_HEADER_STYLE}>Cell Inspector</div>
-      {cellInfo ? (
-        <CellDetail cell={cellInfo} onClear={onClearCell} />
-      ) : (
-        <div style={EMPTY_STYLE}>Click a cell in the grid to inspect it.</div>
-      )}
+    <aside
+      className={className ? `${styles.inspector} ${className}` : styles.inspector}
+      aria-label="Inspector"
+    >
+      <CollapsiblePanel title="Cell Inspector" defaultOpen>
+        {cellInfo ? (
+          <CellDetail cell={cellInfo} onClear={onClearCell} />
+        ) : (
+          <p className={styles.empty}>Tap or click a cell in the grid to inspect it.</p>
+        )}
+      </CollapsiblePanel>
 
-      <div style={SECTION_HEADER_STYLE}>Processes</div>
-      {warriors.map((w) => (
-        <div key={w.warriorIdx}>
-          <div
-            style={{
-              padding: '0.3rem 0.75rem',
-              color: WARRIOR_HEX[w.warriorIdx + 1],
-              fontWeight: 600,
-              fontSize: '0.75rem',
-              borderBottom: '1px solid #1a1a1a',
-            }}
-          >
-            {w.name} {w.alive ? `(${w.pcs.length} proc${w.pcs.length !== 1 ? 's' : ''})` : '(dead)'}
+      <CollapsiblePanel title="Processes">
+        {warriors.map((w) => (
+          <div key={w.warriorIdx}>
+            <h3 className={styles.warrior} style={{ color: warriorText(w.warriorIdx) }}>
+              {w.name}{' '}
+              {w.alive ? `(${w.pcs.length} proc${w.pcs.length !== 1 ? 's' : ''})` : '(dead)'}
+            </h3>
+            {w.alive && (
+              <ul className={styles.pcList}>
+                {w.pcs.map((pc, i) => (
+                  <li key={i}>
+                    <button
+                      type="button"
+                      className={
+                        cellInfo?.addr === pc ? `${styles.pc} ${styles.pcSelected}` : styles.pc
+                      }
+                      aria-current={cellInfo?.addr === pc ? 'true' : undefined}
+                      onClick={() => onCellSelect(pc)}
+                      title={`Process ${i}: PC = ${pc}`}
+                    >
+                      [{i}] #{pad4(pc)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {w.alive &&
-            w.pcs.map((pc, i) => (
-              <div
-                key={i}
-                style={{
-                  ...PROCESS_ITEM_STYLE,
-                  color: cellInfo?.addr === pc ? '#e0e0e0' : '#888',
-                  backgroundColor: cellInfo?.addr === pc ? '#1a1a1a' : 'transparent',
-                }}
-                onClick={() => onCellSelect(pc)}
-                title={`Process ${i}: PC = ${pc}`}
-              >
-                [{i}] #{String(pc).padStart(4, '0')}
-              </div>
-            ))}
-        </div>
-      ))}
+        ))}
+      </CollapsiblePanel>
     </aside>
   );
 }

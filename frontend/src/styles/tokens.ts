@@ -17,6 +17,7 @@ export const colors = {
   textDim: '#6b6b74',
   blood: '#8b0a10',
   bloodBright: '#c8102e',
+  bloodLight: '#f25467',
   necrotic: '#b8ff5a',
   necroticDim: '#7fbf3f',
   violet: '#b8acf6',

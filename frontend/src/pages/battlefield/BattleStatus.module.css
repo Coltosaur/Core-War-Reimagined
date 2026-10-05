@@ -1,0 +1,31 @@
+.status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-200);
+  text-align: center;
+}
+
+.warriors {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1) var(--space-5);
+}
+
+.banner {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-400);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.version {
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+}

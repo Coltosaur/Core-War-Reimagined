@@ -25,6 +25,9 @@
   /* Accents */
   --blood: #8b0a10;
   --blood-bright: #c8102e;
+  /* Text-safe red: --blood-bright is only 3.4:1 on --bg, too low for small
+     text. Use this for red text; keep --blood-bright for fills and borders. */
+  --blood-light: #f25467;
   --blood-glow: rgba(200, 16, 46, 0.35);
   --necrotic: #b8ff5a;
   --necrotic-dim: #7fbf3f;

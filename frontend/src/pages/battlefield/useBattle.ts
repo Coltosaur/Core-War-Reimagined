@@ -83,7 +83,7 @@ export function useBattle() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const addr = cellAddressAtPixel(x, y);
+    const addr = cellAddressAtPixel(x, y, rect.width, rect.height);
 
     if (addr < 0) {
       tip.style.display = 'none';
@@ -111,7 +111,7 @@ export function useBattle() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const addr = cellAddressAtPixel(x, y);
+    const addr = cellAddressAtPixel(x, y, rect.width, rect.height);
     if (addr >= 0) {
       setSelectedCell(addr);
       if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));

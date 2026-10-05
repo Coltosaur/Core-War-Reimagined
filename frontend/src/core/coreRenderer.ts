@@ -19,17 +19,19 @@
 import '@pixi/unsafe-eval';
 import { Application, BaseTexture, Sprite, Texture, SCALE_MODES } from 'pixi.js';
 import { colors, hexToNumber } from '../styles/tokens';
+import { WARRIOR_FILL } from './warriorColors';
 import { CORE_SIZE, GRID_COLS, GRID_ROWS, CELL_SCALE } from './constants';
 
 // Warrior color palette: index = ownership value from the engine.
-// 0 = unowned (dark), 1 = warrior 0, 2 = warrior 1, ...
+// 0 = unowned, 1 = warrior 0, 2 = warrior 1, ...
 // Pre-computed as flat RGBA for zero-allocation hot-path access.
+const rgb = (hex: string): [number, number, number] => {
+  const n = hexToNumber(hex);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+};
 const WARRIOR_COLORS: [number, number, number][] = [
-  [17, 17, 23], // 0: unowned — near-black
-  [233, 69, 96], // 1: warrior 0 — red/warm
-  [79, 195, 247], // 2: warrior 1 — blue/cool
-  [76, 175, 80], // 3: warrior 2 — green (future)
-  [255, 171, 0], // 4: warrior 3 — amber (future)
+  rgb(colors.surface), // 0: unowned
+  ...WARRIOR_FILL.map(rgb),
 ];
 
 const WARRIOR_RGBA = new Uint8Array(WARRIOR_COLORS.length * 4);

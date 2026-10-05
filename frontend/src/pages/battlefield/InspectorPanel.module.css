@@ -1,0 +1,100 @@
+.inspector {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-inset);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-200);
+}
+
+.detail {
+  padding: var(--space-2) var(--space-3);
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.addr {
+  color: var(--violet);
+}
+
+.clear {
+  min-height: 2rem;
+  padding: 0 var(--space-2);
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  cursor: pointer;
+}
+.clear:hover {
+  color: var(--text);
+}
+
+.instruction {
+  padding: var(--space-1) 0;
+  color: var(--blood-light);
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0.15rem 0;
+}
+
+.label {
+  color: var(--text-dim);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.warrior {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-100);
+  font-weight: 600;
+}
+
+.pcList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pc {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-3);
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-100);
+  text-align: left;
+  cursor: pointer;
+}
+.pc:hover {
+  color: var(--text);
+}
+.pcSelected {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+@media (min-width: 48rem) {
+  .inspector {
+    overflow: auto;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+    font-size: var(--fs-100);
+  }
+}

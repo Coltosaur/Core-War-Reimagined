@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Monaco, OnMount } from '@monaco-editor/react';
 import init, { parseWarrior } from 'core-war-engine';
 import {
@@ -26,9 +26,27 @@ export function useBuilder() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const library = useWarriorLibrary();
-  const [selectedId, setSelectedId] = useState<string>(() => library[0]?.id ?? '');
-  const [source, setSource] = useState<string>(() => library[0]?.source ?? '');
-  const [label, setLabel] = useState<string>(() => library[0]?.label ?? '');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Selection = the user's own pick, else the warrior named in ?warrior=
+  // (e.g. from the Battlefield's Edit link), else the first warrior.
+  // Derived rather than set from an effect: a saved warrior named in the URL
+  // only appears in the library once the server sync lands, and deriving
+  // picks it up then without letting it override anything the user has
+  // chosen in the meantime.
+  const [requestedId] = useState(() => searchParams.get('warrior'));
+  const [chosenId, setSelectedId] = useState<string | null>(null);
+  const selectedId =
+    chosenId ??
+    (requestedId && library.some((w) => w.id === requestedId) ? requestedId : null) ??
+    library[0]?.id ??
+    '';
+  const [source, setSource] = useState<string>(
+    () => library.find((w) => w.id === selectedId)?.source ?? '',
+  );
+  const [label, setLabel] = useState<string>(
+    () => library.find((w) => w.id === selectedId)?.label ?? '',
+  );
   const [dirty, setDirty] = useState(false);
   const [wasmReady, setWasmReady] = useState(false);
   const [parseStatus, setParseStatus] = useState<ParseStatus>(null);
@@ -46,6 +64,16 @@ export function useBuilder() {
       cancelled = true;
     };
   }, []);
+
+  // Keep ?warrior= in step with the user's picks so a reload (or a copied
+  // link) reopens the same warrior. Untouched until they pick, so a pending
+  // ?warrior= for a not-yet-synced saved warrior isn't overwritten.
+  useEffect(() => {
+    if (chosenId === null || searchParams.get('warrior') === chosenId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('warrior', chosenId);
+    setSearchParams(next, { replace: true });
+  }, [chosenId, searchParams, setSearchParams]);
 
   const selected = library.find((w) => w.id === selectedId);
 

@@ -37,7 +37,11 @@ export function useBattle() {
   const [resultWinner, setResultWinner] = useState(-1);
   const [stepsPerFrame, setStepsPerFrame] = useState(50);
   const [redId, setRedId] = useState(() => pickInitial(library, searchParams.get('red'), 0));
-  const [blueId, setBlueId] = useState(() => pickInitial(library, searchParams.get('blue'), 1));
+  // The second warrior's URL param is `green` (matching its grid color);
+  // `blue` is its pre-rebrand name, still read so old shared links work.
+  const [blueId, setBlueId] = useState(() =>
+    pickInitial(library, searchParams.get('green') ?? searchParams.get('blue'), 1),
+  );
   const [warriors, setWarriors] = useState<{ name: string; alive: boolean; procs: number }[]>([]);
   const [processes, setProcesses] = useState<
     { warriorIdx: number; name: string; alive: boolean; pcs: number[] }[]
@@ -60,7 +64,8 @@ export function useBattle() {
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     next.set('red', redId);
-    next.set('blue', blueId);
+    next.set('green', blueId);
+    next.delete('blue');
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }

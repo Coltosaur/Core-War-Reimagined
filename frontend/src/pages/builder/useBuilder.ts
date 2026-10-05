@@ -262,7 +262,7 @@ start   MOV.I  $0, $1
     const opponent =
       presets.find((w) => w.id !== targetId) ?? library.find((w) => w.id !== targetId);
     const opponentId = opponent?.id ?? targetId;
-    navigate(`/battle?red=${encodeURIComponent(targetId)}&blue=${encodeURIComponent(opponentId)}`);
+    navigate(`/battle?red=${encodeURIComponent(targetId)}&green=${encodeURIComponent(opponentId)}`);
   };
 
   const handleLabelChange = (value: string) => {

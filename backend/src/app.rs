@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 
-const MAX_REQUEST_BODY_BYTES: usize = 128 * 1024;
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 128 * 1024;
 
 pub fn router(
     state: AppState,
@@ -50,11 +50,18 @@ pub fn router(
         .allow_credentials(true);
 
     let proxies = state.config.trusted_proxies.clone();
-    let login_limiter = auth::rate_limit::login_limiter(redis_conn.clone(), proxies.clone());
+    let login_limiter = auth::failure_limit::login_failure_limiter(
+        redis_conn.clone(),
+        proxies.clone(),
+        state.db.clone(),
+    );
     let register_limiter = auth::rate_limit::register_limiter(redis_conn.clone(), proxies.clone());
     let refresh_limiter = auth::rate_limit::refresh_limiter(redis_conn.clone(), proxies.clone());
-    let change_password_limiter =
-        auth::rate_limit::change_password_limiter(redis_conn.clone(), proxies);
+    let change_password_limiter = auth::failure_limit::change_password_failure_limiter(
+        redis_conn.clone(),
+        proxies,
+        &state.config.jwt_secret,
+    );
 
     let app = Router::new()
         .route("/health", get(health::liveness))
@@ -70,7 +77,7 @@ pub fn router(
             "/api/auth/login",
             post(auth::handlers::login).layer(middleware::from_fn_with_state(
                 login_limiter,
-                auth::rate_limit::rate_limit_middleware,
+                auth::failure_limit::failure_limit_middleware,
             )),
         )
         .route(
@@ -86,7 +93,7 @@ pub fn router(
             "/api/auth/change-password",
             post(auth::handlers::change_password).layer(middleware::from_fn_with_state(
                 change_password_limiter,
-                auth::rate_limit::rate_limit_middleware,
+                auth::failure_limit::failure_limit_middleware,
             )),
         )
         .route("/api/account", get(account::handlers::me))

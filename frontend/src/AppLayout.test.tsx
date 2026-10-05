@@ -5,8 +5,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import AppLayout from './AppLayout';
 import * as AuthContextModule from './api/AuthContext';
+import { useServerWarriorSync } from './warriors/useServerWarriorSync';
 
 vi.mock('./api/AuthContext');
+vi.mock('./warriors/useServerWarriorSync');
 // The modal has its own tests; here we only care that the shell opens it.
 vi.mock('./api/AuthModal', () => ({
   default: () => <div role="dialog" aria-label="auth" />,
@@ -49,6 +51,14 @@ afterEach(() => {
 });
 
 describe('AppLayout', () => {
+  // The shell is where saved warriors get synced for every route (#58). A
+  // full rewrite of this file once dropped the call and silently emptied
+  // "My Warriors" app-wide; this pins it.
+  it('mounts the app-level server warrior sync', () => {
+    renderAt('/');
+    expect(useServerWarriorSync).toHaveBeenCalled();
+  });
+
   it('renders every section in the main nav, plus the page outlet', () => {
     renderAt('/');
     const nav = screen.getByRole('navigation', { name: 'Main' });

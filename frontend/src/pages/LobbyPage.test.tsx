@@ -9,7 +9,7 @@ import * as libraryModule from '../warriors/library';
 import { __resetSessionForTests } from '../api/session';
 
 // Integration coverage for the LobbyPage side of the socket auth-recovery
-// flow (issue #60). The primitive `installSocketAuthRecovery` is heavily
+// flow (issues #60 and #127). The primitive `installSocketAuthRecovery` is heavily
 // unit-tested in api/socketAuth.test.ts against a static `getPendingAction`
 // callback — those tests would still pass even if LobbyPage forgot to
 // stash `pendingActionRef.current` before emitting, or reordered the two
@@ -25,7 +25,9 @@ type FakeSocket = {
   on: (event: string, fn: Listener) => FakeSocket;
   off: (event: string, fn?: Listener) => FakeSocket;
   once: (event: string, fn: Listener) => FakeSocket;
+  connected: boolean;
   emit: ReturnType<typeof vi.fn>;
+  connect: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
   _fire: (event: string, ...args: unknown[]) => void;
 };
@@ -35,6 +37,8 @@ function makeFakeSocket(): FakeSocket {
   const onceListeners = new Map<string, Set<Listener>>();
   const emit = vi.fn();
   const disconnect = vi.fn();
+  // A reconnect that succeeds, like socket.io's after disconnect()+connect().
+  const connect = vi.fn(() => queueMicrotask(() => socket._fire('connect')));
 
   const socket: FakeSocket = {
     on(event, fn) {
@@ -57,7 +61,9 @@ function makeFakeSocket(): FakeSocket {
       onceListeners.get(event)!.add(fn);
       return socket;
     },
+    connected: false,
     emit,
+    connect,
     disconnect,
     _fire(event, ...args) {
       listeners.get(event)?.forEach((fn) => fn(...args));
@@ -163,20 +169,30 @@ describe('LobbyPage — Find Match', () => {
   });
 });
 
-describe('LobbyPage — socket auth recovery (issue #60)', () => {
-  it('auth_error after Find Match refreshes silently and replays the queue:join', async () => {
-    // Refresh endpoint returns 200 → silent recovery is expected.
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      statusText: 'ok',
-      json: async () => ({}),
-    } as Response);
+/** Click Find Match and complete the socket's first connect. */
+async function findMatch(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /find match/i }));
+  currentSocket._fire('connect');
+}
 
+const joins = () => currentSocket.emit.mock.calls.filter((c) => c[0] === 'queue:join');
+
+function mockRefresh(ok: boolean) {
+  globalThis.fetch = vi.fn().mockResolvedValue({
+    ok,
+    status: ok ? 200 : 401,
+    statusText: ok ? 'ok' : 'unauthorized',
+    json: async () => ({}),
+  } as Response);
+}
+
+describe('LobbyPage — socket auth recovery (issues #60, #127)', () => {
+  it('auth_error after Find Match refreshes, reconnects, and replays the queue:join', async () => {
+    mockRefresh(true);
     const user = userEvent.setup();
     renderLobby();
 
-    await user.click(screen.getByRole('button', { name: /find match/i }));
+    await findMatch(user);
 
     // Backend sees anonymous connection and emits auth_error. If LobbyPage
     // forgot to stash the pending action into its ref BEFORE the emit
@@ -184,68 +200,72 @@ describe('LobbyPage — socket auth recovery (issue #60)', () => {
     // silent-failure bug from #60 reproduces — no replay, user stuck idle.
     currentSocket._fire('auth_error', { error: 'Authentication required' });
     await flushMicrotasks();
-    currentSocket._fire('auth_refreshed', { user_id: 'u1', username: 'vale' });
-    await flushMicrotasks();
 
-    const queueCalls = currentSocket.emit.mock.calls.filter((c) => c[0] === 'queue:join');
-    expect(queueCalls).toHaveLength(2); // once from click, once from replay
-    // Sanity: the reauthenticate emit went out between the two queue:joins.
-    const reauthCalls = currentSocket.emit.mock.calls.filter((c) => c[0] === 'reauthenticate');
-    expect(reauthCalls).toHaveLength(1);
+    expect(currentSocket.disconnect).toHaveBeenCalled();
+    expect(currentSocket.connect).toHaveBeenCalled();
+    expect(joins()).toHaveLength(2); // once from click, once from replay
+    expect(screen.queryByText(/your session has expired/i)).not.toBeInTheDocument();
   });
 
   it('on refresh failure, resets phase to idle and shows the session-expired copy', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      statusText: 'unauthorized',
-      json: async () => ({ error: 'Missing refresh token' }),
-    } as Response);
-
+    mockRefresh(false);
     const user = userEvent.setup();
     renderLobby();
 
-    await user.click(screen.getByRole('button', { name: /find match/i }));
+    await findMatch(user);
     currentSocket._fire('auth_error', { error: 'Authentication required' });
     await flushMicrotasks();
 
-    // No reauthenticate — the primitive gives up before that step when the
-    // REST refresh fails.
-    const reauthCalls = currentSocket.emit.mock.calls.filter((c) => c[0] === 'reauthenticate');
-    expect(reauthCalls).toHaveLength(0);
-
+    expect(currentSocket.connect).not.toHaveBeenCalled();
     // Friendly copy surfaces, phase stays idle (Find Match button visible).
     expect(await screen.findByText(/your session has expired/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /find match/i })).toBeInTheDocument();
   });
 
-  it('does not replay after queue:joined clears the pending ref (no double-join)', async () => {
-    // Once the queue:joined ack lands, the pending ref is cleared so a
-    // later auth_error must NOT replay the join a second time. Prevents
-    // double-queue if the socket bounces after a successful queue join.
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      statusText: 'ok',
-      json: async () => ({}),
-    } as Response);
-
+  it('re-joins the queue when the socket reconnects while queued', async () => {
+    // The server drops a connection's queue entry when it goes away (a
+    // network blip, a deploy restarting the server). Without a re-join the
+    // page keeps showing "Searching" for an entry that no longer exists.
     const user = userEvent.setup();
     renderLobby();
 
-    await user.click(screen.getByRole('button', { name: /find match/i }));
+    await findMatch(user);
     currentSocket._fire('queue:joined', {});
-    await flushMicrotasks();
+    expect(await screen.findByText(/searching for opponent/i)).toBeInTheDocument();
 
-    // Now the pending ref should be null. Simulate an auth_error hitting
-    // the same socket (e.g. server reboot mid-queue).
-    currentSocket._fire('auth_error', { error: 'Authentication required' });
-    await flushMicrotasks();
-    currentSocket._fire('auth_refreshed', { user_id: 'u1', username: 'vale' });
-    await flushMicrotasks();
+    currentSocket._fire('connect');
 
-    const queueCalls = currentSocket.emit.mock.calls.filter((c) => c[0] === 'queue:join');
-    // Exactly ONE queue:join — the original click. No accidental replay.
-    expect(queueCalls).toHaveLength(1);
+    expect(joins()).toHaveLength(2);
+    expect(joins()[1][1]).toEqual({ warrior_id: '11111111-1111-1111-1111-111111111111' });
+  });
+
+  it('does not re-join after the player cancels', async () => {
+    const user = userEvent.setup();
+    renderLobby();
+
+    await findMatch(user);
+    currentSocket._fire('queue:joined', {});
+    await user.click(await screen.findByRole('button', { name: /cancel/i }));
+    currentSocket._fire('connect');
+
+    expect(joins()).toHaveLength(1);
+  });
+
+  it('does not re-join after a match is found', async () => {
+    const user = userEvent.setup();
+    renderLobby();
+
+    await findMatch(user);
+    currentSocket._fire('queue:joined', {});
+    currentSocket._fire('match:found', {
+      match_id: 'm1',
+      red_username: 'vale',
+      blue_username: 'orion',
+      red_warrior: 'a',
+      blue_warrior: 'b',
+    });
+    currentSocket._fire('connect');
+
+    expect(joins()).toHaveLength(1);
   });
 });

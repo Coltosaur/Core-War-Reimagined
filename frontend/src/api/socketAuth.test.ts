@@ -5,17 +5,26 @@ import { __resetSessionForTests, registerSessionHandlers } from './session';
 
 // Minimal EventEmitter-shaped stand-in for a socket.io-client Socket. We
 // don't need the transport — just the on/off/once/emit surface the
-// installer relies on. `emit` is spied so the test can assert what was
-// sent, and manual `_fire()` drives incoming events.
+// installer relies on, plus disconnect/connect. `emit` is spied so the test
+// can assert what was sent, and manual `_fire()` drives incoming events.
+// `connect()` fires 'connect' on a microtask, like a reconnect that succeeds;
+// set `_connectFails` to fire 'connect_error' instead.
 type FakeSocket = Socket & {
   _fire: (event: string, ...args: unknown[]) => void;
   _emitSpy: ReturnType<typeof vi.fn>;
+  _connectSpy: ReturnType<typeof vi.fn>;
+  _disconnectSpy: ReturnType<typeof vi.fn>;
+  _connectFails: boolean;
 };
 
 function makeFakeSocket(): FakeSocket {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
   const onceListeners = new Map<string, Set<(...args: unknown[]) => void>>();
   const emitSpy = vi.fn();
+  const disconnectSpy = vi.fn();
+  const connectSpy = vi.fn(() => {
+    queueMicrotask(() => socket._fire(socket._connectFails ? 'connect_error' : 'connect'));
+  });
 
   const on = (event: string, fn: (...args: unknown[]) => void): FakeSocket => {
     if (!listeners.has(event)) listeners.set(event, new Set());
@@ -39,11 +48,17 @@ function makeFakeSocket(): FakeSocket {
   };
 
   const socket = {
+    connected: false,
     on,
     off,
     once,
     emit: emitSpy,
+    connect: connectSpy,
+    disconnect: disconnectSpy,
     _emitSpy: emitSpy,
+    _connectSpy: connectSpy,
+    _disconnectSpy: disconnectSpy,
+    _connectFails: false,
     _fire: (event: string, ...args: unknown[]) => {
       listeners.get(event)?.forEach((fn) => fn(...args));
       const oneShots = onceListeners.get(event);
@@ -86,215 +101,199 @@ describe('installSocketAuthRecovery', () => {
     __resetSessionForTests();
   });
 
-  it('registers auth_error and auth_expired handlers and returns a teardown', () => {
-    const socket = makeFakeSocket();
-    const teardown = installSocketAuthRecovery(socket, {
-      onSessionExpired: () => {},
-    });
-    expect(typeof teardown).toBe('function');
-  });
+  const joinW1: PendingSocketAction = { event: 'queue:join', payload: { warrior_id: 'w1' } };
 
-  it('on auth_error → refresh success → emits reauthenticate → replays pending action', async () => {
-    globalThis.fetch = mockFetchResponse(200);
+  /** A socket that has completed its first connect, with recovery installed. */
+  function setup(options: Partial<Parameters<typeof installSocketAuthRecovery>[1]> = {}) {
     const socket = makeFakeSocket();
-    const pending: PendingSocketAction = {
-      event: 'queue:join',
-      payload: { warrior_id: 'w1' },
-    };
-    const onRecovered = vi.fn();
     const onSessionExpired = vi.fn();
-
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => pending,
+    const onRecovered = vi.fn();
+    const forceLogoutSpy = vi.fn();
+    registerSessionHandlers({ onForceLogout: forceLogoutSpy });
+    const teardown = installSocketAuthRecovery(socket, {
+      getPendingAction: () => joinW1,
       onRecovered,
       onSessionExpired,
+      ...options,
     });
+    socket._fire('connect');
+    return { socket, onSessionExpired, onRecovered, forceLogoutSpy, teardown };
+  }
+
+  const calls = (socket: FakeSocket, event: string) =>
+    socket._emitSpy.mock.calls.filter((c) => c[0] === event);
+
+  it('does not replay on the first connect (the page emits its own action)', () => {
+    const { socket } = setup();
+    expect(socket._emitSpy).not.toHaveBeenCalled();
+  });
+
+  it('on auth_error → refresh → reconnects with the fresh cookie and replays the pending action', async () => {
+    globalThis.fetch = mockFetchResponse(200);
+    const { socket, onRecovered, onSessionExpired } = setup();
 
     socket._fire('auth_error', { error: 'Authentication required' });
     await flushMicrotasks(20);
 
-    // Refresh emit sent
-    expect(socket._emitSpy).toHaveBeenCalledWith('reauthenticate');
-    // Simulate backend acknowledging the reauth
-    socket._fire('auth_refreshed', { user_id: 'u1', username: 'alice' });
-    await flushMicrotasks();
-
-    // Pending action was replayed
-    expect(socket._emitSpy).toHaveBeenCalledWith('queue:join', pending.payload);
+    // A new handshake is the only way the server sees the refreshed
+    // cookie; asking it to re-check the old connection can't work (#127).
+    expect(socket._disconnectSpy).toHaveBeenCalledTimes(1);
+    expect(socket._connectSpy).toHaveBeenCalledTimes(1);
+    expect(calls(socket, 'reauthenticate')).toHaveLength(0);
+    expect(socket._emitSpy).toHaveBeenCalledWith('queue:join', { warrior_id: 'w1' });
     expect(onRecovered).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('on auth_expired → refresh success → still replays pending action', async () => {
+  it('on auth_expired → refresh → also reconnects and replays', async () => {
     globalThis.fetch = mockFetchResponse(200);
-    const socket = makeFakeSocket();
-    const onSessionExpired = vi.fn();
-
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'queue:join', payload: { warrior_id: 'w1' } }),
-      onSessionExpired,
-    });
+    const { socket, onSessionExpired } = setup();
 
     socket._fire('auth_expired', { message: 'expired' });
     await flushMicrotasks(20);
-    socket._fire('auth_refreshed', { user_id: 'u1', username: 'alice' });
-    await flushMicrotasks();
 
-    expect(socket._emitSpy).toHaveBeenCalledWith('reauthenticate');
+    expect(socket._connectSpy).toHaveBeenCalledTimes(1);
     expect(socket._emitSpy).toHaveBeenCalledWith('queue:join', { warrior_id: 'w1' });
     expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('emits without payload when the pending action has none', async () => {
-    globalThis.fetch = mockFetchResponse(200);
-    const socket = makeFakeSocket();
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'ping' }),
-      onSessionExpired: vi.fn(),
-    });
-
-    socket._fire('auth_error', {});
-    await flushMicrotasks(20);
-    socket._fire('auth_refreshed', {});
-    await flushMicrotasks();
-
-    // The pending emit should be called with the single event arg only.
-    // First emit is the reauthenticate; second is the pending 'ping'.
-    const pingCall = socket._emitSpy.mock.calls.find((c) => c[0] === 'ping');
-    expect(pingCall).toBeDefined();
-    expect(pingCall).toHaveLength(1);
+  it('replays the pending action after an automatic reconnect', () => {
+    // A network blip or server restart: socket.io reconnects on its own and
+    // the server has forgotten the old connection's queue entry.
+    const { socket } = setup();
+    socket._fire('connect');
+    expect(socket._emitSpy).toHaveBeenCalledWith('queue:join', { warrior_id: 'w1' });
   });
 
-  it('no-ops the replay when there is no pending action', async () => {
+  it('emits without payload when the pending action has none', async () => {
     globalThis.fetch = mockFetchResponse(200);
-    const socket = makeFakeSocket();
-    const onRecovered = vi.fn();
-
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => null,
-      onRecovered,
-      onSessionExpired: vi.fn(),
-    });
+    const { socket } = setup({ getPendingAction: () => ({ event: 'ping' }) });
 
     socket._fire('auth_error', {});
     await flushMicrotasks(20);
-    socket._fire('auth_refreshed', {});
-    await flushMicrotasks();
 
-    // Only the reauthenticate emit should have gone out; nothing else.
-    expect(socket._emitSpy).toHaveBeenCalledTimes(1);
-    expect(socket._emitSpy).toHaveBeenCalledWith('reauthenticate');
+    const pingCall = socket._emitSpy.mock.calls.find((c) => c[0] === 'ping');
+    expect(pingCall).toEqual(['ping']);
+  });
+
+  it('reconnects but emits nothing when there is no pending action', async () => {
+    globalThis.fetch = mockFetchResponse(200);
+    const { socket, onRecovered } = setup({ getPendingAction: () => null });
+
+    socket._fire('auth_error', {});
+    await flushMicrotasks(20);
+
+    expect(socket._connectSpy).toHaveBeenCalledTimes(1);
+    expect(socket._emitSpy).not.toHaveBeenCalled();
     expect(onRecovered).toHaveBeenCalledTimes(1);
   });
 
-  it('on refresh failure → forceLogout + onSessionExpired, no reauthenticate emitted', async () => {
+  it('on refresh failure → forceLogout + onSessionExpired, no reconnect', async () => {
     globalThis.fetch = mockFetchResponse(401);
-    const forceLogoutSpy = vi.fn();
-    registerSessionHandlers({ onForceLogout: forceLogoutSpy });
-
-    const socket = makeFakeSocket();
-    const onSessionExpired = vi.fn();
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'queue:join', payload: { warrior_id: 'w1' } }),
-      onSessionExpired,
-    });
+    const { socket, onSessionExpired, forceLogoutSpy } = setup();
 
     socket._fire('auth_error', {});
     await flushMicrotasks(20);
 
+    expect(socket._connectSpy).not.toHaveBeenCalled();
     expect(socket._emitSpy).not.toHaveBeenCalled();
     expect(forceLogoutSpy).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
-  it('on refresh success but second-round auth_error from backend → forceLogout + onSessionExpired', async () => {
+  it('when the reconnect fails → forceLogout + onSessionExpired', async () => {
     globalThis.fetch = mockFetchResponse(200);
-    const forceLogoutSpy = vi.fn();
-    registerSessionHandlers({ onForceLogout: forceLogoutSpy });
-
-    const socket = makeFakeSocket();
-    const onSessionExpired = vi.fn();
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'queue:join', payload: { warrior_id: 'w1' } }),
-      onSessionExpired,
-    });
+    const { socket, onSessionExpired, onRecovered, forceLogoutSpy } = setup();
+    socket._connectFails = true;
 
     socket._fire('auth_error', {});
     await flushMicrotasks(20);
 
-    // Server rejects reauth (e.g. race — refresh cookie invalidated between
-    // the REST call and the socket emit).
-    socket._fire('auth_error', { error: 'Reauthentication failed' });
-    await flushMicrotasks();
+    expect(forceLogoutSpy).toHaveBeenCalledTimes(1);
+    expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
 
-    expect(socket._emitSpy).toHaveBeenCalledWith('reauthenticate');
+  it('times out a reconnect that never completes', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = mockFetchResponse(200);
+      const { socket, onSessionExpired } = setup({ reauthTimeoutMs: 100 });
+      socket._connectSpy.mockImplementation(() => {});
+
+      socket._fire('auth_error', {});
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(onSessionExpired).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up if the server rejects the replayed action on the fresh connection', async () => {
+    // Refreshing again can't help: the connection already carries the
+    // newest cookie the server will issue.
+    globalThis.fetch = mockFetchResponse(200);
+    const { socket, onSessionExpired, forceLogoutSpy } = setup();
+
+    socket._fire('auth_error', {});
+    await flushMicrotasks(20);
+    socket._fire('auth_error', { error: 'Authentication required' });
+    await flushMicrotasks(20);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(socket._connectSpy).toHaveBeenCalledTimes(1);
     expect(forceLogoutSpy).toHaveBeenCalledTimes(1);
     expect(onSessionExpired).toHaveBeenCalledTimes(1);
   });
 
+  it('recovers again from an auth error long after the last recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = mockFetchResponse(200);
+      const { socket, onSessionExpired } = setup({ reauthTimeoutMs: 100 });
+
+      socket._fire('auth_error', {});
+      await vi.advanceTimersByTimeAsync(0);
+      // Fifteen minutes later the new access token expires too.
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+      socket._fire('auth_error', {});
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(socket._connectSpy).toHaveBeenCalledTimes(2);
+      expect(onSessionExpired).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('guards against re-entry — a burst of auth_error events does not stack recoveries', async () => {
     globalThis.fetch = mockFetchResponse(200);
-    const socket = makeFakeSocket();
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'queue:join', payload: { warrior_id: 'w1' } }),
-      onSessionExpired: vi.fn(),
-    });
+    const { socket, onSessionExpired } = setup();
 
     socket._fire('auth_error', {});
     socket._fire('auth_error', {});
     socket._fire('auth_error', {});
     await flushMicrotasks(20);
-    socket._fire('auth_refreshed', {});
-    await flushMicrotasks();
 
-    // Only one reauthenticate emit despite three triggers.
-    const reauthCalls = socket._emitSpy.mock.calls.filter((c) => c[0] === 'reauthenticate');
-    expect(reauthCalls).toHaveLength(1);
-    // And only one pending-action replay.
-    const queueCalls = socket._emitSpy.mock.calls.filter((c) => c[0] === 'queue:join');
-    expect(queueCalls).toHaveLength(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(socket._connectSpy).toHaveBeenCalledTimes(1);
+    expect(calls(socket, 'queue:join')).toHaveLength(1);
+    expect(onSessionExpired).not.toHaveBeenCalled();
   });
 
-  it('teardown removes both auth_error and auth_expired handlers', async () => {
+  it('teardown removes the connect, auth_error and auth_expired handlers', async () => {
     globalThis.fetch = mockFetchResponse(200);
-    const socket = makeFakeSocket();
-    const onSessionExpired = vi.fn();
-    const teardown = installSocketAuthRecovery(socket, {
-      onSessionExpired,
-    });
+    const { socket, onSessionExpired, teardown } = setup();
 
     teardown();
+    socket._fire('connect');
     socket._fire('auth_error', {});
     socket._fire('auth_expired', {});
     await flushMicrotasks(20);
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(socket._emitSpy).not.toHaveBeenCalled();
     expect(onSessionExpired).not.toHaveBeenCalled();
-  });
-
-  it('times out and treats no auth_refreshed response as a session failure', async () => {
-    vi.useFakeTimers();
-    globalThis.fetch = mockFetchResponse(200);
-    const forceLogoutSpy = vi.fn();
-    registerSessionHandlers({ onForceLogout: forceLogoutSpy });
-
-    const socket = makeFakeSocket();
-    const onSessionExpired = vi.fn();
-    installSocketAuthRecovery(socket, {
-      getPendingAction: () => ({ event: 'queue:join', payload: {} }),
-      onSessionExpired,
-      reauthTimeoutMs: 100,
-    });
-
-    socket._fire('auth_error', {});
-    // Let the refresh fetch resolve.
-    await vi.advanceTimersByTimeAsync(0);
-    // Advance past the reauth timeout without firing auth_refreshed.
-    await vi.advanceTimersByTimeAsync(150);
-
-    expect(socket._emitSpy).toHaveBeenCalledWith('reauthenticate');
-    expect(forceLogoutSpy).toHaveBeenCalledTimes(1);
-    expect(onSessionExpired).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
   });
 });

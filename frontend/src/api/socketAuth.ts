@@ -9,20 +9,26 @@
 //                       anonymous but authentication is required.
 //   - `auth_expired` — emitted when a valid-looking cookie is present but
 //                       has expired.
-//   - `reauthenticate` — client-emitted event that re-reads cookies. The
-//                        backend responds with either `auth_refreshed`
-//                        (success) or `auth_error` (still failing).
+//
+// The server authenticates a connection once, from the cookies sent when it
+// was opened, and never sees cookies again for that connection. So the only
+// way to authenticate with a refreshed cookie is a new connection (#127).
+// An earlier version asked the server to `reauthenticate` the existing
+// connection instead; the server could only re-read the original cookies,
+// so recovery always failed and logged the user out.
 //
 // The recovery loop is:
 //   1. On auth_error / auth_expired, call attemptRefresh() over REST to
 //      mint a fresh access-token cookie.
-//   2. If refresh succeeded, emit `reauthenticate` and wait for the server's
-//      `auth_refreshed` (success) or a second `auth_error` (fail).
-//   3. On success, replay the last-emitted auth-required action so the user
-//      does not have to click the button a second time.
-//   4. On failure, call the registered forceLogout() to drop UI auth state
-//      and invoke the caller-supplied `onSessionExpired` so the page can
-//      reset local state and show a friendly prompt.
+//   2. If refresh succeeded, reconnect the socket so the new handshake
+//      carries the fresh cookie.
+//   3. Every reconnect — this one, or an automatic one after a network blip
+//      or server restart — replays the pending action, so the user does not
+//      have to click again and a queued player stays queued.
+//   4. If refresh fails, the reconnect fails, or the server still rejects
+//      the replayed action, call the registered forceLogout() to drop UI
+//      auth state and invoke the caller-supplied `onSessionExpired` so the
+//      page can reset local state and show a friendly prompt.
 
 import type { Socket } from 'socket.io-client';
 import { attemptRefresh, forceLogout } from './session';
@@ -34,22 +40,23 @@ export type PendingSocketAction = {
 
 type Options = {
   /**
-   * Returns the last auth-required action so recovery can replay it. Return
-   * `null` if nothing is queued (e.g. the user is just idling in the lobby
-   * with no click pending). Called at recovery time — evaluate live state,
-   * do not close over a stale snapshot.
+   * Returns the auth-required action that should be in effect on the
+   * server — e.g. `queue:join` from the click until the player leaves the
+   * queue or is matched. Replayed on every reconnect, because the server
+   * forgets a connection's state when it drops. Return `null` when there is
+   * nothing to restore. Called at reconnect time — evaluate live state, do
+   * not close over a stale snapshot.
    */
   getPendingAction?: () => PendingSocketAction | null;
 
   /**
-   * Called after a successful reauthenticate + pending-action replay.
-   * Useful for clearing UI error messages left over from a prior failed
-   * attempt.
+   * Called after a successful refresh + reconnect. Useful for clearing UI
+   * error messages left over from a prior failed attempt.
    */
   onRecovered?: () => void;
 
   /**
-   * Called when refresh has definitively failed and the user must log in
+   * Called when recovery has definitively failed and the user must log in
    * again. `forceLogout()` will already have been invoked by this point;
    * the page should reset any transport-state it owned (e.g. lobby phase
    * back to idle) and surface a session-expired message.
@@ -57,9 +64,10 @@ type Options = {
   onSessionExpired: () => void;
 
   /**
-   * Overrideable timeout for the reauthenticate round-trip. If the server
-   * fails to respond within this window we treat it as a session failure
-   * rather than hanging forever. Default 5s.
+   * How long to wait for the reconnect after a refresh. Also the window in
+   * which a second auth failure counts as definitive: the server rejecting
+   * the replayed action on a connection opened with a fresh cookie means
+   * refreshing again won't help. Default 5s.
    */
   reauthTimeoutMs?: number;
 };
@@ -84,60 +92,79 @@ export function installSocketAuthRecovery(socket: Socket, options: Options): () 
   // require_auth checks firing back-to-back) must not start two overlapping
   // recovery flows.
   let recovering = false;
+  let lastRecoveryAt = -Infinity;
+  // The first connect needs no replay: the page emits its own action, which
+  // socket.io buffers until the connection is up.
+  let hasConnected = socket.connected;
+
+  function expire(): void {
+    forceLogout();
+    onSessionExpired();
+  }
+
+  function replayPending(): void {
+    const pending = getPendingAction?.();
+    if (!pending) return;
+    if (pending.payload !== undefined) {
+      socket.emit(pending.event, pending.payload);
+    } else {
+      socket.emit(pending.event);
+    }
+  }
+
+  const onConnect = (): void => {
+    if (hasConnected) replayPending();
+    hasConnected = true;
+  };
+
+  // Resolves true once the socket reconnects, false on a connection error
+  // or timeout. Listeners are always removed, so a late event after we've
+  // given up doesn't fire into a dead flow.
+  function reconnect(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        socket.off('connect', onReconnected);
+        socket.off('connect_error', onFailed);
+      };
+      const onReconnected = (): void => {
+        cleanup();
+        resolve(true);
+      };
+      const onFailed = (): void => {
+        cleanup();
+        resolve(false);
+      };
+      const timer = setTimeout(onFailed, reauthTimeoutMs);
+      socket.once('connect', onReconnected);
+      socket.once('connect_error', onFailed);
+      socket.disconnect();
+      socket.connect();
+    });
+  }
 
   async function attemptRecovery(): Promise<void> {
     if (recovering) return;
+    // We already reconnected with a fresh cookie and the server still says
+    // no. Another refresh can't change that answer.
+    if (Date.now() - lastRecoveryAt < reauthTimeoutMs) {
+      expire();
+      return;
+    }
     recovering = true;
     try {
-      const refreshed = await attemptRefresh();
-      if (!refreshed) {
-        forceLogout();
-        onSessionExpired();
+      if (!(await attemptRefresh())) {
+        expire();
         return;
       }
-
-      // Race the server's response — `auth_refreshed` (success) or
-      // `auth_error` (definitive failure) — against a timeout so the UI
-      // never hangs waiting on a dropped socket. Whichever path resolves
-      // first, we always tear down both once-listeners so a late-arriving
-      // event after we've given up doesn't fire into a dead flow.
-      const outcome = await new Promise<'refreshed' | 'failed'>((resolve) => {
-        const cleanup = (): void => {
-          clearTimeout(timer);
-          socket.off('auth_refreshed', onRefreshed);
-          socket.off('auth_error', onError);
-        };
-        const onRefreshed = (): void => {
-          cleanup();
-          resolve('refreshed');
-        };
-        const onError = (): void => {
-          cleanup();
-          resolve('failed');
-        };
-        const timer = setTimeout(() => {
-          cleanup();
-          resolve('failed');
-        }, reauthTimeoutMs);
-        socket.once('auth_refreshed', onRefreshed);
-        socket.once('auth_error', onError);
-        socket.emit('reauthenticate');
-      });
-
-      if (outcome === 'refreshed') {
-        const pending = getPendingAction?.();
-        if (pending) {
-          if (pending.payload !== undefined) {
-            socket.emit(pending.event, pending.payload);
-          } else {
-            socket.emit(pending.event);
-          }
-        }
-        onRecovered?.();
-      } else {
-        forceLogout();
-        onSessionExpired();
+      // Set before reconnecting: the reconnect replays the pending action,
+      // and a rejection of that replay must count as the second failure.
+      lastRecoveryAt = Date.now();
+      if (!(await reconnect())) {
+        expire();
+        return;
       }
+      onRecovered?.();
     } finally {
       recovering = false;
     }
@@ -151,10 +178,12 @@ export function installSocketAuthRecovery(socket: Socket, options: Options): () 
     void attemptRecovery();
   };
 
+  socket.on('connect', onConnect);
   socket.on('auth_error', onAuthEvent);
   socket.on('auth_expired', onAuthEvent);
 
   return () => {
+    socket.off('connect', onConnect);
     socket.off('auth_error', onAuthEvent);
     socket.off('auth_expired', onAuthEvent);
   };

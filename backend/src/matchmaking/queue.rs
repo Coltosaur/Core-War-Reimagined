@@ -11,6 +11,10 @@ pub struct QueueEntry {
     pub socket_id: String,
 }
 
+// Joining while already queued replaces the existing entry in place, keeping
+// the player's position. The old entry may belong to a connection that has
+// since dropped (network blip, server restart); rejecting the join would leave
+// the player "queued" on a socket that can never be matched (#127).
 const JOIN_SCRIPT: &str = r#"
 local queue_key = KEYS[1]
 local users_key = KEYS[2]
@@ -18,7 +22,14 @@ local user_id = ARGV[1]
 local entry_json = ARGV[2]
 
 if redis.call('SISMEMBER', users_key, user_id) == 1 then
-    return false
+    local entries = redis.call('LRANGE', queue_key, 0, -1)
+    for i, entry in ipairs(entries) do
+        if cjson.decode(entry).user_id == user_id then
+            redis.call('LSET', queue_key, i - 1, entry_json)
+            return entry
+        end
+    end
+    -- In the user set but not the list: fall through and queue normally.
 end
 
 redis.call('SADD', users_key, user_id)
@@ -37,12 +48,16 @@ end
 return 1
 "#;
 
+// ARGV[2], when non-empty, only removes the entry if it belongs to that
+// socket. A disconnecting socket must not remove an entry a newer connection
+// of the same user has since replaced it with.
 const LEAVE_SCRIPT: &str = r#"
 local queue_key = KEYS[1]
 local users_key = KEYS[2]
 local user_id = ARGV[1]
+local socket_id = ARGV[2]
 
-if redis.call('SREM', users_key, user_id) == 0 then
+if redis.call('SISMEMBER', users_key, user_id) == 0 then
     return false
 end
 
@@ -50,11 +65,16 @@ local entries = redis.call('LRANGE', queue_key, 0, -1)
 for i, entry in ipairs(entries) do
     local data = cjson.decode(entry)
     if data.user_id == user_id then
+        if socket_id ~= '' and data.socket_id ~= socket_id then
+            return false
+        end
         redis.call('LREM', queue_key, 1, entry)
+        redis.call('SREM', users_key, user_id)
         return true
     end
 end
 
+redis.call('SREM', users_key, user_id)
 return true
 "#;
 
@@ -72,6 +92,17 @@ end
 
 return false
 "#;
+
+#[derive(Debug)]
+pub enum JoinOutcome {
+    /// Waiting for an opponent.
+    Queued,
+    /// The player was already queued; their entry now points at the new
+    /// socket. `previous` is the entry it replaced.
+    Replaced { previous: QueueEntry },
+    /// Paired: (red, blue), both already removed from the queue.
+    Matched(QueueEntry, QueueEntry),
+}
 
 #[derive(Clone)]
 pub struct RedisQueue {
@@ -98,10 +129,7 @@ impl RedisQueue {
         }
     }
 
-    pub async fn join(
-        &self,
-        entry: QueueEntry,
-    ) -> Result<Option<(QueueEntry, QueueEntry)>, redis::RedisError> {
+    pub async fn join(&self, entry: QueueEntry) -> Result<JoinOutcome, redis::RedisError> {
         let entry_json =
             serde_json::to_string(&entry).expect("QueueEntry serialization cannot fail");
         let mut conn = self.conn.clone();
@@ -115,34 +143,66 @@ impl RedisQueue {
 
         match result {
             redis::Value::Array(ref arr) if arr.len() == 2 => {
-                let red_json: String = redis::from_redis_value(&arr[0])?;
-                let blue_json: String = redis::from_redis_value(&arr[1])?;
-                let red: QueueEntry = serde_json::from_str(&red_json).map_err(|e| {
-                    redis::RedisError::from((
-                        redis::ErrorKind::IoError,
-                        "queue entry deserialization failed",
-                        e.to_string(),
-                    ))
-                })?;
-                let blue: QueueEntry = serde_json::from_str(&blue_json).map_err(|e| {
-                    redis::RedisError::from((
-                        redis::ErrorKind::IoError,
-                        "queue entry deserialization failed",
-                        e.to_string(),
-                    ))
-                })?;
-                Ok(Some((red, blue)))
+                let red = decode_entry(&arr[0])?;
+                let blue = decode_entry(&arr[1])?;
+                Ok(JoinOutcome::Matched(red, blue))
             }
-            _ => Ok(None),
+            redis::Value::BulkString(_) => Ok(JoinOutcome::Replaced {
+                previous: decode_entry(&result)?,
+            }),
+            _ => Ok(JoinOutcome::Queued),
+        }
+    }
+
+    /// `join`, but never hands back a pair containing a player whose socket
+    /// is gone. Entries outlive their sockets when the server restarts (the
+    /// queue lives in Redis; `on_disconnect` never runs), and pairing a live
+    /// player with one used to abort the match and silently drop both (#127).
+    /// A dead entry is discarded and the live player is queued again.
+    pub async fn join_live(
+        &self,
+        entry: QueueEntry,
+        is_live: impl Fn(&QueueEntry) -> bool,
+    ) -> Result<JoinOutcome, redis::RedisError> {
+        let mut outcome = self.join(entry).await?;
+        // Each pass discards at least one dead entry, so this terminates.
+        loop {
+            let JoinOutcome::Matched(red, blue) = outcome else {
+                return Ok(outcome);
+            };
+            let survivor = match (is_live(&red), is_live(&blue)) {
+                (true, true) => return Ok(JoinOutcome::Matched(red, blue)),
+                (true, false) => Some(red),
+                (false, true) => Some(blue),
+                (false, false) => None,
+            };
+            let Some(survivor) = survivor else {
+                return Ok(JoinOutcome::Queued);
+            };
+            outcome = self.join(survivor).await?;
         }
     }
 
     pub async fn leave(&self, user_id: Uuid) -> Result<bool, redis::RedisError> {
+        self.run_leave(user_id, "").await
+    }
+
+    /// Remove the user's entry only if it belongs to `socket_id`.
+    pub async fn leave_socket(
+        &self,
+        user_id: Uuid,
+        socket_id: &str,
+    ) -> Result<bool, redis::RedisError> {
+        self.run_leave(user_id, socket_id).await
+    }
+
+    async fn run_leave(&self, user_id: Uuid, socket_id: &str) -> Result<bool, redis::RedisError> {
         let mut conn = self.conn.clone();
         let result: bool = redis::Script::new(LEAVE_SCRIPT)
             .key(&self.queue_key)
             .key(&self.users_key)
             .arg(user_id.to_string())
+            .arg(socket_id)
             .invoke_async(&mut conn)
             .await?;
         Ok(result)
@@ -182,6 +242,17 @@ impl RedisQueue {
     }
 }
 
+fn decode_entry(value: &redis::Value) -> Result<QueueEntry, redis::RedisError> {
+    let json: String = redis::from_redis_value(value)?;
+    serde_json::from_str(&json).map_err(|e| {
+        redis::RedisError::from((
+            redis::ErrorKind::IoError,
+            "queue entry deserialization failed",
+            e.to_string(),
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,7 +278,10 @@ mod tests {
     #[tokio::test]
     async fn single_entry_no_match() {
         let q = test_queue("single").await;
-        assert!(q.join(entry("alice", "s1")).await.unwrap().is_none());
+        assert!(matches!(
+            q.join(entry("alice", "s1")).await.unwrap(),
+            JoinOutcome::Queued
+        ));
         assert_eq!(q.len().await.unwrap(), 1);
         q.clear().await.unwrap();
     }
@@ -216,9 +290,9 @@ mod tests {
     async fn two_entries_match() {
         let q = test_queue("two_match").await;
         q.join(entry("alice", "s1")).await.unwrap();
-        let result = q.join(entry("bob", "s2")).await.unwrap();
-        assert!(result.is_some());
-        let (red, blue) = result.unwrap();
+        let JoinOutcome::Matched(red, blue) = q.join(entry("bob", "s2")).await.unwrap() else {
+            panic!("expected a match");
+        };
         assert_eq!(red.username, "alice");
         assert_eq!(blue.username, "bob");
         assert_eq!(q.len().await.unwrap(), 0);
@@ -226,19 +300,80 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_user_rejected() {
-        let q = test_queue("dup").await;
+    async fn rejoin_replaces_entry_in_place() {
+        let q = test_queue("rejoin").await;
         let e = entry("alice", "s1");
         let uid = e.user_id;
         q.join(e).await.unwrap();
-        let dup = QueueEntry {
+        let again = QueueEntry {
             user_id: uid,
-            username: "alice".into(),
-            warrior_id: Uuid::new_v4(),
-            socket_id: "s2".into(),
+            ..entry("alice", "s2")
         };
-        assert!(q.join(dup).await.unwrap().is_none());
+        let JoinOutcome::Replaced { previous } = q.join(again).await.unwrap() else {
+            panic!("expected the entry to be replaced");
+        };
+        assert_eq!(previous.socket_id, "s1");
         assert_eq!(q.len().await.unwrap(), 1);
+        assert_eq!(q.position(uid).await.unwrap(), Some(0));
+
+        // The replacement, not the stale entry, is what gets matched.
+        let JoinOutcome::Matched(red, _) = q.join(entry("bob", "s3")).await.unwrap() else {
+            panic!("expected a match");
+        };
+        assert_eq!(red.socket_id, "s2");
+        q.clear().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_socket_disconnect_keeps_newer_entry() {
+        let q = test_queue("leave_socket").await;
+        let e = entry("alice", "s1");
+        let uid = e.user_id;
+        q.join(e.clone()).await.unwrap();
+        q.join(QueueEntry {
+            socket_id: "s2".into(),
+            ..e
+        })
+        .await
+        .unwrap();
+
+        assert!(!q.leave_socket(uid, "s1").await.unwrap());
+        assert_eq!(q.position(uid).await.unwrap(), Some(0));
+        assert!(q.leave_socket(uid, "s2").await.unwrap());
+        assert_eq!(q.len().await.unwrap(), 0);
+        q.clear().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dead_entry_is_discarded_and_live_player_requeued() {
+        let q = test_queue("dead_entry").await;
+        // Left behind by a server restart.
+        q.join(entry("ghost", "dead")).await.unwrap();
+        let is_live = |e: &QueueEntry| e.socket_id != "dead";
+
+        let outcome = q.join_live(entry("alice", "s1"), is_live).await.unwrap();
+        assert!(matches!(outcome, JoinOutcome::Queued), "{outcome:?}");
+        assert_eq!(q.len().await.unwrap(), 1);
+
+        let JoinOutcome::Matched(red, blue) =
+            q.join_live(entry("bob", "s2"), is_live).await.unwrap()
+        else {
+            panic!("expected alice and bob to be matched");
+        };
+        assert_eq!(
+            (red.username.as_str(), blue.username.as_str()),
+            ("alice", "bob")
+        );
+        assert_eq!(q.len().await.unwrap(), 0);
+        q.clear().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_pair_is_matched() {
+        let q = test_queue("live_pair").await;
+        q.join(entry("alice", "s1")).await.unwrap();
+        let outcome = q.join_live(entry("bob", "s2"), |_| true).await.unwrap();
+        assert!(matches!(outcome, JoinOutcome::Matched(..)), "{outcome:?}");
         q.clear().await.unwrap();
     }
 

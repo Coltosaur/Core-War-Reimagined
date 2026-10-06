@@ -77,9 +77,26 @@
   text-align: right;
 }
 
-/* A small text link that sits among controls (e.g. "Edit"). */
-.link {
-  font-size: var(--fs-100);
+/* An icon-only link among controls (e.g. the Battlefield's edit cog).
+   Violet so it reads as an action, not as a warrior's color; sized to the
+   same touch target as the buttons beside it. */
+.iconLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  color: var(--violet);
+  border-bottom: none;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--dur-fast) var(--easing),
+    background-color var(--dur-fast) var(--easing);
+}
+.iconLink:hover,
+.iconLink:focus-visible {
+  background: var(--surface-raised);
+  text-shadow: none;
 }
 
 .field,
@@ -100,6 +117,10 @@
   .button,
   .select,
   .input {
+    min-height: 2.25rem;
+  }
+  .iconLink {
+    min-width: 2.25rem;
     min-height: 2.25rem;
   }
 }

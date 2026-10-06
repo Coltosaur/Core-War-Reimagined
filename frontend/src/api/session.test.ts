@@ -8,6 +8,7 @@ import {
   SessionExpiredError,
 } from './session';
 import { ApiError } from './client';
+import { fakeResponse } from '../test/helpers/fetchMock';
 
 const REFRESH_URL_SUFFIX = '/api/auth/refresh';
 
@@ -15,15 +16,7 @@ function mockFetchWithDelay(status: number, delayMs: number): Mock<typeof fetch>
   return vi.fn<typeof fetch>().mockImplementation(
     () =>
       new Promise((resolve) => {
-        setTimeout(
-          () =>
-            resolve({
-              ok: status >= 200 && status < 300,
-              status,
-              json: async () => ({}),
-            } as Response),
-          delayMs,
-        );
+        setTimeout(() => resolve(fakeResponse(status)), delayMs);
       }),
   );
 }

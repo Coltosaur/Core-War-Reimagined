@@ -1195,26 +1195,8 @@ fn default_modifier(opcode: Opcode, a_mode: AddressMode, b_mode: AddressMode) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::*;
     use crate::vm::{MatchResult, MatchState};
-
-    fn imm(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::Immediate,
-            value: v,
-        }
-    }
-    fn dir(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::Direct,
-            value: v,
-        }
-    }
-    fn b_ind(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::BIndirect,
-            value: v,
-        }
-    }
 
     // ── basic single-instruction parsing ────────────────────────────
 
@@ -1503,7 +1485,7 @@ start   MOV.I $0, $1
     // ── headline parser test: Dwarf source matches hand-built version ─
 
     /// Parse the canonical Dwarf and assert each parsed instruction matches
-    /// the hand-built equivalent from `vm::tests::dwarf_bombs_core_at_intervals_of_four`
+    /// the hand-built equivalent (`test_support::dwarf`)
     /// exactly. This is the test that proves the parser produces correct
     /// `Instruction` values for a real warrior, not just unit-test fragments.
     #[test]
@@ -1525,32 +1507,12 @@ bomb    DAT.F  #0, #0
         assert_eq!(parsed.start_offset(), 0);
         assert_eq!(parsed.instructions().len(), 4);
 
-        // The expected instructions match the hand-built dwarf in vm.rs:
+        // The expected instructions are the hand-built dwarf:
         //   ADD.AB #4, $3   (bomb is 3 cells away from `start`)
         //   MOV.I  $2, @2   (bomb is 2 cells away from this MOV)
         //   JMP.B  $-2, $0  (start is -2 cells away; default B is $0)
         //   DAT.F  #0, #0
-        let expected = [
-            Instruction {
-                opcode: Opcode::Add,
-                modifier: Modifier::AB,
-                a: imm(4),
-                b: dir(3),
-            },
-            Instruction {
-                opcode: Opcode::Mov,
-                modifier: Modifier::I,
-                a: dir(2),
-                b: b_ind(2),
-            },
-            Instruction {
-                opcode: Opcode::Jmp,
-                modifier: Modifier::B,
-                a: dir(-2),
-                b: dir(0),
-            },
-            Instruction::dat_zero(),
-        ];
+        let expected = dwarf();
 
         for (i, exp) in expected.iter().enumerate() {
             assert_eq!(&parsed.instructions()[i], exp, "instruction {i} mismatch",);
@@ -1586,12 +1548,7 @@ bomb    DAT.F  #0, #0
         // The bomb pattern should match the hand-built test exactly:
         //   cell 3 (bomb itself):  B = 20 (incremented 5 times by 4)
         //   cells 7, 11, 15, 19, 23: bombs with B-values 4, 8, 12, 16, 20
-        assert_eq!(state.core().get(3).b.value, 20);
-        for (addr, expected_b) in [(7, 4), (11, 8), (15, 12), (19, 16), (23, 20)] {
-            let cell = state.core().get(addr);
-            assert_eq!(cell.opcode, Opcode::Dat, "cell {addr} should be a DAT");
-            assert_eq!(cell.b.value, expected_b);
-        }
+        assert_dwarf_bomb_pattern(state.core());
 
         // The dwarf should still be running after 15 steps.
         assert_eq!(state.result(), MatchResult::Victory { winner_id: 0 });

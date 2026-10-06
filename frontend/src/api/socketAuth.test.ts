@@ -1,84 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import type { Socket } from 'socket.io-client';
 import { installSocketAuthRecovery, type PendingSocketAction } from './socketAuth';
 import { __resetSessionForTests, registerSessionHandlers } from './session';
-
-// Minimal EventEmitter-shaped stand-in for a socket.io-client Socket. We
-// don't need the transport — just the on/off/once/emit surface the
-// installer relies on, plus disconnect/connect. `emit` is spied so the test
-// can assert what was sent, and manual `_fire()` drives incoming events.
-// `connect()` fires 'connect' on a microtask, like a reconnect that succeeds;
-// set `_connectFails` to fire 'connect_error' instead.
-type FakeSocket = Socket & {
-  _fire: (event: string, ...args: unknown[]) => void;
-  _emitSpy: ReturnType<typeof vi.fn>;
-  _connectSpy: ReturnType<typeof vi.fn>;
-  _disconnectSpy: ReturnType<typeof vi.fn>;
-  _connectFails: boolean;
-};
-
-function makeFakeSocket(): FakeSocket {
-  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
-  const onceListeners = new Map<string, Set<(...args: unknown[]) => void>>();
-  const emitSpy = vi.fn();
-  const disconnectSpy = vi.fn();
-  const connectSpy = vi.fn(() => {
-    queueMicrotask(() => socket._fire(socket._connectFails ? 'connect_error' : 'connect'));
-  });
-
-  const on = (event: string, fn: (...args: unknown[]) => void): FakeSocket => {
-    if (!listeners.has(event)) listeners.set(event, new Set());
-    listeners.get(event)!.add(fn);
-    return socket;
-  };
-  const off = (event: string, fn?: (...args: unknown[]) => void): FakeSocket => {
-    if (!fn) {
-      listeners.delete(event);
-      onceListeners.delete(event);
-      return socket;
-    }
-    listeners.get(event)?.delete(fn);
-    onceListeners.get(event)?.delete(fn);
-    return socket;
-  };
-  const once = (event: string, fn: (...args: unknown[]) => void): FakeSocket => {
-    if (!onceListeners.has(event)) onceListeners.set(event, new Set());
-    onceListeners.get(event)!.add(fn);
-    return socket;
-  };
-
-  const socket = {
-    connected: false,
-    on,
-    off,
-    once,
-    emit: emitSpy,
-    connect: connectSpy,
-    disconnect: disconnectSpy,
-    _emitSpy: emitSpy,
-    _connectSpy: connectSpy,
-    _disconnectSpy: disconnectSpy,
-    _connectFails: false,
-    _fire: (event: string, ...args: unknown[]) => {
-      listeners.get(event)?.forEach((fn) => fn(...args));
-      const oneShots = onceListeners.get(event);
-      if (oneShots) {
-        onceListeners.delete(event);
-        oneShots.forEach((fn) => fn(...args));
-      }
-    },
-  } as unknown as FakeSocket;
-
-  return socket;
-}
+import { makeFakeSocket, type FakeSocket } from '../test/helpers/fakeSocket';
+import { fakeResponse } from '../test/helpers/fetchMock';
 
 function mockFetchResponse(status: number): Mock<typeof fetch> {
-  return vi.fn<typeof fetch>().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    statusText: 'test',
-    json: async () => ({}),
-  } as Response);
+  return vi.fn<typeof fetch>().mockResolvedValue(fakeResponse(status));
 }
 
 // Small helper — flush the current microtask queue N times so awaited

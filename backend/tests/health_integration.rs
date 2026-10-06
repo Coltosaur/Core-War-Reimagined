@@ -2,30 +2,21 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::Router;
-use core_war_backend::{health, AppConfig, AppState};
+use core_war_backend::health;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-const JWT_SECRET: &[u8] = b"integration-test-secret-that-is-at-least-32-bytes!!";
+mod common;
 
-fn state(pool: PgPool) -> AppState {
-    AppState {
-        db: pool,
-        config: AppConfig {
-            frontend_url: "http://localhost:5173".into(),
-            jwt_secret: JWT_SECRET.to_vec(),
-            trusted_proxies: vec![],
-        },
-    }
-}
+use common::test_state;
 
 fn app(pool: PgPool) -> Router {
     Router::new()
         .route("/health", get(health::liveness))
         .route("/health/deep", get(health::readiness))
-        .with_state(state(pool))
+        .with_state(test_state(pool))
 }
 
 #[sqlx::test]

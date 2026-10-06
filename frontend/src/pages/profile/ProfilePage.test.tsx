@@ -7,15 +7,14 @@ import * as profileApi from '../../api/profile';
 import * as warriorsApi from '../../api/warriors';
 import * as accountApi from '../../api/account';
 import * as AuthContextModule from '../../api/AuthContext';
+import { authState } from '../../test/helpers/mockAuth';
 
 vi.mock('../../api/profile');
 vi.mock('../../api/warriors');
 vi.mock('../../api/account');
 vi.mock('../../api/AuthContext');
 
-type UseAuthReturn = ReturnType<typeof AuthContextModule.useAuth>;
-
-const mockUseAuth = AuthContextModule.useAuth as MockedFunction<() => UseAuthReturn>;
+const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
 const mockGetMyProfile = profileApi.getMyProfile as MockedFunction<typeof profileApi.getMyProfile>;
 const mockGetPublicProfile = profileApi.getPublicProfile as MockedFunction<
   typeof profileApi.getPublicProfile
@@ -55,21 +54,9 @@ const myServerWarriors: warriorsApi.ServerWarrior[] = [
   },
 ];
 
-const authedUser: UseAuthReturn = {
-  user: { user_id: 'u1', username: 'vale' },
-  loading: false,
-  login: vi.fn(),
-  register: vi.fn(),
-  logout: vi.fn(),
-};
+const authedUser = authState({ user: { user_id: 'u1', username: 'vale' } });
 
-const anonymous: UseAuthReturn = {
-  user: null,
-  loading: false,
-  login: vi.fn(),
-  register: vi.fn(),
-  logout: vi.fn(),
-};
+const anonymous = authState();
 
 beforeEach(() => {
   mockUseAuth.mockReturnValue(authedUser);

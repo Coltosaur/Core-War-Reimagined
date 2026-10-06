@@ -10,15 +10,10 @@ import type { ServerWarrior } from '../../api/warriors';
 // drafts — so the battle silently ran the old source and, because the Builder
 // unmounts on navigate, the edits were lost.
 
-vi.mock('../../api/AuthContext', () => ({
-  useAuth: () => ({
-    user: { user_id: 'u1', username: 'tester' },
-    loading: false,
-    login: vi.fn(),
-    register: vi.fn(),
-    logout: vi.fn(),
-  }),
-}));
+vi.mock('../../api/AuthContext', async () => {
+  const { authState } = await import('../../test/helpers/mockAuth');
+  return { useAuth: () => authState({ user: { user_id: 'u1', username: 'tester' } }) };
+});
 
 vi.mock('../../api/warriors', () => ({
   listWarriors: vi.fn(),

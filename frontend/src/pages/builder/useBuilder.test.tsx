@@ -8,15 +8,10 @@ import { useBuilder } from './useBuilder';
 // useBuilder pulls in useAuth, which requires an AuthProvider. Stub it out —
 // the fresh-mount bug reproduces for both anonymous and authenticated users,
 // and the auth path is not the code under test.
-vi.mock('../../api/AuthContext', () => ({
-  useAuth: () => ({
-    user: null,
-    loading: false,
-    login: vi.fn(),
-    register: vi.fn(),
-    logout: vi.fn(),
-  }),
-}));
+vi.mock('../../api/AuthContext', async () => {
+  const { authState } = await import('../../test/helpers/mockAuth');
+  return { useAuth: () => authState() };
+});
 
 function wrapper({ children }: { children: ReactNode }): ReactNode {
   return <MemoryRouter>{children}</MemoryRouter>;

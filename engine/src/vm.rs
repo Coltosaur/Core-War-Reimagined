@@ -781,67 +781,8 @@ fn resolve(pc: i32, op: Operand, core: &mut Core) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
-
-    /// Convenience for building an `Instruction` in a test without rendering
-    /// the full struct literal six lines tall every time.
-    fn instr(opcode: Opcode, modifier: Modifier, a: Operand, b: Operand) -> Instruction {
-        Instruction {
-            opcode,
-            modifier,
-            a,
-            b,
-        }
-    }
-
-    fn imm(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::Immediate,
-            value: v,
-        }
-    }
-
-    fn dir(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::Direct,
-            value: v,
-        }
-    }
-
-    fn b_ind(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::BIndirect,
-            value: v,
-        }
-    }
-
-    fn b_predec(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::BPredecrement,
-            value: v,
-        }
-    }
-
-    fn a_predec(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::APredecrement,
-            value: v,
-        }
-    }
-
-    fn a_postinc(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::APostincrement,
-            value: v,
-        }
-    }
-
-    fn b_postinc(v: i32) -> Operand {
-        Operand {
-            mode: AddressMode::BPostincrement,
-            value: v,
-        }
-    }
+    use crate::instruction::{Instruction, Modifier, Opcode};
+    use crate::test_support::*;
 
     /// The canonical Imp: `MOV.I $0, $1`. Copies itself one cell forward
     /// every step, walking through core forever.
@@ -998,16 +939,9 @@ mod tests {
         let mut state = MatchState::new(64, 100);
         state.add_warrior(Warrior::new(0, 0));
 
-        state
-            .core_mut()
-            .set(0, instr(Opcode::Add, Modifier::AB, imm(4), dir(3)));
-        state
-            .core_mut()
-            .set(1, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(2)));
-        state
-            .core_mut()
-            .set(2, instr(Opcode::Jmp, Modifier::B, dir(-2), dir(0)));
-        // Cell 3 is already DAT.F #0, #0 from Core::new — that's the bomb.
+        for (addr, cell) in (0..).zip(dwarf()) {
+            state.core_mut().set(addr, cell);
+        }
 
         // 5 iterations × 3 instructions per iteration = 15 steps.
         for _ in 0..15 {
@@ -1017,21 +951,10 @@ mod tests {
             );
         }
 
-        // Bomb pointer (cell 3's B-field) advanced 5 times by 4.
-        assert_eq!(state.core().get(3).b.value, 20);
+        // Bomb pointer (cell 3's B-field) advanced 5 times by 4; one bomb per
+        // iteration at the pointer's value-at-time-of-MOV.
+        assert_dwarf_bomb_pattern(state.core());
         assert_eq!(state.core().get(3).opcode, Opcode::Dat);
-
-        // One bomb per iteration, at the bomb pointer's value-at-time-of-MOV.
-        // Each bomb is a snapshot of cell 3 with the B-field it had then.
-        let expected = [(7, 4), (11, 8), (15, 12), (19, 16), (23, 20)];
-        for (addr, expected_b) in expected {
-            let cell = state.core().get(addr);
-            assert_eq!(cell.opcode, Opcode::Dat, "cell {addr} should be a DAT bomb");
-            assert_eq!(
-                cell.b.value, expected_b,
-                "cell {addr}'s b-field should be {expected_b}",
-            );
-        }
 
         // The dwarf's program code itself must be untouched.
         assert_eq!(state.core().get(0).opcode, Opcode::Add);
@@ -1639,16 +1562,9 @@ mod tests {
 
         // Dwarf at cells 0..=3, starting PC 0.
         state.add_warrior(Warrior::new(0, 0));
-        state
-            .core_mut()
-            .set(0, instr(Opcode::Add, Modifier::AB, imm(4), dir(3)));
-        state
-            .core_mut()
-            .set(1, instr(Opcode::Mov, Modifier::I, dir(2), b_ind(2)));
-        state
-            .core_mut()
-            .set(2, instr(Opcode::Jmp, Modifier::B, dir(-2), dir(0)));
-        // Cell 3 stays as default DAT.F #0 #0 — the bomb.
+        for (addr, cell) in (0..).zip(dwarf()) {
+            state.core_mut().set(addr, cell);
+        }
 
         // Scanner at cells 50..=58, starting PC 53 (the scan-loop ADD).
         state.add_warrior(Warrior::new(1, 53));

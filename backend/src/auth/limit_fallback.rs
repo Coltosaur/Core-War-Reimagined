@@ -20,14 +20,27 @@
 //! summed, though, so for one window after recovery a key can get up to its
 //! limit on each side.
 //!
+//! A successful login clears its account's failures. If Redis can't be
+//! reached to do that, the clear is remembered and sent before Redis is next
+//! checked for that account, so a lock from before the outage doesn't come
+//! back with Redis.
+//!
 //! Memory is bounded. Each window holds at most its limit in timestamps, and
 //! each limiter holds at most `DEFAULT_CAPACITY` keys. When full, expired
-//! windows go first, then the least recently active. Keys are only created
-//! by counted requests, and the per-IP limits bound how fast one source can
-//! create them, so filling the cap takes on the order of a thousand
-//! addresses.
+//! windows go first, then windows under their limit, least recently active
+//! first. Windows at their limit (locked keys) go only when every key is
+//! locked.
+//!
+//! **That last step is a deliberate memory-over-security tradeoff.** An
+//! attacker who fills the table with locked keys can push out another
+//! locked key, which then starts again from zero. Keys are only created by
+//! counted requests and the per-IP limits bound how fast one source creates
+//! them, so this takes on the order of a thousand addresses, each spending
+//! its full quota; and it only lasts until Redis is back. The alternative,
+//! an unbounded map, would let the same attacker exhaust the process's
+//! memory instead.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Display;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -61,8 +74,32 @@ pub(crate) struct LocalWindows {
     name: String,
     window_secs: u64,
     capacity: usize,
-    windows: Mutex<HashMap<String, VecDeque<u64>>>,
+    state: Mutex<State>,
     degraded: AtomicBool,
+}
+
+#[derive(Default)]
+struct State {
+    windows: HashMap<String, Window>,
+    /// Keys whose Redis `DEL` failed and still has to be sent.
+    pending_clears: HashSet<String>,
+}
+
+#[derive(Default)]
+struct Window {
+    stamps: VecDeque<u64>,
+    /// The limit this key was last counted against.
+    max: u32,
+}
+
+impl Window {
+    fn locked(&self) -> bool {
+        self.stamps.len() >= self.max as usize
+    }
+
+    fn last_active(&self) -> u64 {
+        self.stamps.back().copied().unwrap_or(0)
+    }
 }
 
 impl LocalWindows {
@@ -75,7 +112,7 @@ impl LocalWindows {
             name: name.to_string(),
             window_secs,
             capacity,
-            windows: Mutex::new(HashMap::new()),
+            state: Mutex::default(),
             degraded: AtomicBool::new(false),
         }
     }
@@ -83,16 +120,16 @@ impl LocalWindows {
     /// The seconds until every key is under its limit, or `None` if none of
     /// them is at it. `keys` pairs each key with its limit.
     pub(crate) fn blocked(&self, keys: &[(String, u32)], now: u64) -> Option<u64> {
-        let mut windows = self.lock();
+        let windows = &mut self.lock().windows;
         let mut retry = None;
         for (key, max) in keys {
             let Some(window) = windows.get_mut(key) else {
                 continue;
             };
-            self.prune(window, now);
-            if window.is_empty() {
+            self.prune(&mut window.stamps, now);
+            if window.stamps.is_empty() {
                 windows.remove(key);
-            } else if let Some(wait) = self.wait_if_full(window, *max, now) {
+            } else if let Some(wait) = self.wait_if_full(&window.stamps, *max, now) {
                 retry = retry.max(Some(wait));
             }
         }
@@ -101,9 +138,9 @@ impl LocalWindows {
 
     /// Adds one entry at `now` to every key.
     pub(crate) fn record(&self, keys: &[(String, u32)], now: u64) {
-        let mut windows = self.lock();
+        let windows = &mut self.lock().windows;
         for (key, max) in keys {
-            self.push(&mut windows, key, *max, now);
+            self.push(windows, key, *max, now);
         }
     }
 
@@ -111,19 +148,48 @@ impl LocalWindows {
     /// step, like the per-request limiter's script. `Err` is the seconds to
     /// wait.
     pub(crate) fn check_and_record(&self, key: &str, max: u32, now: u64) -> Result<(), u64> {
-        let mut windows = self.lock();
+        let windows = &mut self.lock().windows;
         if let Some(window) = windows.get_mut(key) {
-            self.prune(window, now);
-            if let Some(wait) = self.wait_if_full(window, max, now) {
+            self.prune(&mut window.stamps, now);
+            if let Some(wait) = self.wait_if_full(&window.stamps, max, now) {
                 return Err(wait);
             }
         }
-        self.push(&mut windows, key, max, now);
+        self.push(windows, key, max, now);
         Ok(())
     }
 
     pub(crate) fn clear(&self, key: &str) {
-        self.lock().remove(key);
+        self.lock().windows.remove(key);
+    }
+
+    /// Remembers that Redis still holds `key`, which should have been
+    /// cleared. Bounded like the windows: past the cap the clear is dropped,
+    /// and the Redis lock simply ages out.
+    pub(crate) fn defer_clear(&self, key: &str) {
+        let pending = &mut self.lock().pending_clears;
+        if pending.len() < self.capacity {
+            pending.insert(key.to_string());
+        } else {
+            tracing::warn!(
+                limiter = %self.name,
+                "too many pending Redis clears; dropping one, which will age out instead"
+            );
+        }
+    }
+
+    /// Takes the deferred clears among `keys`. The caller sends them to
+    /// Redis and hands back any that fail with `defer_clear`. Taking them
+    /// means concurrent requests can't send the same `DEL` late, after a
+    /// failure counted in between.
+    pub(crate) fn take_pending_clears(&self, keys: &[(String, u32)]) -> Vec<String> {
+        let pending = &mut self.lock().pending_clears;
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        keys.iter()
+            .filter_map(|(key, _)| pending.take(key))
+            .collect()
     }
 
     /// Call when a Redis operation failed and the fallback took over. Logs
@@ -157,10 +223,10 @@ impl LocalWindows {
         self.degraded.load(Ordering::Relaxed)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, VecDeque<u64>>> {
-        // Every critical section leaves the map consistent, so a panic in
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        // Every critical section leaves the state consistent, so a panic in
         // another holder doesn't make the data unusable.
-        self.windows.lock().unwrap_or_else(|e| e.into_inner())
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Drops entries at or before `now - window`, as the scripts'
@@ -184,46 +250,52 @@ impl LocalWindows {
         Some(self.window_secs.saturating_sub(now.saturating_sub(oldest)))
     }
 
-    fn push(&self, windows: &mut HashMap<String, VecDeque<u64>>, key: &str, max: u32, now: u64) {
+    fn push(&self, windows: &mut HashMap<String, Window>, key: &str, max: u32, now: u64) {
         if !windows.contains_key(key) {
             self.make_room(windows, now);
         }
         let window = windows.entry(key.to_string()).or_default();
-        self.prune(window, now);
-        window.push_back(now);
+        window.max = max.max(1);
+        self.prune(&mut window.stamps, now);
+        window.stamps.push_back(now);
         // Only the newest `max` entries matter: the window unblocks when the
         // oldest of them ages out.
-        while window.len() > (max as usize).max(1) {
-            window.pop_front();
+        while window.stamps.len() > window.max as usize {
+            window.stamps.pop_front();
         }
     }
 
-    fn make_room(&self, windows: &mut HashMap<String, VecDeque<u64>>, now: u64) {
+    fn make_room(&self, windows: &mut HashMap<String, Window>, now: u64) {
         if windows.len() < self.capacity {
             return;
         }
         if let Some(cutoff) = now.checked_sub(self.window_secs) {
-            windows.retain(|_, w| w.back().is_some_and(|&t| t > cutoff));
+            windows.retain(|_, w| w.stamps.back().is_some_and(|&t| t > cutoff));
         }
         if windows.len() < self.capacity {
             return;
         }
-        // Still full of live windows. Evict the least recently active
-        // eighth in one go, so a sustained flood pays for this scan rarely.
+        // Still full of live windows. Evict an eighth in one go, so a
+        // sustained flood pays for this scan rarely: unlocked keys first,
+        // least recently active first. A locked key stops being counted
+        // (it's refused before it can fail again), so by activity alone it
+        // would be the first to go.
         let evict = (windows.len() / 8).max(1);
-        let mut by_activity: Vec<(u64, String)> = windows
+        let mut order: Vec<((bool, u64), String)> = windows
             .iter()
-            .map(|(key, w)| (w.back().copied().unwrap_or(0), key.clone()))
+            .map(|(key, w)| ((w.locked(), w.last_active()), key.clone()))
             .collect();
-        by_activity.select_nth_unstable_by_key(evict - 1, |(last, _)| *last);
-        for (_, key) in &by_activity[..evict] {
+        order.select_nth_unstable_by_key(evict - 1, |(rank, _)| *rank);
+        let evicted_locked = order[..evict].iter().filter(|((l, _), _)| *l).count();
+        for (_, key) in &order[..evict] {
             windows.remove(key);
         }
         tracing::warn!(
             limiter = %self.name,
             evicted = evict,
+            evicted_locked,
             capacity = self.capacity,
-            "in-process rate-limit fallback is full; evicted the least recently active keys"
+            "in-process rate-limit fallback is full; evicted keys"
         );
     }
 }
@@ -369,7 +441,7 @@ mod tests {
         for t in 0..100 {
             w.record(&k, t);
         }
-        assert_eq!(w.lock()["ip"].len(), 3);
+        assert_eq!(w.lock().windows["ip"].stamps.len(), 3);
         // The newest three remain, so the wait runs from 97.
         assert_eq!(w.blocked(&k, 100), Some(297));
     }
@@ -380,7 +452,7 @@ mod tests {
         w.record(&keys(&[("old", 5)]), 0);
         w.record(&keys(&[("live", 5)]), 150);
         w.record(&keys(&[("new", 5)]), 160);
-        let windows = w.lock();
+        let windows = &w.lock().windows;
         assert_eq!(windows.len(), 2);
         assert!(windows.contains_key("live") && windows.contains_key("new"));
     }
@@ -394,9 +466,48 @@ mod tests {
         // `a` is touched again, so `b` is now the least recently active.
         w.record(&keys(&[("a", 5)]), 40);
         w.record(&keys(&[("d", 5)]), 50);
-        let windows = w.lock();
+        let windows = &w.lock().windows;
         assert_eq!(windows.len(), 3);
         assert!(!windows.contains_key("b"));
+    }
+
+    #[test]
+    fn locked_keys_outlast_unlocked_ones_when_full() {
+        let w = LocalWindows::with_capacity("t", 1000, 3);
+        // The target is locked early and, being refused, never counted
+        // again: by activity alone it would go first.
+        w.record(&keys(&[("target", 1)]), 10);
+        w.record(&keys(&[("noise-1", 5)]), 20);
+        w.record(&keys(&[("noise-2", 5)]), 30);
+        w.record(&keys(&[("noise-3", 5)]), 40);
+        assert!(w.blocked(&keys(&[("target", 1)]), 50).is_some());
+        assert!(!w.lock().windows.contains_key("noise-1"));
+    }
+
+    #[test]
+    fn a_table_full_of_locked_keys_evicts_a_locked_key() {
+        // The documented tradeoff: with every key locked, the least
+        // recently active lock is lost rather than memory growing.
+        let w = LocalWindows::with_capacity("t", 1000, 3);
+        w.record(&keys(&[("target", 1)]), 10);
+        w.record(&keys(&[("flood-1", 1)]), 20);
+        w.record(&keys(&[("flood-2", 1)]), 30);
+        w.record(&keys(&[("flood-3", 1)]), 40);
+        assert_eq!(w.blocked(&keys(&[("target", 1)]), 50), None);
+        assert_eq!(w.lock().windows.len(), 3);
+    }
+
+    #[test]
+    fn pending_clears_are_taken_once() {
+        let w = LocalWindows::new("t", 60);
+        w.defer_clear("alice");
+        let both = keys(&[("ip", 5), ("alice", 5)]);
+        assert_eq!(w.take_pending_clears(&both), vec!["alice".to_string()]);
+        // A concurrent request doesn't get it again.
+        assert!(w.take_pending_clears(&both).is_empty());
+        // Unrelated keys never pick it up.
+        w.defer_clear("alice");
+        assert!(w.take_pending_clears(&keys(&[("bob", 5)])).is_empty());
     }
 
     #[test]

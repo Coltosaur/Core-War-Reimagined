@@ -144,6 +144,7 @@ impl FailureLimiter {
         let keys = self.keys(ip, account);
         let now = now_secs();
         let local = self.local.blocked(&keys, now);
+        self.send_pending_clears(&keys).await;
 
         let check = redis::Script::new(CHECK_SCRIPT);
         let mut script = check.prepare_invoke();
@@ -198,10 +199,27 @@ impl FailureLimiter {
     pub async fn clear_account(&self, account: &str) {
         let key = self.account_key(account);
         self.local.clear(&key);
+        self.delete(&key).await;
+    }
+
+    /// Clears that failed while Redis was down, sent before Redis is next
+    /// read for those keys. Otherwise a lock from before the outage would
+    /// come back with Redis, after the login that should have cleared it.
+    async fn send_pending_clears(&self, keys: &[(String, u32)]) {
+        for key in self.local.take_pending_clears(keys) {
+            self.delete(&key).await;
+        }
+    }
+
+    /// Deletes a Redis key, or remembers to once Redis is back.
+    async fn delete(&self, key: &str) {
         let mut conn = self.conn.clone();
-        match redis_bounded(redis::cmd("DEL").arg(&key).query_async::<()>(&mut conn)).await {
+        match redis_bounded(redis::cmd("DEL").arg(key).query_async::<()>(&mut conn)).await {
             Ok(()) => self.local.redis_ok(),
-            Err(e) => self.local.redis_failed("clear", &e),
+            Err(e) => {
+                self.local.redis_failed("clear", &e);
+                self.local.defer_clear(key);
+            }
         }
     }
 
@@ -518,19 +536,59 @@ mod tests {
         assert!(l.is_degraded());
 
         relay.restore().await;
+        wait_for_redis(&l).await;
+
+        // Back on Redis, which never saw these failures, and still locked.
+        assert!(l.check(ip("1.1.1.1"), None).await.is_err());
+        assert!(!l.is_degraded());
+    }
+
+    #[tokio::test]
+    async fn a_clear_during_an_outage_still_applies_after_recovery() {
+        let (relay, conn) = RedisRelay::start().await;
+        let l = limiter_on(conn, 100, 2);
+        // Locked in Redis before the outage.
+        l.record_failure(ip("10.0.0.1"), Some("alice")).await;
+        l.record_failure(ip("10.0.0.2"), Some("alice")).await;
+        assert!(l.check(ip("10.0.0.3"), Some("alice")).await.is_err());
+
+        // A successful login during the outage clears the account, but
+        // Redis can't be told.
+        relay.cut();
+        l.clear_account("alice").await;
+        assert!(l.is_degraded());
+
+        relay.restore().await;
+        wait_for_redis(&l).await;
+
+        // The pre-outage lock doesn't come back with Redis...
+        assert!(l.check(ip("10.0.0.3"), Some("alice")).await.is_ok());
+        // ...and it was cleared in Redis itself, not just skipped.
+        let mut c = l.conn.clone();
+        let exists: bool = redis::cmd("EXISTS")
+            .arg(l.account_key("alice"))
+            .query_async(&mut c)
+            .await
+            .unwrap();
+        assert!(!exists);
+
+        // Failures counted after recovery still lock it.
+        l.record_failure(ip("10.0.0.4"), Some("alice")).await;
+        l.record_failure(ip("10.0.0.5"), Some("alice")).await;
+        assert!(l.check(ip("10.0.0.6"), Some("alice")).await.is_err());
+    }
+
+    /// Waits until a Redis operation succeeds again, using a key no test
+    /// asserts on.
+    async fn wait_for_redis(l: &FailureLimiter) {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         while l.is_degraded() {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "limiter never got back to Redis"
             );
-            // Any Redis operation clears the flag once it succeeds.
             l.clear_account("nobody").await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-
-        // Back on Redis, which never saw these failures, and still locked.
-        assert!(l.check(ip("1.1.1.1"), None).await.is_err());
-        assert!(!l.is_degraded());
     }
 }

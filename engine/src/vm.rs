@@ -7,12 +7,11 @@
 //!   addressing modes (8/8): Immediate, Direct, AIndirect, BIndirect,
 //!                           APredecrement, BPredecrement,
 //!                           APostincrement, BPostincrement
-//!   modifiers:        all seven for arithmetic / MOV (via modifier_field_pairs);
-//!                     .A / .B / .AB / .BA only for DJN / JMZ / JMN / SLT;
-//!                     only .I for SEQ / SNE. Multi-field modifier variants
-//!                     of the jump and skip opcodes panic — they need
-//!                     separate semantics decisions and no current warrior
-//!                     needs them.
+//!   modifiers (7/7):  every opcode handles all seven. Arithmetic / MOV
+//!                     go through modifier_field_pairs; DJN / JMZ / JMN and
+//!                     SEQ / SNE / SLT treat .F / .X / .I as operating on
+//!                     both field pairs (SEQ / SNE .I compares whole
+//!                     instructions; SLT .I behaves like .F).
 //!
 //! The opcode and addressing-mode matches in `execute` and `resolve` are
 //! both *exhaustive*: there is no catch-all arm. If a new variant is added
@@ -24,7 +23,7 @@
 //!     a conditional that advances PC by 2 instead of 1, distinct from a
 //!     JMP because there's no target operand. SEQ/SNE compare whole
 //!     instructions; SLT compares numeric fields with strict less-than
-//!     (it has no .I modifier because there's no defined ordering for
+//!     (its .I falls back to .F because there's no defined ordering for
 //!     full instructions).
 //!
 //!   - DIV / MOD kill the executing process on divide-by-zero (same effect
@@ -38,8 +37,7 @@
 //! intermediate back. This is why `resolve()` takes `&mut Core` rather
 //! than `&Core`.
 //!
-//! Modifier variants that aren't yet implemented panic with a clear
-//! "not yet implemented" message rather than silently no-op-ing.
+//! No opcode × modifier × addressing-mode combination panics.
 
 use std::collections::VecDeque;
 
@@ -380,8 +378,8 @@ impl MatchState {
         let next_pc = (pc + 1) % core_size;
 
         // Resolve effective addresses for both operands. ICWS '94 specifies
-        // A is resolved before B, which matters once predec/postinc modes
-        // with side effects are added.
+        // A is resolved before B, which matters because the predec/postinc
+        // modes have side effects.
         let a_eff = resolve(pc_i, instr.a, &mut self.core);
         let b_eff = resolve(pc_i, instr.b, &mut self.core);
 
@@ -600,9 +598,9 @@ impl MatchState {
                 // Skip-if-less-than: if the source field is strictly less
                 // than the destination field, skip the next instruction.
                 //
-                // Unlike SEQ/SNE, SLT cannot use the .I modifier because
-                // there's no defined ordering for whole instructions —
-                // less-than only makes sense on numeric fields. The
+                // Unlike SEQ/SNE, SLT's .I can't compare whole instructions
+                // because there's no defined ordering for them — less-than
+                // only makes sense on numeric fields, so .I acts as .F. The
                 // single-field modifiers (.A, .B, .AB, .BA) operate on one
                 // (source_field, dest_field) pair each.
                 let src = self.core.get(a_eff);
@@ -701,8 +699,8 @@ fn modifier_field_pairs(m: Modifier) -> &'static [(Field, Field)] {
 
 /// Resolve an operand to an effective core address relative to the executing PC.
 ///
-/// Takes `&mut Core` so that future predecrement / postincrement modes can
-/// mutate the intermediate cell as part of resolution. Direct, Immediate,
+/// Takes `&mut Core` because the predecrement / postincrement modes mutate
+/// the intermediate cell as part of resolution. Direct, Immediate,
 /// AIndirect, and BIndirect do not mutate.
 fn resolve(pc: i32, op: Operand, core: &mut Core) -> i32 {
     match op.mode {

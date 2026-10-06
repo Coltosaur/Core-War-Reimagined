@@ -1,0 +1,12 @@
+/* Inline error notices (e.g. a warrior that fails to parse), shared by the
+   Battlefield and Match pages. */
+.error {
+  max-width: 100%;
+  padding: var(--space-2) var(--space-4);
+  color: var(--blood-light);
+  border: 1px solid var(--blood);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--blood) 12%, transparent);
+  font-size: var(--fs-200);
+  overflow-wrap: anywhere;
+}

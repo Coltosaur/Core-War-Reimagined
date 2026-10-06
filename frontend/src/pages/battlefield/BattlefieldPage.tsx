@@ -3,6 +3,7 @@ import WarriorSelector from './WarriorSelector';
 import BattleControls from './BattleControls';
 import BattleStatus from './BattleStatus';
 import InspectorPanel from './InspectorPanel';
+import alertStyles from '../../components/alert.module.css';
 import gridStyles from '../../core/CoreGrid.module.css';
 import styles from './BattlefieldPage.module.css';
 
@@ -53,7 +54,7 @@ export default function BattlefieldPage() {
         />
 
         {parseError && (
-          <div role="alert" className={styles.parseError}>
+          <div role="alert" className={alertStyles.error}>
             {parseError}
           </div>
         )}

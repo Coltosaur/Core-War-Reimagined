@@ -128,6 +128,56 @@ async fn test_redis_conn() -> ConnectionManager {
         .expect("connect redis for rate-limit wiring test")
 }
 
+/// A Redis connection routed through a local TCP relay, so a test can cut
+/// it mid-run and watch the limiters lose Redis the way they would in an
+/// outage: open connections drop and new ones are refused.
+struct RedisRelay {
+    tasks: std::sync::Arc<std::sync::Mutex<Vec<tokio::task::AbortHandle>>>,
+}
+
+impl RedisRelay {
+    async fn start() -> (Self, ConnectionManager) {
+        let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
+        let target = url.trim_start_matches("redis://").to_string();
+        let target = target
+            .rsplit('@')
+            .next()
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .to_string();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let relay = Self {
+            tasks: Default::default(),
+        };
+        let tasks = relay.tasks.clone();
+        let accept = tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                let target = target.clone();
+                let pipe = tokio::spawn(async move {
+                    let mut redis = tokio::net::TcpStream::connect(target).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut redis).await;
+                });
+                tasks.lock().unwrap().push(pipe.abort_handle());
+            }
+        });
+        relay.tasks.lock().unwrap().push(accept.abort_handle());
+
+        let client = redis::Client::open(format!("redis://127.0.0.1:{port}")).unwrap();
+        let conn = ConnectionManager::new(client).await.unwrap();
+        (relay, conn)
+    }
+
+    fn cut(&self) {
+        for task in self.tasks.lock().unwrap().drain(..) {
+            task.abort();
+        }
+    }
+}
+
 // --- Request builders ---
 
 fn post_json(path: &str, body: &Value) -> Request<Body> {
@@ -1395,4 +1445,76 @@ async fn successful_login_clears_the_account_failures(pool: PgPool) {
     assert_eq!(login("oops3").await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(login("oops4").await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(login("password1234").await.status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn failed_logins_still_lock_while_redis_is_down(pool: PgPool) {
+    // During a Redis outage the limiters used to allow everything, which
+    // switched off brute-force protection (#132). Now they count in memory
+    // with the same limits.
+    use auth::failure_limit::{AccountSource, FailureLimiter};
+    let (relay, conn) = RedisRelay::start().await;
+    let login = FailureLimiter::new(
+        conn,
+        &format!("test_{}", uuid::Uuid::new_v4()),
+        300,
+        3,
+        2,
+        AccountSource::LoginBody { db: pool.clone() },
+        vec![],
+    );
+    let change = failure_limiter(
+        1000,
+        1000,
+        AccountSource::SessionUser {
+            jwt_secret: JWT_SECRET.into(),
+        },
+    )
+    .await;
+    let router = app_with_failure_limits(pool, login.clone(), change);
+    register_and_login(&router, "outage", "outage@example.com", "password1234").await;
+
+    relay.cut();
+
+    // The account locks after two guesses from different addresses...
+    for n in 1..=2 {
+        let resp = send_from(
+            router.clone(),
+            post_json("/api/auth/login", &login_body("outage", "guess")),
+            [10, 0, 2, n],
+        )
+        .await;
+        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    }
+    let resp = send_from(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("outage", "password1234")),
+        [10, 0, 2, 99],
+    )
+    .await;
+    assert_eq!(
+        resp.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "{:?}",
+        resp.json
+    );
+    assert!(login.is_degraded(), "the fallback should report itself");
+
+    // ...and one address locks after three guesses across accounts.
+    for name in ["ghost-a", "ghost-b", "ghost-c"] {
+        let resp = send_from(
+            router.clone(),
+            post_json("/api/auth/login", &login_body(name, "guess")),
+            [10, 0, 3, 1],
+        )
+        .await;
+        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    }
+    let resp = send_from(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("ghost-d", "guess")),
+        [10, 0, 3, 1],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::TOO_MANY_REQUESTS);
 }

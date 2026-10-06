@@ -20,9 +20,14 @@
 //! by failing logins as them, which is why the IP counter has to exist too —
 //! and why the account limit is a short sliding window rather than a lock
 //! that needs an admin to clear.
+//!
+//! When Redis is unreachable, the counts fall back to this process's memory
+//! with the same limits; see `limit_fallback` for what that mode does and
+//! doesn't guarantee.
 
 use crate::app::MAX_REQUEST_BODY_BYTES;
 use crate::auth::jwt::decode_access_token;
+use crate::auth::limit_fallback::{redis_bounded, LocalWindows};
 use crate::auth::rate_limit::{extract_ip, missing_peer_address, too_many_requests};
 use crate::net::IpNet;
 use axum::body::Body;
@@ -87,6 +92,7 @@ pub struct FailureLimiter {
     max_per_account: u32,
     account_source: AccountSource,
     trusted_proxies: Arc<Vec<IpNet>>,
+    local: Arc<LocalWindows>,
 }
 
 impl FailureLimiter {
@@ -104,6 +110,7 @@ impl FailureLimiter {
             // Under `rate_limit:` so the deploy README's `--scan` check
             // finds these alongside the per-request limiters.
             key_prefix: format!("rate_limit:{name}_failures"),
+            local: Arc::new(LocalWindows::new(&format!("{name}_failures"), window_secs)),
             window_secs,
             max_per_ip,
             max_per_account,
@@ -129,55 +136,79 @@ impl FailureLimiter {
     }
 
     /// `Err(seconds)` when the IP or the account is locked out.
+    ///
+    /// Failures counted in memory during a Redis outage are checked even
+    /// once Redis is back, until they age out, so an outage can't reset a
+    /// lockout.
     pub async fn check(&self, ip: IpAddr, account: Option<&str>) -> Result<(), u64> {
         let keys = self.keys(ip, account);
+        let now = now_secs();
+        let local = self.local.blocked(&keys, now);
+
         let check = redis::Script::new(CHECK_SCRIPT);
         let mut script = check.prepare_invoke();
         for (key, _) in &keys {
             script.key(key);
         }
-        script.arg(self.window_secs).arg(now_secs());
+        script.arg(self.window_secs).arg(now);
         for (_, max) in &keys {
             script.arg(*max);
         }
         let mut conn = self.conn.clone();
-        match script.invoke_async::<i64>(&mut conn).await {
-            Ok(retry) if retry >= 0 => Err(retry as u64),
-            Ok(_) => Ok(()),
-            Err(e) => {
-                // Matches the per-request limiter. Whether an outage
-                // should block logins instead is an open question on #116.
-                tracing::error!("Redis failure-limit check error: {e}");
-                Ok(())
+        let remote = match redis_bounded(script.invoke_async::<i64>(&mut conn)).await {
+            Ok(retry) => {
+                self.local.redis_ok();
+                u64::try_from(retry).ok()
             }
+            Err(e) => {
+                // `local` already holds everything recorded while Redis
+                // has been down.
+                self.local.redis_failed("check", &e);
+                None
+            }
+        };
+        match local.max(remote) {
+            Some(retry) => Err(retry),
+            None => Ok(()),
         }
     }
 
     pub async fn record_failure(&self, ip: IpAddr, account: Option<&str>) {
+        let keys = self.keys(ip, account);
+        let now = now_secs();
         let record = redis::Script::new(RECORD_SCRIPT);
         let mut script = record.prepare_invoke();
-        for (key, _) in self.keys(ip, account) {
+        for (key, _) in &keys {
             script.key(key);
         }
         script
             .arg(self.window_secs)
-            .arg(now_secs())
+            .arg(now)
             .arg(uuid::Uuid::new_v4().to_string());
         let mut conn = self.conn.clone();
-        if let Err(e) = script.invoke_async::<i64>(&mut conn).await {
-            tracing::error!("Redis failure-limit record error: {e}");
+        match redis_bounded(script.invoke_async::<i64>(&mut conn)).await {
+            Ok(_) => self.local.redis_ok(),
+            Err(e) => {
+                self.local.redis_failed("record", &e);
+                self.local.record(&keys, now);
+            }
         }
     }
 
     pub async fn clear_account(&self, account: &str) {
+        let key = self.account_key(account);
+        self.local.clear(&key);
         let mut conn = self.conn.clone();
-        let result: Result<(), _> = redis::cmd("DEL")
-            .arg(self.account_key(account))
-            .query_async(&mut conn)
-            .await;
-        if let Err(e) = result {
-            tracing::error!("Redis failure-limit clear error: {e}");
+        match redis_bounded(redis::cmd("DEL").arg(&key).query_async::<()>(&mut conn)).await {
+            Ok(()) => self.local.redis_ok(),
+            Err(e) => self.local.redis_failed("clear", &e),
         }
+    }
+
+    /// Whether the last Redis operation failed, so counts are kept in this
+    /// process instead.
+    pub fn is_degraded(&self) -> bool {
+        self.local.is_degraded()
     }
 
     /// Reads the targeted account, returning the request rebuilt if its
@@ -335,6 +366,7 @@ pub fn change_password_failure_limiter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::limit_fallback::test_relay::RedisRelay;
 
     async fn conn() -> ConnectionManager {
         let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
@@ -344,10 +376,18 @@ mod tests {
     }
 
     async fn limiter(max_per_ip: u32, max_per_account: u32) -> FailureLimiter {
+        limiter_on(conn().await, max_per_ip, max_per_account)
+    }
+
+    fn limiter_on(
+        conn: ConnectionManager,
+        max_per_ip: u32,
+        max_per_account: u32,
+    ) -> FailureLimiter {
         // A fresh namespace per test: no cleanup races, no leftover state.
         let name = format!("test_{}", uuid::Uuid::new_v4());
         FailureLimiter::new(
-            conn().await,
+            conn,
             &name,
             300,
             max_per_ip,
@@ -436,5 +476,61 @@ mod tests {
         // ...but the address that failed is still locked, whatever account
         // it targets.
         assert!(l.check(ip("1.1.1.1"), Some("bob")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn lockout_still_happens_while_redis_is_down() {
+        let (relay, conn) = RedisRelay::start().await;
+        let l = limiter_on(conn, 3, 100);
+        relay.cut();
+
+        for _ in 0..3 {
+            assert!(l.check(ip("1.1.1.1"), None).await.is_ok());
+            l.record_failure(ip("1.1.1.1"), None).await;
+        }
+        assert!(l.is_degraded());
+        let retry = l.check(ip("1.1.1.1"), None).await.unwrap_err();
+        assert!(retry > 0 && retry <= 300, "retry {retry}");
+        assert!(l.check(ip("2.2.2.2"), None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn account_lockout_and_clear_work_while_redis_is_down() {
+        let (relay, conn) = RedisRelay::start().await;
+        let l = limiter_on(conn, 100, 2);
+        relay.cut();
+
+        l.record_failure(ip("10.0.0.1"), Some("alice")).await;
+        l.record_failure(ip("10.0.0.2"), Some("alice")).await;
+        assert!(l.check(ip("10.0.0.3"), Some("alice")).await.is_err());
+
+        l.clear_account("alice").await;
+        assert!(l.check(ip("10.0.0.3"), Some("alice")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn failures_counted_during_an_outage_outlast_recovery() {
+        let (relay, conn) = RedisRelay::start().await;
+        let l = limiter_on(conn, 2, 100);
+        relay.cut();
+        l.record_failure(ip("1.1.1.1"), None).await;
+        l.record_failure(ip("1.1.1.1"), None).await;
+        assert!(l.is_degraded());
+
+        relay.restore().await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        while l.is_degraded() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "limiter never got back to Redis"
+            );
+            // Any Redis operation clears the flag once it succeeds.
+            l.clear_account("nobody").await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // Back on Redis, which never saw these failures, and still locked.
+        assert!(l.check(ip("1.1.1.1"), None).await.is_err());
+        assert!(!l.is_degraded());
     }
 }

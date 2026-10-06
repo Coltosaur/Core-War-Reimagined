@@ -1,3 +1,4 @@
+use crate::auth::limit_fallback::{redis_bounded, LocalWindows};
 use crate::net::IpNet;
 use axum::extract::ConnectInfo;
 use axum::http::StatusCode;
@@ -44,6 +45,7 @@ pub struct RateLimiter {
     max_requests: u32,
     window_secs: u64,
     trusted_proxies: Arc<Vec<IpNet>>,
+    local: Arc<LocalWindows>,
 }
 
 impl RateLimiter {
@@ -60,39 +62,54 @@ impl RateLimiter {
             max_requests,
             window_secs,
             trusted_proxies: Arc::new(trusted_proxies),
+            local: Arc::new(LocalWindows::new(name, window_secs)),
         }
     }
 
+    /// Counts the request, or `Err(seconds)` if the IP is at its limit.
+    /// When Redis is unreachable, counts are kept in this process instead;
+    /// see `limit_fallback`.
     pub async fn check(&self, ip: IpAddr) -> Result<(), u64> {
         let key = format!("{}:{}", self.key_prefix, ip);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+
+        // Requests counted in memory during an outage still apply until
+        // they age out.
+        if let Some(retry) = self.local.blocked(&[(key.clone(), self.max_requests)], now) {
+            return Err(retry);
+        }
+
         let request_id = format!("{now}:{}", uuid::Uuid::new_v4());
         let mut conn = self.conn.clone();
-
-        let result: i64 = match redis::Script::new(RATE_LIMIT_SCRIPT)
-            .key(&key)
+        let script = redis::Script::new(RATE_LIMIT_SCRIPT);
+        let mut invocation = script.key(&key);
+        invocation
             .arg(self.max_requests)
             .arg(self.window_secs)
             .arg(now)
-            .arg(&request_id)
-            .invoke_async(&mut conn)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("Redis rate limit error: {e}");
-                return Ok(());
+            .arg(&request_id);
+        match redis_bounded(invocation.invoke_async::<i64>(&mut conn)).await {
+            Ok(result) => {
+                self.local.redis_ok();
+                match u64::try_from(result) {
+                    Ok(retry) => Err(retry),
+                    Err(_) => Ok(()),
+                }
             }
-        };
-
-        if result < 0 {
-            Ok(())
-        } else {
-            Err(result as u64)
+            Err(e) => {
+                self.local.redis_failed("check", &e);
+                self.local.check_and_record(&key, self.max_requests, now)
+            }
         }
+    }
+
+    /// Whether the last Redis operation failed, so counts are kept in this
+    /// process instead.
+    pub fn is_degraded(&self) -> bool {
+        self.local.is_degraded()
     }
 }
 
@@ -214,6 +231,7 @@ pub(crate) fn missing_peer_address() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::limit_fallback::test_relay::RedisRelay;
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
@@ -408,5 +426,22 @@ mod tests {
             .query_async(&mut c)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn limit_still_holds_while_redis_is_down() {
+        let (relay, conn) = RedisRelay::start().await;
+        let name = format!("test_{}", uuid::Uuid::new_v4());
+        let limiter = RateLimiter::new(conn, &name, 3, 60, vec![]);
+        let ip = IpAddr::from([9, 9, 9, 9]);
+        relay.cut();
+
+        for _ in 0..3 {
+            assert!(limiter.check(ip).await.is_ok());
+        }
+        let retry = limiter.check(ip).await.unwrap_err();
+        assert!(retry > 0 && retry <= 60, "retry {retry}");
+        assert!(limiter.is_degraded());
+        assert!(limiter.check(IpAddr::from([8, 8, 8, 8])).await.is_ok());
     }
 }

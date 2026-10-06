@@ -199,26 +199,35 @@ impl FailureLimiter {
     pub async fn clear_account(&self, account: &str) {
         let key = self.account_key(account);
         self.local.clear(&key);
-        self.delete(&key).await;
+        let mut conn = self.conn.clone();
+        match redis_bounded(redis::cmd("DEL").arg(&key).query_async::<()>(&mut conn)).await {
+            Ok(()) => self.local.redis_ok(),
+            Err(e) => {
+                self.local.redis_failed("clear", &e);
+                self.local.defer_clear(&key, now_secs());
+            }
+        }
     }
 
     /// Clears that failed while Redis was down, sent before Redis is next
     /// read for those keys. Otherwise a lock from before the outage would
     /// come back with Redis, after the login that should have cleared it.
+    ///
+    /// A late clear removes only failures up to the time of the clear, not
+    /// the whole key: by the time it's sent, a failure may have been counted
+    /// since (another request, or this clear timing out once and being
+    /// retried), and that one has to stay.
     async fn send_pending_clears(&self, keys: &[(String, u32)]) {
-        for key in self.local.take_pending_clears(keys) {
-            self.delete(&key).await;
-        }
-    }
-
-    /// Deletes a Redis key, or remembers to once Redis is back.
-    async fn delete(&self, key: &str) {
-        let mut conn = self.conn.clone();
-        match redis_bounded(redis::cmd("DEL").arg(key).query_async::<()>(&mut conn)).await {
-            Ok(()) => self.local.redis_ok(),
-            Err(e) => {
-                self.local.redis_failed("clear", &e);
-                self.local.defer_clear(key);
+        for (key, cleared_at) in self.local.take_pending_clears(keys) {
+            let mut conn = self.conn.clone();
+            let mut remove = redis::cmd("ZREMRANGEBYSCORE");
+            remove.arg(&key).arg("-inf").arg(cleared_at);
+            match redis_bounded(remove.query_async::<()>(&mut conn)).await {
+                Ok(()) => self.local.redis_ok(),
+                Err(e) => {
+                    self.local.redis_failed("clear", &e);
+                    self.local.defer_clear(&key, cleared_at);
+                }
             }
         }
     }
@@ -590,5 +599,42 @@ mod tests {
             l.clear_account("nobody").await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn a_late_clear_keeps_failures_counted_after_it() {
+        let (relay, conn) = RedisRelay::start().await;
+        let l = limiter_on(conn, 100, 2);
+        l.record_failure(ip("10.0.0.1"), Some("alice")).await;
+        l.record_failure(ip("10.0.0.2"), Some("alice")).await;
+
+        relay.cut();
+        l.clear_account("alice").await;
+        relay.restore().await;
+        wait_for_redis(&l).await;
+
+        // Before the clear is sent, another request's failure lands in
+        // Redis, timed after the clear.
+        let key = l.account_key("alice");
+        let later = now_secs() + 5;
+        let mut c = l.conn.clone();
+        let _: () = redis::cmd("ZADD")
+            .arg(&key)
+            .arg(later)
+            .arg("after-the-clear")
+            .query_async(&mut c)
+            .await
+            .unwrap();
+
+        // Sending the clear removes the pre-outage failures only.
+        assert!(l.check(ip("10.0.0.3"), Some("alice")).await.is_ok());
+        let left: Vec<String> = redis::cmd("ZRANGE")
+            .arg(&key)
+            .arg(0)
+            .arg(-1)
+            .query_async(&mut c)
+            .await
+            .unwrap();
+        assert_eq!(left, vec!["after-the-clear".to_string()]);
     }
 }

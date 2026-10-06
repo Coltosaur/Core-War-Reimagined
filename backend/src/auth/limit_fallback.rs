@@ -21,9 +21,10 @@
 //! limit on each side.
 //!
 //! A successful login clears its account's failures. If Redis can't be
-//! reached to do that, the clear is remembered and sent before Redis is next
-//! checked for that account, so a lock from before the outage doesn't come
-//! back with Redis.
+//! reached to do that, the clear is remembered with its time and sent before
+//! Redis is next checked for that account, so a lock from before the outage
+//! doesn't come back with Redis. The late clear removes only failures from
+//! up to that time, so one counted in the meantime survives it.
 //!
 //! Memory is bounded. Each window holds at most its limit in timestamps, and
 //! each limiter holds at most `DEFAULT_CAPACITY` keys. When full, expired
@@ -40,7 +41,7 @@
 //! an unbounded map, would let the same attacker exhaust the process's
 //! memory instead.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,8 +82,9 @@ pub(crate) struct LocalWindows {
 #[derive(Default)]
 struct State {
     windows: HashMap<String, Window>,
-    /// Keys whose Redis `DEL` failed and still has to be sent.
-    pending_clears: HashSet<String>,
+    /// Keys whose Redis clear failed and still has to be sent, with the
+    /// time of the clear: only failures up to then are removed.
+    pending_clears: HashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -163,13 +165,15 @@ impl LocalWindows {
         self.lock().windows.remove(key);
     }
 
-    /// Remembers that Redis still holds `key`, which should have been
-    /// cleared. Bounded like the windows: past the cap the clear is dropped,
-    /// and the Redis lock simply ages out.
-    pub(crate) fn defer_clear(&self, key: &str) {
+    /// Remembers that Redis still holds failures for `key` up to `cleared_at`
+    /// that should have been cleared. Bounded like the windows: past the cap
+    /// the clear is dropped, and the Redis lock simply ages out.
+    pub(crate) fn defer_clear(&self, key: &str, cleared_at: u64) {
         let pending = &mut self.lock().pending_clears;
-        if pending.len() < self.capacity {
-            pending.insert(key.to_string());
+        if let Some(at) = pending.get_mut(key) {
+            *at = (*at).max(cleared_at);
+        } else if pending.len() < self.capacity {
+            pending.insert(key.to_string(), cleared_at);
         } else {
             tracing::warn!(
                 limiter = %self.name,
@@ -178,17 +182,16 @@ impl LocalWindows {
         }
     }
 
-    /// Takes the deferred clears among `keys`. The caller sends them to
-    /// Redis and hands back any that fail with `defer_clear`. Taking them
-    /// means concurrent requests can't send the same `DEL` late, after a
-    /// failure counted in between.
-    pub(crate) fn take_pending_clears(&self, keys: &[(String, u32)]) -> Vec<String> {
+    /// Takes the deferred clears among `keys`, with their times. The caller
+    /// sends them to Redis and hands back any that fail with `defer_clear`.
+    /// Taking them means only one request sends each.
+    pub(crate) fn take_pending_clears(&self, keys: &[(String, u32)]) -> Vec<(String, u64)> {
         let pending = &mut self.lock().pending_clears;
         if pending.is_empty() {
             return Vec::new();
         }
         keys.iter()
-            .filter_map(|(key, _)| pending.take(key))
+            .filter_map(|(key, _)| pending.remove_entry(key))
             .collect()
     }
 
@@ -500,14 +503,29 @@ mod tests {
     #[test]
     fn pending_clears_are_taken_once() {
         let w = LocalWindows::new("t", 60);
-        w.defer_clear("alice");
+        w.defer_clear("alice", 100);
         let both = keys(&[("ip", 5), ("alice", 5)]);
-        assert_eq!(w.take_pending_clears(&both), vec!["alice".to_string()]);
+        assert_eq!(
+            w.take_pending_clears(&both),
+            vec![("alice".to_string(), 100)]
+        );
         // A concurrent request doesn't get it again.
         assert!(w.take_pending_clears(&both).is_empty());
         // Unrelated keys never pick it up.
-        w.defer_clear("alice");
+        w.defer_clear("alice", 100);
         assert!(w.take_pending_clears(&keys(&[("bob", 5)])).is_empty());
+    }
+
+    #[test]
+    fn a_repeated_clear_keeps_the_latest_time() {
+        let w = LocalWindows::new("t", 60);
+        w.defer_clear("alice", 200);
+        // A failed resend hands back the original, earlier time.
+        w.defer_clear("alice", 100);
+        assert_eq!(
+            w.take_pending_clears(&keys(&[("alice", 5)])),
+            vec![("alice".to_string(), 200)]
+        );
     }
 
     #[test]

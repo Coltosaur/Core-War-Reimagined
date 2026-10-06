@@ -1,6 +1,8 @@
 use crate::auth::jwt::{encode_access_token, generate_refresh_token, hash_refresh_token};
 use crate::auth::middleware::AuthUser;
-use crate::auth::password::{hash_password, verify_password, verify_password_against_dummy};
+use crate::auth::password::{
+    hash_password_gated, verify_password_against_dummy_gated, verify_password_gated,
+};
 use crate::errors::AppError;
 use crate::AppState;
 use axum::extract::State;
@@ -153,7 +155,7 @@ pub async fn register(
     }
     validate_password(&body.password)?;
 
-    let password_hash = hash_password(&body.password)?;
+    let password_hash = hash_password_gated(body.password).await?;
 
     let row = sqlx::query_as::<_, (uuid::Uuid, String)>(
         "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username",
@@ -226,12 +228,12 @@ pub async fn login(
     let (user_id, username, password_hash) = match user {
         Some(row) => row,
         None => {
-            verify_password_against_dummy(&body.password);
+            verify_password_against_dummy_gated(body.password).await?;
             return Err(AppError::Unauthorized("Invalid credentials".into()));
         }
     };
 
-    if !verify_password(&body.password, &password_hash)? {
+    if !verify_password_gated(body.password, password_hash).await? {
         return Err(AppError::Unauthorized("Invalid credentials".into()));
     }
 
@@ -362,13 +364,13 @@ pub async fn change_password(
         .await?
         .ok_or_else(|| AppError::Unauthorized("User not found".into()))?;
 
-    if !verify_password(&body.current_password, &password_hash)? {
+    if !verify_password_gated(body.current_password, password_hash).await? {
         return Err(AppError::Unauthorized(
             "Current password is incorrect".into(),
         ));
     }
 
-    let new_hash = hash_password(&body.new_password)?;
+    let new_hash = hash_password_gated(body.new_password).await?;
 
     // Update the stored hash and revoke all refresh tokens for this user in
     // a single transaction. Revoking every refresh token (not just the one on

@@ -11,6 +11,7 @@ pub enum AppError {
     Forbidden(String),
     NotFound(String),
     Conflict(String),
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -22,6 +23,7 @@ impl IntoResponse for AppError {
             Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            Self::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             Self::Internal(msg) => {
                 tracing::error!("internal error: {msg}");
                 (
@@ -90,6 +92,14 @@ mod tests {
         let (status, json) = response_parts(AppError::Conflict("username taken".into())).await;
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(json["error"], "username taken");
+    }
+
+    #[tokio::test]
+    async fn service_unavailable_returns_503() {
+        let (status, json) =
+            response_parts(AppError::ServiceUnavailable("Server is busy".into())).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json["error"], "Server is busy");
     }
 
     #[tokio::test]

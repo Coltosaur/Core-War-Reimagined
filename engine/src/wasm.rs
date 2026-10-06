@@ -219,10 +219,7 @@ impl WasmMatchState {
     /// Whether the warrior at the given index is still alive.
     #[wasm_bindgen(js_name = "warriorIsAlive")]
     pub fn warrior_is_alive(&self, idx: usize) -> bool {
-        self.inner
-            .warriors()
-            .get(idx)
-            .map_or(false, |w| w.is_alive())
+        self.inner.warriors().get(idx).is_some_and(|w| w.is_alive())
     }
 
     /// How many processes the warrior at the given index has.

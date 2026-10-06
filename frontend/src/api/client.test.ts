@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { api, ApiError } from './client';
 import { __resetSessionForTests, registerSessionHandlers, SessionExpiredError } from './session';
 
 type FetchMockPlan = Array<{ status: number; body?: unknown }>;
 
-function planFetch(plan: FetchMockPlan): ReturnType<typeof vi.fn> {
+function planFetch(plan: FetchMockPlan): Mock<typeof fetch> {
   let idx = 0;
-  return vi.fn().mockImplementation(async (): Promise<Response> => {
+  return vi.fn<typeof fetch>().mockImplementation(async (): Promise<Response> => {
     const entry = plan[Math.min(idx, plan.length - 1)];
     idx += 1;
     return {

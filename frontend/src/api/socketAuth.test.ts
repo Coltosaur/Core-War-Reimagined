@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import { installSocketAuthRecovery, type PendingSocketAction } from './socketAuth';
 import { __resetSessionForTests, registerSessionHandlers } from './session';
@@ -72,8 +72,8 @@ function makeFakeSocket(): FakeSocket {
   return socket;
 }
 
-function mockFetchResponse(status: number): ReturnType<typeof vi.fn> {
-  return vi.fn().mockResolvedValue({
+function mockFetchResponse(status: number): Mock<typeof fetch> {
+  return vi.fn<typeof fetch>().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     statusText: 'test',

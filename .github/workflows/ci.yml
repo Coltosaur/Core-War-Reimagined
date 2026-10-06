@@ -48,6 +48,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # wasm.rs is cfg(target_arch = "wasm32"), so the native clippy run
+      # above never lints it.
+      - name: Run clippy (wasm32)
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
       - name: Check formatting
         run: cargo fmt -- --check
 

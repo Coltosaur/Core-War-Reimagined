@@ -139,7 +139,7 @@ Engine release build: `wasm-pack build --target web --release` (uses `opt-level 
 
 Backend release build: `cargo build --release` from `backend/`. Output binary at `backend/target/release/core-war-backend`.
 
-**Testing:** Engine has unit + integration tests (`cargo test` in `engine/`). Backend has unit tests and integration tests requiring Postgres (`cargo test` in `backend/`). Frontend uses Vitest + Testing Library (`npm test` in `frontend/`). **Linting/formatting:** `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in both `engine/` and `backend/`. Frontend has ESLint (`npm run lint`) and Prettier (`npm run format`).
+**Testing:** Engine has unit + integration tests (`cargo test` in `engine/`). Backend has unit tests and integration tests requiring Postgres (`cargo test` in `backend/`). Frontend uses Vitest + Testing Library (`npm test` in `frontend/`). **Linting/formatting:** `cargo fmt` and `cargo clippy --all-targets -- -D warnings` in both `engine/` and `backend/`. The engine also needs `cargo clippy --target wasm32-unknown-unknown -- -D warnings`, since `wasm.rs` only compiles for wasm32. Frontend has ESLint (`npm run lint`) and Prettier (`npm run format`).
 
 ## Environment
 

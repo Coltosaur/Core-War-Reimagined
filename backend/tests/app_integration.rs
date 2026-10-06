@@ -31,7 +31,11 @@ async fn production_router(pool: PgPool) -> axum::Router {
 
 /// POST a login for an account that doesn't exist and return the status.
 async fn failed_login_status(addr: SocketAddr) -> u16 {
-    let body = r#"{"username_or_email":"no_such_user_116","password":"wrong-password"}"#;
+    login_status(addr, "no_such_user_116", "wrong-password").await
+}
+
+async fn login_status(addr: SocketAddr, username: &str, password: &str) -> u16 {
+    let body = format!(r#"{{"username_or_email":"{username}","password":"{password}"}}"#);
     let request = format!(
         "POST /api/auth/login HTTP/1.1\r\nHost: {addr}\r\nOrigin: {FRONTEND_URL}\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -76,4 +80,31 @@ async fn serving_without_client_addresses_fails_closed(pool: PgPool) {
     tokio::spawn(async move { axum::serve(listener, router).await });
 
     assert_eq!(failed_login_status(addr).await, 500);
+}
+
+#[sqlx::test]
+async fn production_login_limit_ignores_successful_logins(pool: PgPool) {
+    // The old limiter counted every login: the sixth within 15 minutes from
+    // one address got 429 (#116). Only failures count now.
+    let username = format!("u{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let hash = core_war_backend::auth::password::hash_password("password1234").unwrap();
+    sqlx::query("INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)")
+        .bind(&username)
+        .bind(format!("{username}@example.com"))
+        .bind(hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(app::serve(listener, production_router(pool).await));
+
+    for attempt in 1..=8 {
+        assert_eq!(
+            login_status(addr, &username, "password1234").await,
+            200,
+            "login {attempt}"
+        );
+    }
 }

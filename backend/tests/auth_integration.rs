@@ -49,23 +49,30 @@ fn app(pool: PgPool) -> Router {
         .with_state(state)
 }
 
-/// Same as `app()`, but wires the change-password endpoint behind the
-/// production rate-limit middleware. Uses a caller-supplied `RateLimiter` so
-/// each test can pin a unique Redis key namespace and small quota, keeping
-/// the assertion tight without depending on Redis wall-clock state.
-fn app_with_change_password_limiter(
+/// Same as `app()`, but with login and change-password behind the
+/// production failure-limit middleware. Callers pass limiters with a unique
+/// Redis namespace and small limits, so assertions are tight and can't be
+/// polluted by parallel tests or leftover Redis state.
+fn app_with_failure_limits(
     pool: PgPool,
-    limiter: auth::rate_limit::RateLimiter,
+    login: auth::failure_limit::FailureLimiter,
+    change_password: auth::failure_limit::FailureLimiter,
 ) -> Router {
     let state = test_state(pool);
     Router::new()
         .route("/api/auth/register", post(auth::handlers::register))
-        .route("/api/auth/login", post(auth::handlers::login))
+        .route(
+            "/api/auth/login",
+            post(auth::handlers::login).layer(middleware::from_fn_with_state(
+                login,
+                auth::failure_limit::failure_limit_middleware,
+            )),
+        )
         .route(
             "/api/auth/change-password",
             post(auth::handlers::change_password).layer(middleware::from_fn_with_state(
-                limiter,
-                auth::rate_limit::rate_limit_middleware,
+                change_password,
+                auth::failure_limit::failure_limit_middleware,
             )),
         )
         .layer(middleware::from_fn_with_state(
@@ -73,6 +80,44 @@ fn app_with_change_password_limiter(
             auth::middleware::csrf_middleware,
         ))
         .with_state(state)
+}
+
+async fn failure_limiter(
+    max_per_ip: u32,
+    max_per_account: u32,
+    source: auth::failure_limit::AccountSource,
+) -> auth::failure_limit::FailureLimiter {
+    let name = format!("test_{}", uuid::Uuid::new_v4());
+    auth::failure_limit::FailureLimiter::new(
+        test_redis_conn().await,
+        &name,
+        300,
+        max_per_ip,
+        max_per_account,
+        source,
+        vec![],
+    )
+}
+
+/// Login limited at `max_per_ip` / `max_per_account`; change-password
+/// effectively unlimited.
+async fn login_limited_app(pool: PgPool, max_per_ip: u32, max_per_account: u32) -> Router {
+    use auth::failure_limit::AccountSource;
+    let login = failure_limiter(
+        max_per_ip,
+        max_per_account,
+        AccountSource::LoginBody { db: pool.clone() },
+    )
+    .await;
+    let change = failure_limiter(
+        1000,
+        1000,
+        AccountSource::SessionUser {
+            jwt_secret: JWT_SECRET.into(),
+        },
+    )
+    .await;
+    app_with_failure_limits(pool, login, change)
 }
 
 async fn test_redis_conn() -> ConnectionManager {
@@ -133,11 +178,16 @@ fn extract_cookies(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
     map
 }
 
-async fn send(router: Router, mut req: Request<Body>) -> TestResponse {
+async fn send(router: Router, req: Request<Body>) -> TestResponse {
+    send_from(router, req, [127, 0, 0, 1]).await
+}
+
+/// `send` from a chosen client address.
+async fn send_from(router: Router, mut req: Request<Body>, ip: [u8; 4]) -> TestResponse {
     // `oneshot` skips the server, so attach the peer address the real one
-    // (`app::serve`) would. The rate limiter refuses requests without it.
+    // (`app::serve`) would. The rate limiters refuse requests without it.
     req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+        .insert(ConnectInfo(SocketAddr::from((ip, 0))));
     let resp = router.oneshot(req).await.unwrap();
     let status = resp.status();
     let cookies = extract_cookies(resp.headers());
@@ -1146,65 +1196,203 @@ async fn change_password_new_refresh_cookie_can_rotate(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn change_password_endpoint_is_rate_limited(pool: PgPool) {
-    // Router-level assertion that /api/auth/change-password is actually
-    // wired behind the rate-limit middleware in production. Without this,
-    // silently removing the .layer(...) from app.rs would open an
-    // authenticated brute-force surface (attacker with a valid session
-    // cookie can enumerate the current password) and no automated signal
-    // would fire.
-    //
-    // We use a private RateLimiter with a small quota and a unique Redis
-    // key namespace so the assertion is tight and can't be polluted by
-    // parallel tests or leftover Redis state.
-    let namespace = format!("test_cp_wiring_{}", uuid::Uuid::new_v4());
-    let limiter =
-        auth::rate_limit::RateLimiter::new(test_redis_conn().await, &namespace, 2, 60, vec![]);
-    let router = app_with_change_password_limiter(pool, limiter);
-
-    let cookies = register_and_login(&router, "cplimit", "cpl@example.com", "password1234").await;
-    let access = cookies["access_token"].clone();
-
-    // Two attempts with the WRONG current password — each returns 401 from
-    // the handler, but both count against the limit because the middleware
-    // runs before the handler. Third attempt should be short-circuited to
-    // 429 by the middleware even though it's still an otherwise-valid
-    // change-password request.
-    for _ in 0..2 {
-        let resp = send(
-            router.clone(),
-            post_json_with_cookies(
-                "/api/auth/change-password",
-                &change_password_body("wrong-current-password", "brand-new-password"),
-                &format!("access_token={access}"),
-            ),
-        )
-        .await;
-        // 401 from the handler is fine — proves we reached it, so the
-        // request DID count against the limit.
-        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
-    }
-
-    let resp = send(
-        router,
-        post_json_with_cookies(
-            "/api/auth/change-password",
-            &change_password_body("wrong-current-password", "brand-new-password"),
-            &format!("access_token={access}"),
-        ),
+async fn change_password_failures_lock_the_account(pool: PgPool) {
+    // /api/auth/change-password checks the current password, so a stolen
+    // session could be used to guess it. Wrong guesses count against the
+    // signed-in account; once locked, even the right password is refused,
+    // or an attacker could keep guessing and watch for the one success.
+    use auth::failure_limit::AccountSource;
+    let login = failure_limiter(1000, 1000, AccountSource::LoginBody { db: pool.clone() }).await;
+    let change = failure_limiter(
+        1000,
+        2,
+        AccountSource::SessionUser {
+            jwt_secret: JWT_SECRET.into(),
+        },
     )
     .await;
+    let router = app_with_failure_limits(pool, login, change);
+
+    let cookies = register_and_login(&router, "cplimit", "cpl@example.com", "password1234").await;
+    let session = format!("access_token={}", cookies["access_token"]);
+    let attempt = |current: &'static str, ip: [u8; 4]| {
+        let router = router.clone();
+        let session = session.clone();
+        async move {
+            send_from(
+                router,
+                post_json_with_cookies(
+                    "/api/auth/change-password",
+                    &change_password_body(current, "brand-new-password"),
+                    &session,
+                ),
+                ip,
+            )
+            .await
+        }
+    };
+
+    // Different addresses, so only the per-account counter can trip.
+    assert_eq!(
+        attempt("wrong-1", [10, 0, 0, 1]).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        attempt("wrong-2", [10, 0, 0, 2]).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let resp = attempt("password1234", [10, 0, 0, 3]).await;
     assert_eq!(
         resp.status,
         StatusCode::TOO_MANY_REQUESTS,
-        "expected 429 after quota exhausted; got {:?} {:?}",
-        resp.status,
-        resp.json,
+        "{:?}",
+        resp.json
     );
-    // Retry-After header is part of the standard 429 shape.
     let err_msg = resp.json["error"].as_str().unwrap_or("");
     assert!(
         err_msg.to_lowercase().contains("too many"),
         "expected rate-limit copy; got {err_msg:?}"
     );
+}
+
+#[sqlx::test]
+async fn successful_logins_do_not_count_toward_the_limit(pool: PgPool) {
+    // The old limiter counted every login, so a handful of people signing
+    // in from one network locked it out (#116).
+    let router = login_limited_app(pool, 2, 2).await;
+    register_and_login(&router, "regular", "regular@example.com", "password1234").await;
+
+    for _ in 0..10 {
+        let resp = send(
+            router.clone(),
+            post_json("/api/auth/login", &login_body("regular", "password1234")),
+        )
+        .await;
+        assert_eq!(resp.status, StatusCode::OK, "{:?}", resp.json);
+    }
+}
+
+#[sqlx::test]
+async fn failed_logins_lock_the_account_from_every_address(pool: PgPool) {
+    let router = login_limited_app(pool, 1000, 3).await;
+    register_and_login(&router, "target", "target@example.com", "password1234").await;
+
+    // A botnet or rotating VPN: every guess from a new address.
+    for n in 1..=3 {
+        let resp = send_from(
+            router.clone(),
+            post_json("/api/auth/login", &login_body("target", "guess")),
+            [10, 0, 1, n],
+        )
+        .await;
+        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    }
+
+    // Locked, even with the right password and from a fresh address.
+    let resp = send_from(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("target", "password1234")),
+        [10, 0, 1, 99],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::TOO_MANY_REQUESTS);
+
+    // Logging in by email is the same account, so the same counter;
+    // otherwise switching between username and email doubles the guesses.
+    let resp = send_from(
+        router.clone(),
+        post_json(
+            "/api/auth/login",
+            &login_body("Target@Example.com", "password1234"),
+        ),
+        [10, 0, 1, 98],
+    )
+    .await;
+    assert_eq!(resp.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[sqlx::test]
+async fn failed_logins_lock_the_address_across_accounts(pool: PgPool) {
+    let router = login_limited_app(pool, 3, 1000).await;
+    register_and_login(&router, "bystander", "by@example.com", "password1234").await;
+
+    // One source guessing a different account each time.
+    for name in ["acct1", "acct2", "acct3"] {
+        let resp = send_from(
+            router.clone(),
+            post_json("/api/auth/login", &login_body(name, "guess")),
+            [10, 0, 2, 1],
+        )
+        .await;
+        assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
+    }
+
+    let locked = send_from(
+        router.clone(),
+        post_json("/api/auth/login", &login_body("bystander", "password1234")),
+        [10, 0, 2, 1],
+    )
+    .await;
+    assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+
+    // Nobody else is affected.
+    let other = send_from(
+        router,
+        post_json("/api/auth/login", &login_body("bystander", "password1234")),
+        [10, 0, 2, 2],
+    )
+    .await;
+    assert_eq!(other.status, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn unknown_accounts_lock_exactly_like_real_ones(pool: PgPool) {
+    // If only real accounts locked, the lockout would reveal which
+    // usernames exist.
+    let router = login_limited_app(pool, 1000, 2).await;
+    register_and_login(&router, "realuser", "real@example.com", "password1234").await;
+
+    for who in ["realuser", "no_such_user"] {
+        let mut statuses = Vec::new();
+        for n in 0..3 {
+            let resp = send_from(
+                router.clone(),
+                post_json("/api/auth/login", &login_body(who, "guess")),
+                [10, 0, 3, n],
+            )
+            .await;
+            statuses.push(resp.status);
+        }
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::UNAUTHORIZED,
+                StatusCode::UNAUTHORIZED,
+                StatusCode::TOO_MANY_REQUESTS
+            ],
+            "{who}"
+        );
+    }
+}
+
+#[sqlx::test]
+async fn successful_login_clears_the_account_failures(pool: PgPool) {
+    // A player who mistypes twice and then gets it right starts fresh.
+    let router = login_limited_app(pool, 1000, 3).await;
+    register_and_login(&router, "typo", "typo@example.com", "password1234").await;
+    let login = |password: &'static str| {
+        send(
+            router.clone(),
+            post_json("/api/auth/login", &login_body("typo", password)),
+        )
+    };
+
+    assert_eq!(login("oops1").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(login("oops2").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(login("password1234").await.status, StatusCode::OK);
+    // Without the reset, the third of these would be the fourth failure.
+    assert_eq!(login("oops3").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(login("oops4").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(login("password1234").await.status, StatusCode::OK);
 }

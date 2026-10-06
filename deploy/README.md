@@ -387,10 +387,13 @@ docker compose -f docker-compose.prod.yml --env-file .env.production down
 # Nuke the database (only if you mean it — volumes go too)
 docker compose -f docker-compose.prod.yml --env-file .env.production down -v
 
-# Check the auth rate limiters see real visitor addresses: expect one key
-# per public IP. A key for a 172.x / 192.168.x address means Caddy isn't
-# trusted and every visitor shares that bucket (the backend also logs a
-# TRUSTED_PROXIES warning once).
+# Check the auth rate limiters see real visitor addresses: expect keys like
+# rate_limit:refresh:<ip> and, after a failed login,
+# rate_limit:login_failures:ip:<ip> (plus ...:account:<user> keys), one per
+# public IP. A 172.x / 192.168.x address means the visitor's real address
+# was lost before the backend and everyone behind it shares that bucket:
+# either Caddy isn't trusted (the backend also logs a TRUSTED_PROXIES
+# warning once) or the visitor came in over IPv6 (#130).
 docker compose -f docker-compose.prod.yml --env-file .env.production exec redis \
   redis-cli --scan --pattern 'rate_limit:*'
 ```

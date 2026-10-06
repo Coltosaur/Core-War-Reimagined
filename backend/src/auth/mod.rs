@@ -1,3 +1,4 @@
+pub mod failure_limit;
 pub mod handlers;
 pub mod jwt;
 pub mod middleware;

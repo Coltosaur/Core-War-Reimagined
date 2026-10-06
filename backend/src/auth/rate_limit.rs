@@ -106,7 +106,7 @@ impl RateLimiter {
 /// right: each trusted proxy appends the address it received the request
 /// from, so the rightmost entry that isn't a trusted proxy is the client.
 /// Entries further left were written by the client and can't be trusted.
-fn extract_ip(
+pub(crate) fn extract_ip(
     connect_info: Option<&ConnectInfo<SocketAddr>>,
     headers: &axum::http::HeaderMap,
     trusted_proxies: &[IpNet],
@@ -163,26 +163,12 @@ fn warn_untrusted_proxy_once(peer: IpAddr) {
     }
 }
 
-pub fn login_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpNet>) -> RateLimiter {
-    RateLimiter::new(conn, "login", 5, 15 * 60, trusted_proxies)
-}
-
 pub fn register_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpNet>) -> RateLimiter {
     RateLimiter::new(conn, "register", 3, 60 * 60, trusted_proxies)
 }
 
 pub fn refresh_limiter(conn: ConnectionManager, trusted_proxies: Vec<IpNet>) -> RateLimiter {
     RateLimiter::new(conn, "refresh", 10, 15 * 60, trusted_proxies)
-}
-
-/// Change-password: 5 attempts per 15 min, same shape as login. The endpoint
-/// verifies the current password so it's a plausible brute-force surface even
-/// with a valid session cookie — cap it accordingly.
-pub fn change_password_limiter(
-    conn: ConnectionManager,
-    trusted_proxies: Vec<IpNet>,
-) -> RateLimiter {
-    RateLimiter::new(conn, "change_password", 5, 15 * 60, trusted_proxies)
 }
 
 pub async fn rate_limit_middleware(
@@ -196,25 +182,33 @@ pub async fn rate_limit_middleware(
         request.headers(),
         &limiter.trusted_proxies,
     ) else {
-        tracing::error!(
-            "rate limiter has no peer address; the server must be started \
-             with into_make_service_with_connect_info"
-        );
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        return missing_peer_address();
     };
 
     match limiter.check(ip).await {
         Ok(()) => next.run(request).await,
-        Err(retry_after) => {
-            let secs = retry_after + 1;
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                [(axum::http::header::RETRY_AFTER, secs.to_string())],
-                Json(json!({"error": format!("Too many requests. Try again in {secs} seconds.")})),
-            )
-                .into_response()
-        }
+        Err(retry_after) => too_many_requests(retry_after),
     }
+}
+
+pub(crate) fn too_many_requests(retry_after: u64) -> Response {
+    let secs = retry_after + 1;
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(axum::http::header::RETRY_AFTER, secs.to_string())],
+        Json(json!({"error": format!("Too many requests. Try again in {secs} seconds.")})),
+    )
+        .into_response()
+}
+
+/// The peer address is missing: the server wasn't started through
+/// `app::serve`. Refuse rather than guess a shared address (#116).
+pub(crate) fn missing_peer_address() -> Response {
+    tracing::error!(
+        "rate limiter has no peer address; the server must be started \
+         with into_make_service_with_connect_info"
+    );
+    StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
 
 #[cfg(test)]
@@ -347,13 +341,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_limiter_config() {
-        let l = login_limiter(test_conn().await, vec![]);
-        assert_eq!(l.max_requests, 5);
-        assert_eq!(l.window_secs, 15 * 60);
-    }
-
-    #[tokio::test]
     async fn register_limiter_config() {
         let l = register_limiter(test_conn().await, vec![]);
         assert_eq!(l.max_requests, 3);
@@ -368,21 +355,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn change_password_limiter_config() {
-        // The PR description advertised 5 attempts / 15min for the
-        // change-password endpoint, matching the login limiter shape.
-        // Pin those numbers so a silent bump in either the count or the
-        // window fails this test — either would materially change the
-        // brute-force surface characterization.
-        let l = change_password_limiter(test_conn().await, vec![]);
-        assert_eq!(l.max_requests, 5);
-        assert_eq!(l.window_secs, 15 * 60);
-    }
-
-    #[tokio::test]
     async fn limiter_carries_trusted_proxies() {
         let proxies = nets(&["10.0.0.1", "10.0.0.0/8"]);
-        let l = login_limiter(test_conn().await, proxies.clone());
+        let l = register_limiter(test_conn().await, proxies.clone());
         assert_eq!(*l.trusted_proxies, proxies);
     }
 

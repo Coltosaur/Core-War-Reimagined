@@ -14,11 +14,23 @@
 //! disk; Redis is the persistence layer). Today there is one instance, so
 //! during an outage the limits hold as written.
 //!
+//! "Down" includes slow. A Redis call that takes longer than
+//! `REDIS_TIMEOUT` is treated exactly like a failed one, so a latency spike
+//! also starts these windows from zero: a key locked in Redis reads as
+//! unlocked until Redis answers in time again, though the limits here still
+//! apply in the meantime. That makes `REDIS_TIMEOUT` a security setting,
+//! not just a latency one.
+//!
 //! Failures recorded here during an outage keep counting after Redis comes
 //! back: callers check these windows as well as Redis until they age out,
 //! so a Redis blip can't be used to reset a lockout. The two sides are not
 //! summed, though, so for one window after recovery a key can get up to its
 //! limit on each side.
+//!
+//! In the other direction, one request can be counted on both sides. A
+//! timeout only means the reply didn't arrive in time; the script may still
+//! have run in Redis, and the request is then counted here as well. This
+//! only ever makes the limits stricter, so it is left as is.
 //!
 //! A successful login clears its account's failures. If Redis can't be
 //! reached to do that, the clear is remembered with its time and sent before
@@ -51,6 +63,9 @@ use std::time::Duration;
 /// How long a limiter waits on Redis before using the fallback. Without a
 /// bound, a request during an outage would wait out the connection
 /// manager's reconnect backoff, which takes seconds.
+///
+/// Lowering this trades security for latency: every timeout drops the
+/// limiters to windows that start from zero (see the module docs).
 const REDIS_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Keys per limiter. At a few hundred bytes per key, the cap keeps each
@@ -132,6 +147,7 @@ impl LocalWindows {
             if window.stamps.is_empty() {
                 windows.remove(key);
             } else if let Some(wait) = self.wait_if_full(&window.stamps, *max, now) {
+                // `None < Some(_)` for `Option`, so this keeps the longest wait.
                 retry = retry.max(Some(wait));
             }
         }

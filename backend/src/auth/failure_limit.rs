@@ -168,6 +168,8 @@ impl FailureLimiter {
                 None
             }
         };
+        // `None < Some(_)` for `Option`, so a lock on either side wins, and
+        // with locks on both the longer wait does.
         match local.max(remote) {
             Some(retry) => Err(retry),
             None => Ok(()),

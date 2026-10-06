@@ -56,9 +56,11 @@ impl ParsedWarrior {
     }
 }
 
-/// Errors raised while parsing Redcode source. Every variant carries the
-/// 1-indexed line number where the problem was found so error messages
-/// can point at the right place in the source.
+/// Errors raised while parsing Redcode source. Every variant except
+/// `EmptyWarrior` carries the 1-indexed line number where the problem was
+/// found, so error messages can point at the right place in the source.
+/// Errors from resolving the `ORG` / `END` start label use `line: 0`
+/// because the start label isn't tied to one instruction line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     /// The source contained no instructions.

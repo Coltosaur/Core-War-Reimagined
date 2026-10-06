@@ -4,8 +4,8 @@
 //! widely implemented variant. Each cell of MARS memory holds one
 //! `Instruction`, which is `Opcode` + `Modifier` + two `Operand`s.
 
-/// Every Redcode opcode. Not all of these are executed yet — see `vm::execute`
-/// for the currently-implemented subset.
+/// Every Redcode opcode. All of them are executed — see `MatchState::step`
+/// in `vm.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Opcode {

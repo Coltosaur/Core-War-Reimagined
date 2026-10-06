@@ -53,14 +53,14 @@ Three independent components, **two** deployment services (frontend static + bac
 ```
 engine/    Rust crate → Wasm (wasm-bindgen, wasm-pack). NOT a server process.
 frontend/  React 18 + TypeScript + Vite. Imports the Wasm module directly.
-backend/   Rust (axum + socketioxide + tokio). Postgres via sqlx, Redis planned.
+backend/   Rust (axum + socketioxide + tokio). Postgres via sqlx, Redis via redis-rs.
 ```
 
 **Critical architectural rule:** The Rust engine compiles to Wasm and runs **in the browser** alongside the frontend — it is not a server-side process and is not bundled into the backend container. The backend also depends on the engine as a native Rust crate for server-side match validation (no FFI bridge needed — just a `path` dependency in `Cargo.toml`).
 
-**Backend stack:** Rust binary crate `core-war-backend`. Axum 0.7 for HTTP routing, socketioxide 0.15 for Socket.IO (wire-compatible with the Socket.IO JS client), tower-http for CORS, sqlx 0.8 for Postgres (compile-time-checked queries), jsonwebtoken for JWT auth, argon2 for password hashing, tokio runtime, dotenvy for `.env`, tracing/tracing-subscriber for logging. Entry point: `backend/src/main.rs`.
+**Backend stack:** Rust binary crate `core-war-backend`. Axum 0.7 for HTTP routing, socketioxide 0.15 for Socket.IO (wire-compatible with the Socket.IO JS client), tower-http for CORS, redis 0.27 (`tokio-comp`, `connection-manager`) for rate limiting and the matchmaking queue, sqlx 0.8 for Postgres (runtime-checked `sqlx::query` calls; no compile-time `query!` macros), jsonwebtoken for JWT auth, argon2 for password hashing, tokio runtime, dotenvy for `.env`, tracing/tracing-subscriber for logging. Entry point: `backend/src/main.rs`.
 
-**Future backend deps (add when first used):** `redis` with `tokio-comp` (Redis for matchmaking queue persistence, rate limiting), `apalis` (Redis-backed job queue).
+**Future backend deps (add when first used):** `apalis` (Redis-backed job queue).
 
 **Frontend ↔ Engine:** Frontend imports the wasm-pack output as a JS module (`--target web`). The engine's `wasm` module (`engine/src/wasm.rs`, compiled only on `wasm32`) provides `#[wasm_bindgen]` wrapper types (`MatchState`, `ParsedWarrior`) and free functions (`parseWarrior`, `engineVersion`) that adapt the native Rust API for JS consumption. Key methods:
 - `parseWarrior(source)` → `ParsedWarrior` (or throws a JS error string on parse failure)
@@ -113,7 +113,7 @@ cargo watch -x run
 node frontend/scripts/test-backend.mjs
 ```
 
-It exits 0 on success, 1 on any failure, and prints the assigned `sid` so you can cross-reference it against the backend's `client connected: <sid>` log line — matching SIDs prove you're talking to the process you think you are (this matters: a stale uvicorn from a previous session once silently answered this test).
+It exits 0 on success, 1 on any failure, and prints the assigned `sid` so you can cross-reference it against the backend's `client connected: <sid>` log line — matching SIDs prove you're talking to the process you think you are (this matters: a stale backend process from a previous session once silently answered this test).
 
 ### Playwright MCP (browser testing from Claude Code)
 
@@ -144,7 +144,7 @@ Backend release build: `cargo build --release` from `backend/`. Output binary at
 ## Environment
 
 - All dev happens inside **WSL2 Ubuntu** on Windows 11. Keep files in the Linux filesystem (`~/dev/...`), never `/mnt/c/...`, for performance and to avoid file-watcher issues with Vite and `cargo watch`.
-- Backend reads `backend/.env` via `python-dotenv`. Defaults assume Postgres at `localhost:5432` (user/pass/db all `corewar`) and Redis at `localhost:6379`, matching `docker-compose.yml`.
+- Backend reads `backend/.env` via `dotenvy`. Defaults assume Postgres at `localhost:5432` (user/pass/db all `corewar`) and Redis at `localhost:6379`, matching `docker-compose.yml`.
 - Backend port is `3001`; frontend dev server is `5173`. Don't change one without updating CORS (`FRONTEND_URL`) and any frontend API base URL.
 - **Secrets policy:** `.env` files (`.env`, `.env.local`, `.env.production`, etc.) are off-limits — a `PreToolUse` hook at `.claude/hooks/protect-env.py` blocks Read / Edit / Write / Grep / Bash / NotebookEdit against them. Use the matching `*.example` file (e.g. `backend/.env.example`) to see the schema. This applies to subagents too; there is no workaround, and you should not attempt one.
 

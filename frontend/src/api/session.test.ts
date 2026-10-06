@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   __resetSessionForTests,
   attemptRefresh,
@@ -11,8 +11,8 @@ import { ApiError } from './client';
 
 const REFRESH_URL_SUFFIX = '/api/auth/refresh';
 
-function mockFetchWithDelay(status: number, delayMs: number): ReturnType<typeof vi.fn> {
-  return vi.fn().mockImplementation(
+function mockFetchWithDelay(status: number, delayMs: number): Mock<typeof fetch> {
+  return vi.fn<typeof fetch>().mockImplementation(
     () =>
       new Promise((resolve) => {
         setTimeout(

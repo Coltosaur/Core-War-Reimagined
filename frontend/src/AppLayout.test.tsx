@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MockedFunction } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import AppLayout from './AppLayout';
 import * as AuthContextModule from './api/AuthContext';
 import { useServerWarriorSync } from './warriors/useServerWarriorSync';
+import { authState } from './test/helpers/mockAuth';
 
 vi.mock('./api/AuthContext');
 vi.mock('./warriors/useServerWarriorSync');
@@ -14,20 +14,8 @@ vi.mock('./api/AuthModal', () => ({
   default: () => <div role="dialog" aria-label="auth" />,
 }));
 
-type UseAuthReturn = ReturnType<typeof AuthContextModule.useAuth>;
-const mockUseAuth = AuthContextModule.useAuth as MockedFunction<() => UseAuthReturn>;
+const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
 const logoutSpy = vi.fn();
-
-function authState(overrides: Partial<UseAuthReturn> = {}): UseAuthReturn {
-  return {
-    user: null,
-    loading: false,
-    login: vi.fn(),
-    register: vi.fn(),
-    logout: logoutSpy,
-    ...overrides,
-  };
-}
 
 function renderAt(path: string) {
   return render(
@@ -42,7 +30,7 @@ function renderAt(path: string) {
 }
 
 beforeEach(() => {
-  mockUseAuth.mockReturnValue(authState());
+  mockUseAuth.mockReturnValue(authState({ logout: logoutSpy }));
 });
 
 afterEach(() => {
@@ -109,7 +97,9 @@ describe('AppLayout', () => {
   });
 
   it('shows the username and a working logout when logged in', async () => {
-    mockUseAuth.mockReturnValue(authState({ user: { user_id: 'u1', username: 'neo' } }));
+    mockUseAuth.mockReturnValue(
+      authState({ logout: logoutSpy, user: { user_id: 'u1', username: 'neo' } }),
+    );
     const user = userEvent.setup();
     renderAt('/');
     expect(screen.getByRole('link', { name: 'neo' })).toHaveAttribute('href', '/profile');
@@ -119,7 +109,7 @@ describe('AppLayout', () => {
   });
 
   it('renders no auth controls while the session is loading', () => {
-    mockUseAuth.mockReturnValue(authState({ loading: true }));
+    mockUseAuth.mockReturnValue(authState({ logout: logoutSpy, loading: true }));
     renderAt('/');
     expect(screen.queryByRole('button', { name: /Log In|Logout/ })).not.toBeInTheDocument();
   });

@@ -18,6 +18,9 @@ pub mod instruction;
 pub mod parser;
 pub mod vm;
 
+#[cfg(test)]
+mod test_support;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 

@@ -6,13 +6,12 @@ import AccountSettings from './AccountSettings';
 import * as accountApi from '../../api/account';
 import * as AuthContextModule from '../../api/AuthContext';
 import { ApiError } from '../../api/client';
+import { authState } from '../../test/helpers/mockAuth';
 
 vi.mock('../../api/account');
 vi.mock('../../api/AuthContext');
 
-type UseAuthReturn = ReturnType<typeof AuthContextModule.useAuth>;
-
-const mockUseAuth = AuthContextModule.useAuth as MockedFunction<() => UseAuthReturn>;
+const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
 const mockGetAccount = accountApi.getAccount as MockedFunction<typeof accountApi.getAccount>;
 const mockChangePassword = accountApi.changePassword as MockedFunction<
   typeof accountApi.changePassword
@@ -21,13 +20,9 @@ const mockChangePassword = accountApi.changePassword as MockedFunction<
 const logoutSpy = vi.fn();
 
 beforeEach(() => {
-  mockUseAuth.mockReturnValue({
-    user: { user_id: 'u1', username: 'vale' },
-    loading: false,
-    login: vi.fn(),
-    register: vi.fn(),
-    logout: logoutSpy,
-  });
+  mockUseAuth.mockReturnValue(
+    authState({ user: { user_id: 'u1', username: 'vale' }, logout: logoutSpy }),
+  );
   mockGetAccount.mockResolvedValue({ email: 'vale@example.com' });
 });
 

@@ -4,28 +4,23 @@
 //! once started without client addresses, which put every visitor in one
 //! login rate-limit bucket: five logins from anyone locked everyone out (#116).
 
-use core_war_backend::{app, AppConfig, AppState};
+use core_war_backend::app;
 use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-const FRONTEND_URL: &str = "http://localhost:5173";
+mod common;
+
+use common::{test_state, FRONTEND_URL};
 
 async fn production_router(pool: PgPool) -> axum::Router {
     let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
     let redis = ConnectionManager::new(redis::Client::open(url.as_str()).unwrap())
         .await
         .expect("connect to redis");
-    let state = AppState {
-        db: pool,
-        config: AppConfig {
-            frontend_url: FRONTEND_URL.into(),
-            jwt_secret: b"integration-test-secret-that-is-at-least-32-bytes!!".to_vec(),
-            trusted_proxies: vec![],
-        },
-    };
+    let state = test_state(pool);
     app::router(state, redis).expect("build production router")
 }
 

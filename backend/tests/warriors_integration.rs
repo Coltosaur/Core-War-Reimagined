@@ -2,26 +2,18 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use axum::{middleware, Router};
-use core_war_backend::{auth, warriors, AppConfig, AppState};
+use core_war_backend::{auth, warriors};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tower::ServiceExt;
 
-const FRONTEND_URL: &str = "http://localhost:5173";
-const JWT_SECRET: &[u8] = b"integration-test-secret-that-is-at-least-32-bytes!!";
+mod common;
 
-fn test_state(pool: PgPool) -> AppState {
-    AppState {
-        db: pool,
-        config: AppConfig {
-            frontend_url: FRONTEND_URL.into(),
-            jwt_secret: JWT_SECRET.to_vec(),
-            trusted_proxies: vec![],
-        },
-    }
-}
+use common::{
+    extract_cookies, get_with_cookies, post_json, post_json_with_cookies, test_state, FRONTEND_URL,
+};
 
 fn app(pool: PgPool) -> Router {
     let state = test_state(pool);
@@ -47,30 +39,6 @@ fn app(pool: PgPool) -> Router {
 
 // --- Request builders ---
 
-fn post_json(path: &str, body: &Value) -> Request<Body> {
-    Request::post(path)
-        .header("content-type", "application/json")
-        .header("origin", FRONTEND_URL)
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-fn post_json_with_cookies(path: &str, body: &Value, cookies: &str) -> Request<Body> {
-    Request::post(path)
-        .header("content-type", "application/json")
-        .header("origin", FRONTEND_URL)
-        .header("cookie", cookies)
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-fn get_with_cookies(path: &str, cookies: &str) -> Request<Body> {
-    Request::get(path)
-        .header("cookie", cookies)
-        .body(Body::empty())
-        .unwrap()
-}
-
 fn put_json_with_cookies(path: &str, body: &Value, cookies: &str) -> Request<Body> {
     Request::put(path)
         .header("content-type", "application/json")
@@ -93,20 +61,6 @@ fn delete_with_cookies(path: &str, cookies: &str) -> Request<Body> {
 struct TestResponse {
     status: StatusCode,
     json: Value,
-}
-
-fn extract_cookies(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for header in headers.get_all("set-cookie") {
-        if let Ok(s) = header.to_str() {
-            if let Some(cookie_part) = s.split(';').next() {
-                if let Some((name, value)) = cookie_part.split_once('=') {
-                    map.insert(name.trim().to_string(), value.trim().to_string());
-                }
-            }
-        }
-    }
-    map
 }
 
 async fn send(router: Router, req: Request<Body>) -> TestResponse {

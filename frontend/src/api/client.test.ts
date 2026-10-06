@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { api, ApiError } from './client';
 import { __resetSessionForTests, registerSessionHandlers, SessionExpiredError } from './session';
+import { fakeResponse } from '../test/helpers/fetchMock';
 
 type FetchMockPlan = Array<{ status: number; body?: unknown }>;
 
@@ -9,12 +10,7 @@ function planFetch(plan: FetchMockPlan): Mock<typeof fetch> {
   return vi.fn<typeof fetch>().mockImplementation(async (): Promise<Response> => {
     const entry = plan[Math.min(idx, plan.length - 1)];
     idx += 1;
-    return {
-      ok: entry.status >= 200 && entry.status < 300,
-      status: entry.status,
-      statusText: 'test',
-      json: async () => entry.body ?? {},
-    } as Response;
+    return fakeResponse(entry.status, entry.body ?? {});
   });
 }
 

@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MockedFunction } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AuthModal from './AuthModal';
 import * as AuthContextModule from './AuthContext';
 import { PASSWORD_MIN_LEN } from '../auth/passwordRules';
+import { authState } from '../test/helpers/mockAuth';
 
 vi.mock('./AuthContext');
 
-type UseAuthReturn = ReturnType<typeof AuthContextModule.useAuth>;
-const mockUseAuth = AuthContextModule.useAuth as MockedFunction<() => UseAuthReturn>;
+const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
 
 const loginSpy = vi.fn();
 const registerSpy = vi.fn();
@@ -20,13 +19,7 @@ const VALID_PASSWORD = 'correct-horse-battery';
 beforeEach(() => {
   loginSpy.mockResolvedValue(undefined);
   registerSpy.mockResolvedValue(undefined);
-  mockUseAuth.mockReturnValue({
-    user: null,
-    loading: false,
-    login: loginSpy,
-    register: registerSpy,
-    logout: vi.fn(),
-  });
+  mockUseAuth.mockReturnValue(authState({ login: loginSpy, register: registerSpy }));
 });
 
 afterEach(() => {

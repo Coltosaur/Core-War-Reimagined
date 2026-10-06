@@ -40,7 +40,7 @@
   font-weight: 700;
   font-size: var(--fs-200);
   letter-spacing: 0.25em;
-  color: var(--blood-bright);
+  color: var(--blood-light);
   text-shadow: 0 0 12px var(--blood-glow);
 }
 .brand:hover,

@@ -1,15 +1,5 @@
 import { warriorText } from '../../core/warriorColors';
 
-// Still used by the Match viewer, which hasn't moved to CSS Modules yet.
-export const PARSE_ERROR_STYLE: React.CSSProperties = {
-  padding: '0.5rem 1rem',
-  color: 'var(--blood-light)',
-  border: '1px solid var(--blood)',
-  borderRadius: 'var(--radius-sm)',
-  backgroundColor: 'color-mix(in srgb, var(--blood) 12%, transparent)',
-  fontSize: 'var(--fs-200)',
-};
-
 export const ONGOING = 0;
 export const VICTORY = 1;
 export const TIE = 2;

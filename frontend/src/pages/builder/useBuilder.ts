@@ -14,7 +14,7 @@ import {
   type Warrior,
 } from '../../warriors/library';
 import { registerRedcode, parseErrorToMarker } from '../../redcode/monaco';
-import { useAuth } from '../../api/AuthContext';
+import { useAuth } from '../../api/useAuth';
 
 export type ParseStatus = { ok: true; name: string | null } | { ok: false; message: string } | null;
 

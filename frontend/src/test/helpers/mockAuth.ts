@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
-// Type-only import: this module must not load AuthContext at runtime, so a
-// `vi.mock('.../api/AuthContext', async () => ...)` factory can import it.
-import type { useAuth } from '../../api/AuthContext';
+// Type-only import: this module must not load useAuth at runtime, so a
+// `vi.mock('.../api/useAuth', async () => ...)` factory can import it.
+import type { useAuth } from '../../api/useAuth';
 
 export type UseAuthReturn = ReturnType<typeof useAuth>;
 

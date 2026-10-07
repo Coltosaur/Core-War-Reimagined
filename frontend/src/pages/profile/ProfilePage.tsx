@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useAuth } from '../../api/AuthContext';
+import { useAuth } from '../../api/useAuth';
 import { getMyProfile, getPublicProfile, type PublicProfile } from '../../api/profile';
 import { listWarriors } from '../../api/warriors';
 import ProfileContent, { QuickActions } from './ProfileContent';

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '../../api/AuthContext';
+import { useAuth } from '../../api/useAuth';
 import alertStyles from '../../components/alert.module.css';
 import controls from '../../components/controls.module.css';
 import gridStyles from '../../core/CoreGrid.module.css';

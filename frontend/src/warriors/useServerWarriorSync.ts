@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useAuth } from '../api/AuthContext';
+import { useAuth } from '../api/useAuth';
 import { clearServerWarriors, setServerOwner, syncFromServer } from './library';
 
 /**

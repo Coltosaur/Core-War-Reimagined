@@ -3,18 +3,18 @@ import { render, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import AppLayout from './AppLayout';
-import * as AuthContextModule from './api/AuthContext';
+import * as useAuthModule from './api/useAuth';
 import { useServerWarriorSync } from './warriors/useServerWarriorSync';
 import { authState } from './test/helpers/mockAuth';
 
-vi.mock('./api/AuthContext');
+vi.mock('./api/useAuth');
 vi.mock('./warriors/useServerWarriorSync');
 // The modal has its own tests; here we only care that the shell opens it.
 vi.mock('./api/AuthModal', () => ({
   default: () => <div role="dialog" aria-label="auth" />,
 }));
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 const logoutSpy = vi.fn();
 
 function renderAt(path: string) {

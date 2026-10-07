@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../api/AuthContext';
+import { useAuth } from '../api/useAuth';
 import { installSocketAuthRecovery, type PendingSocketAction } from '../api/socketAuth';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
 import { io, type Socket } from 'socket.io-client';

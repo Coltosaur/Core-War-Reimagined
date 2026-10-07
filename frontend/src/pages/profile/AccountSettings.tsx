@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../api/useAuth';
 import { ApiError } from '../../api/client';
 import { getAccount, changePassword } from '../../api/account';
-import styles from './Profile.module.css';
+import alertStyles from '../../components/alert.module.css';
+import controls from '../../components/controls.module.css';
+import profileStyles from './Profile.module.css';
+import styles from './AccountSettings.module.css';
 import { PASSWORD_MIN_LEN, passwordMeetsRules } from '../../auth/passwordRules';
 import PasswordChecklist from '../../auth/PasswordChecklist';
 
@@ -12,139 +15,6 @@ import PasswordChecklist from '../../auth/PasswordChecklist';
  * delete-account. Deliberately absent from the public `/users/:username`
  * view — presence of this panel on the wrong route is a bug.
  */
-
-// --- styles ---
-
-const PANEL_STYLE: React.CSSProperties = {
-  marginTop: '2rem',
-};
-
-const ROW_STYLE: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  padding: '0.5rem 0',
-  borderBottom: '1px solid #1a1a1a',
-};
-
-const LABEL_STYLE: React.CSSProperties = {
-  fontSize: '0.7rem',
-  color: '#888',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-};
-
-const VALUE_STYLE: React.CSSProperties = {
-  color: '#e0e0e0',
-  fontSize: '0.85rem',
-};
-
-const FORM_STYLE: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.75rem',
-  padding: '1rem 0',
-};
-
-const FIELD_LABEL: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.25rem',
-  fontSize: '0.75rem',
-  color: '#aaa',
-};
-
-// Split into borderWidth/Style/Color instead of the `border` shorthand so
-// per-instance overrides of borderColor don't collide with the shorthand
-// (React logs a warning on that pattern during rerender).
-const INPUT_BASE: React.CSSProperties = {
-  backgroundColor: '#111',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: '#333',
-  borderRadius: '4px',
-  padding: '0.5rem',
-  color: '#e0e0e0',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  outline: 'none',
-};
-
-const SUBMIT_BTN: React.CSSProperties = {
-  backgroundColor: '#e94560',
-  color: '#fff',
-  border: 'none',
-  borderRadius: '4px',
-  padding: '0.6rem',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-  marginTop: '0.25rem',
-};
-
-const SUBMIT_DISABLED: React.CSSProperties = {
-  ...SUBMIT_BTN,
-  backgroundColor: '#333',
-  color: '#666',
-  cursor: 'not-allowed',
-};
-
-const ERROR_STYLE: React.CSSProperties = {
-  color: '#e94560',
-  fontSize: '0.75rem',
-};
-
-const SUCCESS_STYLE: React.CSSProperties = {
-  color: '#4caf50',
-  fontSize: '0.75rem',
-};
-
-const LOGOUT_BTN: React.CSSProperties = {
-  backgroundColor: 'transparent',
-  color: '#e94560',
-  border: '1px solid #e9456066',
-  borderRadius: '4px',
-  padding: '0.5rem 1rem',
-  fontSize: '0.8rem',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-  marginTop: '0.5rem',
-};
-
-const COMING_SOON_GRID: React.CSSProperties = {
-  display: 'flex',
-  gap: '0.75rem',
-  padding: '0.75rem 0',
-  flexWrap: 'wrap',
-};
-
-const COMING_SOON_TILE: React.CSSProperties = {
-  flex: '1 1 200px',
-  padding: '0.75rem',
-  border: '1px dashed #333',
-  borderRadius: '6px',
-  backgroundColor: '#0d0d0d',
-  color: '#555',
-};
-
-const COMING_SOON_TITLE: React.CSSProperties = {
-  fontSize: '0.85rem',
-  color: '#888',
-  marginBottom: '0.15rem',
-};
-
-const COMING_SOON_TAG: React.CSSProperties = {
-  fontSize: '0.6rem',
-  letterSpacing: '0.1em',
-  textTransform: 'uppercase',
-  color: '#e9456099',
-};
-
-function inputStyle(showValid: boolean | null): React.CSSProperties {
-  if (showValid === true) return { ...INPUT_BASE, borderColor: '#4caf5066' };
-  if (showValid === false) return { ...INPUT_BASE, borderColor: '#e9456099' };
-  return INPUT_BASE;
-}
 
 export default function AccountSettings() {
   const { logout } = useAuth();
@@ -211,29 +81,29 @@ export default function AccountSettings() {
   }
 
   return (
-    <section style={PANEL_STYLE} aria-label="Account settings">
-      <h2 className={styles.sectionHeader}>Account Settings</h2>
+    <section className={styles.panel} aria-label="Account settings">
+      <h2 className={profileStyles.sectionHeader}>Account Settings</h2>
 
-      <div style={ROW_STYLE}>
-        <span style={LABEL_STYLE}>Email</span>
-        <span style={VALUE_STYLE} data-testid="account-email">
+      <div className={styles.row}>
+        <span className={styles.label}>Email</span>
+        <span className={styles.value} data-testid="account-email">
           {loadError ? (
-            <span style={ERROR_STYLE}>{loadError}</span>
+            <span className={styles.loadError}>{loadError}</span>
           ) : email === undefined ? (
-            <span style={{ color: '#666' }}>Loading...</span>
+            <span className={styles.pending}>Loading...</span>
           ) : email === null ? (
-            <span style={{ color: '#666', fontStyle: 'italic' }}>Not set</span>
+            <span className={styles.notSet}>Not set</span>
           ) : (
             email
           )}
         </span>
       </div>
 
-      <form onSubmit={handleSubmit} style={FORM_STYLE} aria-label="Change password">
-        <label style={FIELD_LABEL}>
+      <form onSubmit={handleSubmit} className={styles.form} aria-label="Change password">
+        <label className={styles.field}>
           Current password
           <input
-            style={INPUT_BASE}
+            className={controls.input}
             type="password"
             autoComplete="current-password"
             value={currentPassword}
@@ -245,10 +115,10 @@ export default function AccountSettings() {
           />
         </label>
 
-        <label style={FIELD_LABEL}>
+        <label className={styles.field}>
           New password
           <input
-            style={inputStyle(newPassword.length === 0 ? null : newPasswordValid)}
+            className={`${controls.input} ${newPassword.length === 0 ? '' : newPasswordValid ? styles.valid : styles.invalid}`}
             type="password"
             autoComplete="new-password"
             value={newPassword}
@@ -265,34 +135,43 @@ export default function AccountSettings() {
             the input's accessible name and is announced as part of it. */}
         <PasswordChecklist id="password-rules" password={newPassword} />
 
-        {formError && <div style={ERROR_STYLE}>{formError}</div>}
+        {formError && (
+          <div role="alert" className={alertStyles.error}>
+            {formError}
+          </div>
+        )}
         {formSuccess && (
-          <div style={SUCCESS_STYLE}>Password updated. Other sessions have been signed out.</div>
+          <div role="status" className={styles.success}>
+            Password updated. Other sessions have been signed out.
+          </div>
         )}
 
         <button
           type="submit"
           disabled={!canSubmit}
-          style={canSubmit ? SUBMIT_BTN : SUBMIT_DISABLED}
+          className={`${controls.button} ${controls.primary} ${styles.submit}`}
         >
           {submitting ? '...' : 'Change password'}
         </button>
       </form>
 
-      <h2 className={styles.sectionHeader}>Session</h2>
-      <button style={LOGOUT_BTN} onClick={() => void logout()}>
+      <h2 className={profileStyles.sectionHeader}>Session</h2>
+      <button
+        className={`${controls.button} ${controls.danger} ${styles.logout}`}
+        onClick={() => void logout()}
+      >
         Log out
       </button>
 
-      <h2 className={styles.sectionHeader}>Coming soon</h2>
-      <div style={COMING_SOON_GRID}>
-        <div style={COMING_SOON_TILE} aria-disabled>
-          <div style={COMING_SOON_TITLE}>Change email</div>
-          <span style={COMING_SOON_TAG}>Coming soon</span>
+      <h2 className={profileStyles.sectionHeader}>Coming soon</h2>
+      <div className={styles.comingSoon}>
+        <div className={styles.tile} aria-disabled>
+          <div className={styles.tileTitle}>Change email</div>
+          <span className={styles.tag}>Coming soon</span>
         </div>
-        <div style={COMING_SOON_TILE} aria-disabled>
-          <div style={COMING_SOON_TITLE}>Delete account</div>
-          <span style={COMING_SOON_TAG}>Coming soon</span>
+        <div className={styles.tile} aria-disabled>
+          <div className={styles.tileTitle}>Delete account</div>
+          <span className={styles.tag}>Coming soon</span>
         </div>
       </div>
     </section>

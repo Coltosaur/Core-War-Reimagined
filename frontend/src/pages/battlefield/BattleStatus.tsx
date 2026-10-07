@@ -1,6 +1,6 @@
 import { engineVersion } from 'core-war-engine';
 import { warriorText } from '../../core/warriorColors';
-import { resultBanner } from './styles';
+import { resultBanner } from './battleResult';
 import styles from './BattleStatus.module.css';
 
 type WarriorStatus = { name: string; alive: boolean; procs: number };
@@ -26,17 +26,13 @@ function ResultBanner({
   if (!banner) return null;
 
   // The tint follows the outcome (winner's color, tie, no winner), so it's
-  // computed here rather than enumerated as classes.
+  // passed in as a custom property rather than enumerated as classes; the
+  // border, background and glow derive from it in BattleStatus.module.css.
   return (
     <div
       role="status"
       className={styles.banner}
-      style={{
-        color: banner.color,
-        borderColor: `color-mix(in srgb, ${banner.color} 30%, transparent)`,
-        backgroundColor: `color-mix(in srgb, ${banner.color} 7%, transparent)`,
-        textShadow: `0 0 12px color-mix(in srgb, ${banner.color} 40%, transparent)`,
-      }}
+      style={{ '--tint': banner.color } as React.CSSProperties}
     >
       {banner.text}
     </div>

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { ONGOING } from './styles';
+import { ONGOING } from './battleResult';
 import controls from '../../components/controls.module.css';
 
 type Props = {

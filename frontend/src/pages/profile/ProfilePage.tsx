@@ -4,8 +4,10 @@ import { useAuth } from '../../api/useAuth';
 import { getMyProfile, getPublicProfile, type PublicProfile } from '../../api/profile';
 import { listWarriors } from '../../api/warriors';
 import ProfileContent, { QuickActions } from './ProfileContent';
-import type { ProfileWarrior } from './profileStyles';
+import type { ProfileWarrior } from './profileUtils';
 import AccountSettings from './AccountSettings';
+import alertStyles from '../../components/alert.module.css';
+import styles from './Profile.module.css';
 
 /**
  * Two entry paths, one shared render (see ProfileContent):
@@ -18,35 +20,20 @@ import AccountSettings from './AccountSettings';
  * the same visual list without a backend contract change.
  */
 
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  padding: '2rem',
-  maxWidth: '720px',
-  margin: '0 auto',
-};
-
-const LOGIN_PROMPT: React.CSSProperties = {
-  minHeight: '100vh',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '1rem',
-  color: '#888',
-};
-
 function LoadingPage() {
   return (
-    <div style={PAGE_STYLE}>
-      <p style={{ color: '#888' }}>Loading...</p>
+    <div className={styles.page}>
+      <p className={styles.hint}>Loading...</p>
     </div>
   );
 }
 
 function ErrorPage({ message }: { message: string }) {
   return (
-    <div style={PAGE_STYLE}>
-      <p style={{ color: '#e94560' }}>{message}</p>
+    <div className={styles.page}>
+      <p role="alert" className={alertStyles.error}>
+        {message}
+      </p>
     </div>
   );
 }
@@ -161,7 +148,7 @@ export default function ProfilePage() {
 
   if (!user) {
     return (
-      <div style={LOGIN_PROMPT}>
+      <div className={styles.prompt}>
         <p>Log in to view your dashboard.</p>
       </div>
     );

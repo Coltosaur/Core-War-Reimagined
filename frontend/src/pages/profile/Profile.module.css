@@ -1,0 +1,205 @@
+/*
+ * Shared by the own dashboard (/profile) and the public view
+ * (/users/:name): one centered column of header, stat cards, sections.
+ * AccountSettings reuses .sectionHeader so every section reads alike.
+ */
+.page {
+  max-width: 45rem;
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.hint {
+  color: var(--text-muted);
+}
+
+/* Logged-out /profile: centered in the shell's content area. */
+.prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-6) var(--space-4);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.username {
+  margin: 0;
+  min-width: 0;
+  color: var(--blood-light);
+  font-size: var(--fs-600);
+  letter-spacing: 0.08em;
+  overflow-wrap: anywhere;
+}
+
+.joined {
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+}
+
+/* Five cards: a 2-column grid on phones (the last one spans), one row
+   from 48rem. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.stat {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.stat:last-child {
+  grid-column: 1 / -1;
+}
+
+.statValue {
+  color: var(--text);
+  font-size: var(--fs-600);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.wins {
+  color: var(--necrotic);
+}
+
+.losses {
+  color: var(--blood-light);
+}
+
+.ties {
+  color: var(--violet);
+}
+
+.statLabel {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--fs-100);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sectionHeader {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-5);
+}
+
+/* Links styled as the shared controls buttons. */
+.action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0 var(--space-4);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-200);
+  transition:
+    border-color var(--dur-fast) var(--easing),
+    box-shadow var(--dur-fast) var(--easing);
+}
+
+.action:hover,
+.action:focus-visible {
+  border-color: var(--necrotic-dim);
+  text-shadow: none;
+}
+
+.actions .primary {
+  color: var(--necrotic);
+  border-color: var(--necrotic-dim);
+}
+
+.actions .primary:hover,
+.actions .primary:focus-visible {
+  border-color: var(--necrotic);
+  box-shadow: var(--shadow-necrotic);
+}
+
+.warriors {
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.warrior {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.warriorName {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.warriorDate {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+}
+
+.empty {
+  margin: 0 0 var(--space-6);
+  padding: var(--space-3) 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+@media (min-width: 48rem) {
+  .page {
+    padding-inline: var(--space-6);
+  }
+
+  .username {
+    font-size: var(--fs-700);
+  }
+
+  .stats {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .stat:last-child {
+    grid-column: auto;
+  }
+
+  .action {
+    min-height: 2.25rem;
+  }
+}

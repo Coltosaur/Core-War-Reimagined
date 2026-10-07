@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AuthModal from './AuthModal';
 import * as useAuthModule from './useAuth';
@@ -194,7 +194,10 @@ describe('AuthModal — dialog semantics', () => {
     const user = userEvent.setup();
     render(<AuthModal onClose={onClose} />);
     const dialog = screen.getByRole('dialog', { name: 'Log In' });
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // A native <dialog> carries the role itself; the attributes would be noise.
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog).not.toHaveAttribute('role');
+    expect(dialog).not.toHaveAttribute('aria-modal');
 
     await goToRegister(user);
     expect(screen.getByRole('dialog', { name: 'Create Account' })).toBeInTheDocument();
@@ -213,5 +216,61 @@ describe('AuthModal — dialog semantics', () => {
     render(<AuthModal onClose={onClose} />);
     await user.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+// The polyfill in test/setup.ts only toggles `open`; these cover our wiring
+// to the dialog API. Focus trapping, real Escape handling and focus
+// restoration are browser behaviour and are verified in Chromium instead.
+describe('AuthModal — native dialog wiring', () => {
+  it('opens itself as a modal on mount and focuses the first field', () => {
+    const showModal = vi.spyOn(HTMLDialogElement.prototype, 'showModal');
+    render(<AuthModal onClose={onClose} />);
+    expect(showModal).toHaveBeenCalledOnce();
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    expect(screen.getByLabelText('Username or Email')).toHaveFocus();
+    showModal.mockRestore();
+  });
+
+  it('closes the native dialog when it unmounts, so the browser restores focus', () => {
+    const close = vi.spyOn(HTMLDialogElement.prototype, 'close');
+    const { unmount } = render(<AuthModal onClose={onClose} />);
+    const dialog = screen.getByRole('dialog');
+    unmount();
+    expect(close).toHaveBeenCalledOnce();
+    expect(close.mock.contexts[0]).toBe(dialog);
+    close.mockRestore();
+  });
+
+  it.each(['login', 'register'] as const)(
+    'routes Escape (the cancel event) to onClose in %s mode and leaves closing to the parent',
+    async (mode) => {
+      const user = userEvent.setup();
+      render(<AuthModal onClose={onClose} />);
+      if (mode === 'register') await goToRegister(user);
+
+      const dialog = screen.getByRole('dialog');
+      const cancel = new Event('cancel', { cancelable: true });
+      fireEvent(dialog, cancel);
+
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(cancel.defaultPrevented).toBe(true);
+      expect(dialog).toHaveAttribute('open');
+    },
+  );
+
+  it('reports a close the browser forced on its own', () => {
+    render(<AuthModal onClose={onClose} />);
+    // e.g. a repeated Escape that Chrome won't let the page cancel.
+    (screen.getByRole('dialog') as HTMLDialogElement).close();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a close event that arrives after the dialog was reopened', () => {
+    render(<AuthModal onClose={onClose} />);
+    // StrictMode's dev effect re-run: cleanup close() queues `close`, the
+    // effect reopens, and the stale event lands on an open dialog.
+    fireEvent(screen.getByRole('dialog'), new Event('close'));
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

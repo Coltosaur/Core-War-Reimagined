@@ -14,6 +14,10 @@ permissions: {}
 env:
   CARGO_TERM_COLOR: always
 
+# The `name:` of the engine, backend, frontend and audit jobs are required
+# status checks in the `require_PR` ruleset on master, matched by exact
+# string. Renaming one means updating the ruleset in the same change, or every
+# PR waits forever on a check that never reports.
 jobs:
   engine:
     name: Engine (test + clippy + wasm)
@@ -191,6 +195,12 @@ jobs:
 
       - name: Check formatting
         run: npm run format:check
+
+      # Vite and Vitest strip types without checking them, so this is the
+      # only step that fails on a type error. It needs engine/pkg (built
+      # above) for the core-war-engine types.
+      - name: Type-check
+        run: npm run typecheck
 
       - name: Run tests
         run: npm run test

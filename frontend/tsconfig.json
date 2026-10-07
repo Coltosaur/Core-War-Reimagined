@@ -1,18 +1,13 @@
+// Solution-style root: no files of its own. `tsc -b` (npm run typecheck)
+// checks both projects; editors resolve each file to the project that
+// includes it.
+//
+// Two projects because the code runs in two environments. App code runs in
+// the browser and must not see Node's globals (with @types/node loaded,
+// `setTimeout` returns NodeJS.Timeout and `process` type-checks, both
+// wrong for the browser). Build tooling and the few tests that read files
+// off disk run in Node and need `node:*` types.
 {
-  "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": true,
-    "types": ["vitest/globals"]
-  },
-  "include": ["src"]
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
 }

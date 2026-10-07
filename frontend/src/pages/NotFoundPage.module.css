@@ -1,0 +1,67 @@
+/*
+ * Centered in the shell's content area like the Home hero: min-height:
+ * 100% of <main>, not 100vh, so it never runs under the shell bars.
+ */
+.page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 45rem;
+  min-height: 100%;
+  margin-inline: auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.code {
+  margin: 0;
+  color: var(--blood-light);
+  font-size: var(--fs-800);
+  letter-spacing: 0.08em;
+  text-shadow: var(--shadow-blood);
+}
+
+.title {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-500);
+  letter-spacing: 0.08em;
+}
+
+/* Drawn like one inspected core cell: the requested address, then the
+   instruction that "lives" there. */
+.cell {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blood);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-200);
+  overflow-wrap: anywhere;
+}
+
+.address {
+  color: var(--text-muted);
+}
+
+.instruction {
+  color: var(--text);
+}
+
+.comment {
+  color: var(--text-dim);
+}
+
+.message {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+@media (min-width: 48rem) {
+  .code {
+    font-size: var(--fs-900);
+  }
+
+  .title {
+    font-size: var(--fs-600);
+  }
+}

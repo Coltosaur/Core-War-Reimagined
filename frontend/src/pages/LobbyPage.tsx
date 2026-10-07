@@ -4,78 +4,17 @@ import { useAuth } from '../api/AuthContext';
 import { installSocketAuthRecovery, type PendingSocketAction } from '../api/socketAuth';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
 import { io, type Socket } from 'socket.io-client';
+import alertStyles from '../components/alert.module.css';
+import controls from '../components/controls.module.css';
+import { matchOutcome } from './match/matchOutcome';
 import type { MatchStartPayload } from './match/useMatchReplay';
+import styles from './LobbyPage.module.css';
 
 const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 function serverUuid(w: Warrior): string | null {
   return w.id.startsWith('server:') ? w.id.slice(7) : null;
 }
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '2rem',
-  gap: '1.5rem',
-};
-
-const TITLE_STYLE: React.CSSProperties = {
-  margin: 0,
-  fontSize: '1.8rem',
-  color: '#e94560',
-  letterSpacing: '0.08em',
-};
-
-const SELECT_STYLE: React.CSSProperties = {
-  padding: '0.5rem 0.75rem',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  backgroundColor: '#111',
-  color: '#e0e0e0',
-  border: '1px solid #333',
-  borderRadius: '4px',
-  minWidth: '200px',
-};
-
-const BTN_STYLE: React.CSSProperties = {
-  padding: '0.75rem 2rem',
-  fontSize: '1rem',
-  fontFamily: 'inherit',
-  letterSpacing: '0.05em',
-  border: 'none',
-  borderRadius: '6px',
-  cursor: 'pointer',
-  transition: 'background-color 0.15s',
-};
-
-const QUEUE_BTN: React.CSSProperties = {
-  ...BTN_STYLE,
-  backgroundColor: '#e94560',
-  color: '#fff',
-};
-
-const CANCEL_BTN: React.CSSProperties = {
-  ...BTN_STYLE,
-  backgroundColor: '#333',
-  color: '#e0e0e0',
-};
-
-const STATUS_STYLE: React.CSSProperties = {
-  color: '#888',
-  fontSize: '0.85rem',
-};
-
-const RESULT_BOX: React.CSSProperties = {
-  padding: '1.5rem',
-  backgroundColor: '#111',
-  border: '1px solid #333',
-  borderRadius: '8px',
-  textAlign: 'center',
-  minWidth: '300px',
-};
 
 type MatchFoundData = {
   match_id: string;
@@ -225,32 +164,43 @@ export default function LobbyPage() {
 
   if (!user) {
     return (
-      <div style={PAGE_STYLE}>
-        <p style={{ color: '#888' }}>Log in to play ranked matches.</p>
+      <div className={styles.page}>
+        <h1 className={styles.title}>Ranked Play</h1>
+        <p className={styles.hint}>Log in to play ranked matches.</p>
       </div>
     );
   }
 
   if (userWarriors.length === 0) {
     return (
-      <div style={PAGE_STYLE}>
-        <h1 style={TITLE_STYLE}>Ranked Play</h1>
-        <p style={{ color: '#888' }}>Save a warrior in the Builder to enter matchmaking.</p>
+      <div className={styles.page}>
+        <h1 className={styles.title}>Ranked Play</h1>
+        <p className={styles.hint}>Save a warrior in the Builder to enter matchmaking.</p>
       </div>
     );
   }
 
-  return (
-    <div style={PAGE_STYLE}>
-      <h1 style={TITLE_STYLE}>Ranked Play</h1>
+  const outcome =
+    result && matchOutcome(result.result, result.red_username, result.blue_username, user.username);
 
-      {error && <p style={{ color: '#e94560' }}>{error}</p>}
+  return (
+    <div className={styles.page}>
+      <h1 className={styles.title}>Ranked Play</h1>
+
+      {error && (
+        <p role="alert" className={alertStyles.error}>
+          {error}
+        </p>
+      )}
 
       {phase === 'idle' && (
-        <>
-          <label style={{ color: '#888', fontSize: '0.75rem' }}>Choose your warrior</label>
+        <div className={styles.picker}>
+          <label htmlFor="lobby-warrior" className={styles.label}>
+            Choose your warrior
+          </label>
           <select
-            style={SELECT_STYLE}
+            id="lobby-warrior"
+            className={controls.select}
             value={effectiveId}
             onChange={(e) => setSelectedId(e.target.value)}
           >
@@ -260,68 +210,53 @@ export default function LobbyPage() {
               </option>
             ))}
           </select>
-          <button style={QUEUE_BTN} onClick={() => joinQueue(effectiveId)}>
+          <button
+            className={`${controls.button} ${controls.primary}`}
+            onClick={() => joinQueue(effectiveId)}
+          >
             Find Match
           </button>
-        </>
+        </div>
       )}
 
       {phase === 'queued' && (
         <>
-          <p style={STATUS_STYLE}>Searching for opponent...</p>
-          <button style={CANCEL_BTN} onClick={leaveQueue}>
+          <p role="status" className={styles.status}>
+            Searching for opponent...
+          </p>
+          <button className={controls.button} onClick={leaveQueue}>
             Cancel
           </button>
         </>
       )}
 
       {phase === 'matched' && matchInfo && (
-        <div style={RESULT_BOX}>
-          <p style={{ color: '#f0c040', fontSize: '1.1rem', fontWeight: 600 }}>Match Found!</p>
-          <p style={{ color: '#e0e0e0' }}>
+        <div role="status" className={styles.card}>
+          <p className={styles.found}>Match Found!</p>
+          <p className={styles.versus}>
             {matchInfo.red_username} vs {matchInfo.blue_username}
           </p>
-          <p style={STATUS_STYLE}>Running battle...</p>
+          <p className={styles.status}>Running battle...</p>
         </div>
       )}
 
-      {phase === 'result' && result && (
-        <div style={RESULT_BOX}>
-          <p
-            style={{
-              fontSize: '1.3rem',
-              fontWeight: 700,
-              color: resultColor(
-                result.result,
-                result.red_username,
-                result.blue_username,
-                user.username,
-              ),
-            }}
-          >
-            {resultLabel(result.result, result.red_username, result.blue_username, user.username)}
+      {phase === 'result' && result && outcome && (
+        <div role="status" className={styles.card}>
+          <p className={styles.headline} style={{ color: outcome.color }}>
+            {outcome.text}
           </p>
-          <p style={{ color: '#e0e0e0', margin: '0.5rem 0' }}>
+          <p className={styles.versus}>
             {result.red_username} vs {result.blue_username}
           </p>
-          <p style={STATUS_STYLE}>{result.steps_taken.toLocaleString()} steps</p>
-          <button style={{ ...QUEUE_BTN, marginTop: '1rem' }} onClick={resetLobby}>
+          <p className={styles.status}>{result.steps_taken.toLocaleString()} steps</p>
+          <button
+            className={`${controls.button} ${controls.primary} ${styles.again}`}
+            onClick={resetLobby}
+          >
             Play Again
           </button>
         </div>
       )}
     </div>
   );
-}
-
-function resultLabel(result: string, red: string, blue: string, me: string): string {
-  if (result === 'tie' || result === 'all_dead') return 'Draw';
-  const winner = result === 'red_win' ? red : blue;
-  return winner === me ? 'Victory!' : 'Defeat';
-}
-
-function resultColor(result: string, red: string, blue: string, me: string): string {
-  if (result === 'tie' || result === 'all_dead') return '#f0c040';
-  const winner = result === 'red_win' ? red : blue;
-  return winner === me ? '#4caf50' : '#e94560';
 }

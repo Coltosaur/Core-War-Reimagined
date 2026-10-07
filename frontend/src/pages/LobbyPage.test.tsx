@@ -205,3 +205,38 @@ describe('LobbyPage — socket auth recovery (issues #60, #127)', () => {
     expect(joins()).toHaveLength(1);
   });
 });
+
+describe('LobbyPage — match result card', () => {
+  async function showResult(result: string) {
+    const user = userEvent.setup();
+    renderLobby();
+    await user.click(screen.getByRole('button', { name: /find match/i }));
+    currentSocket._fire('match:result', {
+      match_id: 'm1',
+      result,
+      steps_taken: 1234,
+      red_username: 'vale',
+      blue_username: 'orion',
+    });
+  }
+
+  it('labels the outcome from the player’s side and colors it by the winning seat', async () => {
+    await showResult('blue_win');
+    const headline = await screen.findByText('Defeat');
+    expect(headline).toHaveStyle({ color: 'var(--necrotic)' });
+    expect(screen.getByText('vale vs orion')).toBeInTheDocument();
+  });
+
+  it('shows a draw in violet', async () => {
+    await showResult('tie');
+    expect(await screen.findByText('Draw')).toHaveStyle({ color: 'var(--violet)' });
+  });
+
+  it('Play Again returns to the warrior picker', async () => {
+    const user = userEvent.setup();
+    await showResult('red_win');
+    expect(await screen.findByText('Victory!')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /play again/i }));
+    expect(screen.getByLabelText(/choose your warrior/i)).toBeInTheDocument();
+  });
+});

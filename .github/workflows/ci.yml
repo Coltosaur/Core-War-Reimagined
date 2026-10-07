@@ -192,6 +192,12 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      # Vite and Vitest strip types without checking them, so this is the
+      # only step that fails on a type error. It needs engine/pkg (built
+      # above) for the core-war-engine types.
+      - name: Type-check
+        run: npm run typecheck
+
       - name: Run tests
         run: npm run test
 

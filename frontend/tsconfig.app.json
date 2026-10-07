@@ -1,0 +1,22 @@
+// Browser code and its tests: DOM types, no Node types.
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "types": ["vitest/globals"]
+  },
+  "include": ["src"],
+  // Node-run files, checked by tsconfig.node.json instead.
+  "exclude": ["src/deploy", "src/routes.test.ts", "src/styles/tokens.test.ts"]
+}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet, Link } from 'react-router-dom';
-import { useAuth } from './api/AuthContext';
+import { useAuth } from './api/useAuth';
 import AuthModal from './api/AuthModal';
 import { useServerWarriorSync } from './warriors/useServerWarriorSync';
 import styles from './AppLayout.module.css';

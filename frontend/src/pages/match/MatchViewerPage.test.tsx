@@ -3,15 +3,15 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import MatchViewerPage from './MatchViewerPage';
-import * as AuthContextModule from '../../api/AuthContext';
+import * as useAuthModule from '../../api/useAuth';
 import * as replayModule from './useMatchReplay';
 import type { MatchStartPayload } from './useMatchReplay';
 import { authState } from '../../test/helpers/mockAuth';
 
-vi.mock('../../api/AuthContext');
+vi.mock('../../api/useAuth');
 vi.mock('./useMatchReplay');
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 const mockUseMatchReplay = vi.mocked(replayModule.useMatchReplay);
 
 const payload: MatchStartPayload = {

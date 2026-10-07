@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import LobbyPage from './LobbyPage';
-import * as AuthContextModule from '../api/AuthContext';
+import * as useAuthModule from '../api/useAuth';
 import * as libraryModule from '../warriors/library';
 import { __resetSessionForTests } from '../api/session';
 import { makeFakeSocket, type FakeSocket } from '../test/helpers/fakeSocket';
@@ -29,10 +29,10 @@ vi.mock('socket.io-client', () => ({
   io: vi.fn(() => currentSocket as unknown),
 }));
 
-vi.mock('../api/AuthContext');
+vi.mock('../api/useAuth');
 vi.mock('../warriors/library');
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 const mockUseWarriorLibrary = libraryModule.useWarriorLibrary as MockedFunction<
   typeof libraryModule.useWarriorLibrary
 >;

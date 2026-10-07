@@ -4,14 +4,14 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AccountSettings from './AccountSettings';
 import * as accountApi from '../../api/account';
-import * as AuthContextModule from '../../api/AuthContext';
+import * as useAuthModule from '../../api/useAuth';
 import { ApiError } from '../../api/client';
 import { authState } from '../../test/helpers/mockAuth';
 
 vi.mock('../../api/account');
-vi.mock('../../api/AuthContext');
+vi.mock('../../api/useAuth');
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 const mockGetAccount = accountApi.getAccount as MockedFunction<typeof accountApi.getAccount>;
 const mockChangePassword = accountApi.changePassword as MockedFunction<
   typeof accountApi.changePassword

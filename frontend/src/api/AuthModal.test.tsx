@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AuthModal from './AuthModal';
-import * as AuthContextModule from './AuthContext';
+import * as useAuthModule from './useAuth';
 import { PASSWORD_MIN_LEN } from '../auth/passwordRules';
 import { authState } from '../test/helpers/mockAuth';
 
-vi.mock('./AuthContext');
+vi.mock('./useAuth');
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 
 const loginSpy = vi.fn();
 const registerSpy = vi.fn();

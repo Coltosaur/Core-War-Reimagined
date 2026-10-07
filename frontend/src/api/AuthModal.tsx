@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAuth } from './AuthContext';
+import { useAuth } from './useAuth';
 import { ApiError } from './client';
 import { PASSWORD_MIN_LEN, passwordMeetsRules } from '../auth/passwordRules';
 import PasswordChecklist from '../auth/PasswordChecklist';

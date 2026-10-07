@@ -6,15 +6,15 @@ import ProfilePage from './ProfilePage';
 import * as profileApi from '../../api/profile';
 import * as warriorsApi from '../../api/warriors';
 import * as accountApi from '../../api/account';
-import * as AuthContextModule from '../../api/AuthContext';
+import * as useAuthModule from '../../api/useAuth';
 import { authState } from '../../test/helpers/mockAuth';
 
 vi.mock('../../api/profile');
 vi.mock('../../api/warriors');
 vi.mock('../../api/account');
-vi.mock('../../api/AuthContext');
+vi.mock('../../api/useAuth');
 
-const mockUseAuth = vi.mocked(AuthContextModule.useAuth);
+const mockUseAuth = vi.mocked(useAuthModule.useAuth);
 const mockGetMyProfile = profileApi.getMyProfile as MockedFunction<typeof profileApi.getMyProfile>;
 const mockGetPublicProfile = profileApi.getPublicProfile as MockedFunction<
   typeof profileApi.getPublicProfile

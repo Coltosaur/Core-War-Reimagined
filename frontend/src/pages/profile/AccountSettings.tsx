@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAuth } from '../../api/AuthContext';
+import { useAuth } from '../../api/useAuth';
 import { ApiError } from '../../api/client';
 import { getAccount, changePassword } from '../../api/account';
 import { SECTION_HEADER } from './profileStyles';

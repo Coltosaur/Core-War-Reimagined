@@ -188,3 +188,30 @@ describe('AuthModal — register mode', () => {
     expect(passwordInput()).toHaveAccessibleName('Password');
   });
 });
+
+describe('AuthModal — dialog semantics', () => {
+  it('is a modal dialog named by its heading, in both modes', async () => {
+    const user = userEvent.setup();
+    render(<AuthModal onClose={onClose} />);
+    const dialog = screen.getByRole('dialog', { name: 'Log In' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+
+    await goToRegister(user);
+    expect(screen.getByRole('dialog', { name: 'Create Account' })).toBeInTheDocument();
+  });
+
+  it('names the email field by its label and describes it with the helper text', async () => {
+    const user = userEvent.setup();
+    render(<AuthModal onClose={onClose} />);
+    await goToRegister(user);
+    const email = screen.getByRole('textbox', { name: 'Email (optional)' });
+    expect(email).toHaveAccessibleDescription(/not used yet/i);
+  });
+
+  it('closes from the close button', async () => {
+    const user = userEvent.setup();
+    render(<AuthModal onClose={onClose} />);
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});

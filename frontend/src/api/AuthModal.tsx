@@ -3,8 +3,17 @@ import { useAuth } from './useAuth';
 import { ApiError } from './client';
 import { PASSWORD_MIN_LEN, passwordMeetsRules } from '../auth/passwordRules';
 import PasswordChecklist from '../auth/PasswordChecklist';
+import alertStyles from '../components/alert.module.css';
+import controls from '../components/controls.module.css';
+import styles from './AuthModal.module.css';
 
 type Props = { onClose: () => void };
+
+/** `null` = untouched (stay neutral, don't shout before they've typed). */
+function validityClass(showValid: boolean | null): string {
+  if (showValid === null) return controls.input;
+  return `${controls.input} ${showValid ? styles.valid : styles.invalid}`;
+}
 
 export default function AuthModal({ onClose }: Props) {
   const { login, register } = useAuth();
@@ -61,22 +70,27 @@ export default function AuthModal({ onClose }: Props) {
   };
 
   return (
-    <div style={OVERLAY}>
-      <div style={MODAL}>
-        <div style={HEADER}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem' }}>
+    <div className={styles.overlay}>
+      <div
+        className={styles.modal}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+      >
+        <div className={styles.header}>
+          <h2 id="auth-modal-title" className={styles.title}>
             {isRegister ? 'Create Account' : 'Log In'}
           </h2>
-          <button onClick={onClose} style={CLOSE_BTN} aria-label="Close">
+          <button onClick={onClose} className={styles.close} aria-label="Close">
             &times;
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} style={FORM}>
-          <label style={LABEL}>
+        <form onSubmit={handleSubmit} className={styles.form}>
+          <label className={styles.field}>
             {isRegister ? 'Username' : 'Username or Email'}
             <input
-              style={INPUT_BASE}
+              className={controls.input}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               autoFocus
@@ -85,26 +99,30 @@ export default function AuthModal({ onClose }: Props) {
           </label>
 
           {isRegister && (
-            <label style={LABEL}>
-              Email <span style={OPTIONAL_HINT}>(optional)</span>
+            // A <div> rather than a wrapping <label> so the helper text can
+            // sit outside the label and describe the field, not name it.
+            <div className={styles.field}>
+              <label htmlFor="register-email">
+                Email <span className={styles.optional}>(optional)</span>
+              </label>
               <input
-                style={INPUT_BASE}
+                id="register-email"
+                className={controls.input}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                aria-describedby="register-email-help"
               />
-              <span style={HELPER_TEXT}>
+              <span id="register-email-help" className={styles.helper}>
                 Not used yet — password recovery and verification arrive later.
               </span>
-            </label>
+            </div>
           )}
 
-          <label style={LABEL}>
+          <label className={styles.field}>
             Password
             <input
-              style={
-                isRegister ? inputStyle(password.length === 0 ? null : passwordValid) : INPUT_BASE
-              }
+              className={validityClass(isRegister && password.length > 0 ? passwordValid : null)}
               type="password"
               autoComplete={isRegister ? 'new-password' : 'current-password'}
               value={password}
@@ -121,10 +139,10 @@ export default function AuthModal({ onClose }: Props) {
 
           {isRegister && (
             <>
-              <label style={LABEL}>
+              <label className={styles.field}>
                 Confirm password
                 <input
-                  style={inputStyle(confirmPassword.length === 0 ? null : !showMismatch)}
+                  className={validityClass(confirmPassword.length === 0 ? null : !showMismatch)}
                   type="password"
                   autoComplete="new-password"
                   value={confirmPassword}
@@ -135,36 +153,40 @@ export default function AuthModal({ onClose }: Props) {
                 />
               </label>
               {showMismatch && (
-                <span id="confirm-mismatch" style={ERROR} role="alert">
+                <span id="confirm-mismatch" className={styles.mismatch} role="alert">
                   Passwords do not match
                 </span>
               )}
             </>
           )}
 
-          {error && <div style={ERROR}>{error}</div>}
+          {error && (
+            <div role="alert" className={alertStyles.error}>
+              {error}
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={!canSubmit}
-            style={canSubmit ? SUBMIT_BTN : SUBMIT_DISABLED}
+            className={`${controls.button} ${controls.primary} ${styles.submit}`}
           >
             {submitting ? '...' : isRegister ? 'Register' : 'Log In'}
           </button>
         </form>
 
-        <div style={TOGGLE}>
+        <div className={styles.toggle}>
           {isRegister ? (
             <>
               Already have an account?{' '}
-              <button style={LINK_BTN} onClick={() => switchMode('login')}>
+              <button className={styles.linkButton} onClick={() => switchMode('login')}>
                 Log in
               </button>
             </>
           ) : (
             <>
               No account?{' '}
-              <button style={LINK_BTN} onClick={() => switchMode('register')}>
+              <button className={styles.linkButton} onClick={() => switchMode('register')}>
                 Register
               </button>
             </>
@@ -174,132 +196,3 @@ export default function AuthModal({ onClose }: Props) {
     </div>
   );
 }
-
-const OVERLAY: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  backgroundColor: 'rgba(0,0,0,0.6)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 1000,
-};
-
-const MODAL: React.CSSProperties = {
-  backgroundColor: '#1a1a1a',
-  border: '1px solid #333',
-  borderRadius: '8px',
-  padding: '1.5rem',
-  width: '340px',
-  maxWidth: '90vw',
-  maxHeight: '90vh',
-  overflowY: 'auto',
-  fontFamily: 'var(--font-mono)',
-};
-
-const HEADER: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: '1rem',
-};
-
-const CLOSE_BTN: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: '#888',
-  fontSize: '1.5rem',
-  cursor: 'pointer',
-  padding: '0 0.25rem',
-};
-
-const FORM: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.75rem',
-};
-
-const LABEL: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '0.25rem',
-  fontSize: '0.8rem',
-  color: '#aaa',
-};
-
-// Split into borderWidth/Style/Color instead of the `border` shorthand so
-// per-instance overrides of borderColor don't collide with the shorthand
-// (React logs a warning on that pattern during rerender).
-const INPUT_BASE: React.CSSProperties = {
-  backgroundColor: '#111',
-  borderWidth: '1px',
-  borderStyle: 'solid',
-  borderColor: '#333',
-  borderRadius: '4px',
-  padding: '0.5rem',
-  color: '#e0e0e0',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  outline: 'none',
-};
-
-/** `null` = untouched (stay neutral, don't shout before they've typed). */
-function inputStyle(showValid: boolean | null): React.CSSProperties {
-  if (showValid === true) return { ...INPUT_BASE, borderColor: '#4caf5066' };
-  if (showValid === false) return { ...INPUT_BASE, borderColor: '#e9456099' };
-  return INPUT_BASE;
-}
-
-const ERROR: React.CSSProperties = {
-  color: '#e94560',
-  fontSize: '0.8rem',
-};
-
-const SUBMIT_BTN: React.CSSProperties = {
-  backgroundColor: '#e94560',
-  color: '#fff',
-  border: 'none',
-  borderRadius: '4px',
-  padding: '0.6rem',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  cursor: 'pointer',
-  marginTop: '0.25rem',
-};
-
-const SUBMIT_DISABLED: React.CSSProperties = {
-  ...SUBMIT_BTN,
-  backgroundColor: '#333',
-  color: '#666',
-  cursor: 'not-allowed',
-};
-
-const TOGGLE: React.CSSProperties = {
-  marginTop: '1rem',
-  textAlign: 'center',
-  fontSize: '0.75rem',
-  color: '#888',
-};
-
-const OPTIONAL_HINT: React.CSSProperties = {
-  color: '#666',
-  textTransform: 'none',
-  fontSize: '0.7rem',
-};
-
-const HELPER_TEXT: React.CSSProperties = {
-  color: '#666',
-  fontSize: '0.65rem',
-  marginTop: '0.15rem',
-};
-
-const LINK_BTN: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: '#4fc3f7',
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-  fontSize: '0.75rem',
-  textDecoration: 'underline',
-  padding: 0,
-};

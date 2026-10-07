@@ -1,30 +1,30 @@
 /*
- * Login / register dialog over a dimmed backdrop. Sized in dvh so the
- * on-screen keyboard shrinks the scroll area instead of pushing the
- * submit button off-screen on phones.
+ * Login / register panel, a native <dialog> opened with showModal(): it
+ * sits in the top layer and the browser centres it, so there is no overlay
+ * wrapper. Sized in dvh so the on-screen keyboard shrinks the scroll area
+ * instead of pushing the submit button off-screen on phones.
  */
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
-  animation: cw-fade-in var(--dur-med) ease-out both;
-}
-
 .modal {
+  /* Replace the UA dialog box (1em padding, black border, Canvas colours,
+     calc(100% - 2em - 6px) max-width) with the panel's own. */
   width: 22rem;
-  max-width: 100%;
+  max-width: calc(100% - 2 * var(--space-4));
   max-height: 90dvh;
   overflow-y: auto;
   padding: var(--space-5);
+  color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
+  animation: cw-fade-in var(--dur-med) ease-out both;
+}
+
+/* ::backdrop inherits custom properties from the dialog, so the tokens
+   resolve here as they did on the old overlay div. */
+.modal::backdrop {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  animation: cw-fade-in var(--dur-med) ease-out both;
 }
 
 .header {

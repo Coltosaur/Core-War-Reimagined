@@ -41,6 +41,10 @@
   border-color: var(--necrotic);
   box-shadow: var(--shadow-necrotic);
 }
+/* A disabled primary must not keep its call-to-action border. */
+.primary:disabled {
+  border-color: var(--border-strong);
+}
 
 .danger {
   color: var(--blood-light);

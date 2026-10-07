@@ -13,7 +13,9 @@ import styles from './PasswordChecklist.module.css';
 function RuleItem({ rule }: { rule: PasswordRule }) {
   return (
     <li className={rule.ok ? `${styles.rule} ${styles.ok}` : styles.rule}>
-      <span aria-hidden>{rule.ok ? '[x]' : '[ ]'}</span>
+      <span aria-hidden className={styles.glyph}>
+        {rule.ok ? '[x]' : '[ ]'}
+      </span>
       <span>{rule.label}</span>
       <span className={styles.visuallyHidden}>{rule.ok ? '(satisfied)' : '(not satisfied)'}</span>
     </li>

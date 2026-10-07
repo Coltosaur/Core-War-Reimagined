@@ -1,0 +1,128 @@
+/*
+ * Login / register dialog over a dimmed backdrop. Sized in dvh so the
+ * on-screen keyboard shrinks the scroll area instead of pushing the
+ * submit button off-screen on phones.
+ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  animation: cw-fade-in var(--dur-med) ease-out both;
+}
+
+.modal {
+  width: 22rem;
+  max-width: 100%;
+  max-height: 90dvh;
+  overflow-y: auto;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-400);
+}
+
+.close {
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--fs-500);
+  line-height: 1;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--easing);
+}
+
+.close:hover {
+  color: var(--text);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--fs-200);
+}
+
+.optional {
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+}
+
+.helper {
+  color: var(--text-dim);
+  font-size: var(--fs-100);
+}
+
+/* Border previews the rule / match check once typing starts; the
+   checklist and mismatch message carry the same state in text. */
+.form .valid {
+  border-color: var(--necrotic-dim);
+}
+
+.form .invalid {
+  border-color: var(--blood);
+}
+
+.mismatch {
+  color: var(--blood-light);
+  font-size: var(--fs-200);
+}
+
+.form .submit {
+  margin-top: var(--space-1);
+}
+
+.toggle {
+  margin-top: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--fs-200);
+  text-align: center;
+}
+
+/* A <button> that reads as an inline link (it switches modes, it doesn't
+   navigate). */
+.linkButton {
+  padding: 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--necrotic);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--easing),
+    text-shadow var(--dur-fast) var(--easing);
+}
+
+.linkButton:hover,
+.linkButton:focus-visible {
+  border-bottom-color: var(--necrotic);
+  text-shadow: 0 0 12px var(--necrotic-glow);
+}

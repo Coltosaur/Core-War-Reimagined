@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../api/useAuth';
 import { ApiError } from '../../api/client';
 import { getAccount, changePassword } from '../../api/account';
-import { SECTION_HEADER } from './profileStyles';
+import styles from './Profile.module.css';
 import { PASSWORD_MIN_LEN, passwordMeetsRules } from '../../auth/passwordRules';
 import PasswordChecklist from '../../auth/PasswordChecklist';
 
@@ -212,7 +212,7 @@ export default function AccountSettings() {
 
   return (
     <section style={PANEL_STYLE} aria-label="Account settings">
-      <div style={SECTION_HEADER}>Account Settings</div>
+      <h2 className={styles.sectionHeader}>Account Settings</h2>
 
       <div style={ROW_STYLE}>
         <span style={LABEL_STYLE}>Email</span>
@@ -279,12 +279,12 @@ export default function AccountSettings() {
         </button>
       </form>
 
-      <div style={SECTION_HEADER}>Session</div>
+      <h2 className={styles.sectionHeader}>Session</h2>
       <button style={LOGOUT_BTN} onClick={() => void logout()}>
         Log out
       </button>
 
-      <div style={SECTION_HEADER}>Coming soon</div>
+      <h2 className={styles.sectionHeader}>Coming soon</h2>
       <div style={COMING_SOON_GRID}>
         <div style={COMING_SOON_TILE} aria-disabled>
           <div style={COMING_SOON_TITLE}>Change email</div>

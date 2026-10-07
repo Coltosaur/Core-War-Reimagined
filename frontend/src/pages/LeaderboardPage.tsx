@@ -5,82 +5,9 @@ import {
   type LeaderboardEntry,
   type LeaderboardResponse,
 } from '../api/leaderboard';
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  padding: '2rem',
-  maxWidth: '720px',
-  margin: '0 auto',
-};
-
-const TITLE_STYLE: React.CSSProperties = {
-  margin: '0 0 1.5rem',
-  fontSize: '1.8rem',
-  color: '#e94560',
-  letterSpacing: '0.08em',
-};
-
-const TABLE_STYLE: React.CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-};
-
-const TH_STYLE: React.CSSProperties = {
-  textAlign: 'left',
-  padding: '0.6rem 0.75rem',
-  fontSize: '0.65rem',
-  letterSpacing: '0.1em',
-  color: '#666',
-  textTransform: 'uppercase',
-  borderBottom: '1px solid #333',
-};
-
-const TD_STYLE: React.CSSProperties = {
-  padding: '0.6rem 0.75rem',
-  borderBottom: '1px solid #1a1a1a',
-};
-
-const RANK_STYLE: React.CSSProperties = {
-  color: '#888',
-  fontWeight: 600,
-  width: '50px',
-};
-
-const USERNAME_LINK: React.CSSProperties = {
-  color: '#4fc3f7',
-  textDecoration: 'none',
-  fontWeight: 600,
-};
-
-const RATING_STYLE: React.CSSProperties = {
-  color: '#f0c040',
-  fontWeight: 700,
-  textAlign: 'right',
-};
-
-const PAGINATION_STYLE: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'center',
-  gap: '0.75rem',
-  marginTop: '1.5rem',
-};
-
-const PAGE_BTN: React.CSSProperties = {
-  padding: '0.4rem 1rem',
-  fontSize: '0.8rem',
-  fontFamily: 'inherit',
-  color: '#888',
-  backgroundColor: '#111',
-  border: '1px solid #333',
-  borderRadius: '4px',
-  cursor: 'pointer',
-};
-
-const PAGE_BTN_DISABLED: React.CSSProperties = {
-  ...PAGE_BTN,
-  opacity: 0.3,
-  cursor: 'default',
-};
+import alertStyles from '../components/alert.module.css';
+import controls from '../components/controls.module.css';
+import styles from './LeaderboardPage.module.css';
 
 function rankMedal(rank: number): string {
   if (rank === 1) return '\u{1F947}';
@@ -110,16 +37,20 @@ export default function LeaderboardPage() {
 
   if (error) {
     return (
-      <div style={PAGE_STYLE}>
-        <p style={{ color: '#e94560' }}>{error}</p>
+      <div className={styles.page}>
+        <h1 className={styles.title}>Leaderboard</h1>
+        <p role="alert" className={alertStyles.error}>
+          {error}
+        </p>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div style={PAGE_STYLE}>
-        <p style={{ color: '#888' }}>Loading...</p>
+      <div className={styles.page}>
+        <h1 className={styles.title}>Leaderboard</h1>
+        <p className={styles.hint}>Loading...</p>
       </div>
     );
   }
@@ -127,30 +58,28 @@ export default function LeaderboardPage() {
   const totalPages = Math.ceil(data.total / data.per_page);
 
   return (
-    <div style={PAGE_STYLE}>
-      <h1 style={TITLE_STYLE}>Leaderboard</h1>
+    <div className={styles.page}>
+      <h1 className={styles.title}>Leaderboard</h1>
 
       {data.entries.length === 0 ? (
-        <p style={{ color: '#555', fontStyle: 'italic' }}>No players yet.</p>
+        <p className={styles.empty}>No players yet.</p>
       ) : (
-        <table style={TABLE_STYLE}>
+        <table className={styles.table}>
           <thead>
             <tr>
-              <th style={TH_STYLE}>Rank</th>
-              <th style={TH_STYLE}>Player</th>
-              <th style={{ ...TH_STYLE, textAlign: 'right' }}>Rating</th>
+              <th>Rank</th>
+              <th>Player</th>
+              <th className={styles.rating}>Rating</th>
             </tr>
           </thead>
           <tbody>
             {data.entries.map((entry: LeaderboardEntry) => (
               <tr key={entry.user_id}>
-                <td style={{ ...TD_STYLE, ...RANK_STYLE }}>{rankMedal(entry.rank)}</td>
-                <td style={TD_STYLE}>
-                  <Link to={`/users/${entry.username}`} style={USERNAME_LINK}>
-                    {entry.username}
-                  </Link>
+                <td className={styles.rank}>{rankMedal(entry.rank)}</td>
+                <td className={styles.player}>
+                  <Link to={`/users/${entry.username}`}>{entry.username}</Link>
                 </td>
-                <td style={{ ...TD_STYLE, ...RATING_STYLE }}>{entry.rating}</td>
+                <td className={styles.rating}>{entry.rating}</td>
               </tr>
             ))}
           </tbody>
@@ -158,19 +87,19 @@ export default function LeaderboardPage() {
       )}
 
       {totalPages > 1 && (
-        <div style={PAGINATION_STYLE}>
+        <div className={`${controls.row} ${styles.pager}`}>
           <button
-            style={page <= 1 ? PAGE_BTN_DISABLED : PAGE_BTN}
+            className={controls.button}
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
             Prev
           </button>
-          <span style={{ color: '#666', fontSize: '0.8rem', alignSelf: 'center' }}>
+          <span className={styles.pageCount}>
             {page} / {totalPages}
           </span>
           <button
-            style={page >= totalPages ? PAGE_BTN_DISABLED : PAGE_BTN}
+            className={controls.button}
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >

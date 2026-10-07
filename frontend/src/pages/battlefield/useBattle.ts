@@ -5,7 +5,7 @@ import { createCoreRenderer, type CoreRenderer } from '../../core/coreRenderer';
 import { cellAddressAtPixel, formatCellTooltip } from '../../core/redcodeFormat';
 import { CORE_SIZE } from '../../core/constants';
 import { useWarriorLibrary, type Warrior } from '../../warriors/library';
-import { ONGOING } from './styles';
+import { ONGOING } from './battleResult';
 import type { CellInfo } from './InspectorPanel';
 
 function readCellFromMatch(match: MatchState, addr: number): CellInfo {

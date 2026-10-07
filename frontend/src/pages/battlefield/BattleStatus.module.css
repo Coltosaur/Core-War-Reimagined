@@ -15,11 +15,17 @@
   gap: var(--space-1) var(--space-5);
 }
 
+/* --tint is the only per-outcome value (winner's color, tie, no winner);
+   the component sets it inline and everything else derives from it. */
 .banner {
+  --tint: var(--text-muted);
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-5);
-  border: 1px solid;
+  color: var(--tint);
+  border: 1px solid color-mix(in srgb, var(--tint) 30%, transparent);
   border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--tint) 7%, transparent);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--tint) 40%, transparent);
   font-size: var(--fs-400);
   font-weight: 600;
   letter-spacing: 0.05em;

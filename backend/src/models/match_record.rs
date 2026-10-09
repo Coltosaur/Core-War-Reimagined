@@ -13,5 +13,7 @@ pub struct MatchRecord {
     pub max_steps: i32,
     pub result: String,
     pub steps_taken: i32,
+    /// True when the match moved Elo and counts toward profile W/L/T.
+    pub rated: bool,
     pub created_at: DateTime<Utc>,
 }

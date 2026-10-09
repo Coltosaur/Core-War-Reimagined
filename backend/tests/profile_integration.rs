@@ -176,6 +176,26 @@ async fn own_profile_counts_wins_losses_ties_across_both_sides(pool: PgPool) {
     assert_eq!(stats(&json), [2, 5, 2, 1, 2]);
 }
 
+#[sqlx::test]
+async fn own_profile_stats_db_error_is_500_not_zeroed(pool: PgPool) {
+    let router = app(pool.clone());
+    let (_, cookies) = register(&router, "alice").await;
+    // The users and warriors lookups still succeed; only the stats query fails.
+    sqlx::query("DROP TABLE matches CASCADE")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    for req in [
+        get_with_cookies("/api/profile", &cookies),
+        get_no_auth("/api/users/alice"),
+    ] {
+        let (status, json) = send(&router, req).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(json, json!({"error": "Internal server error"}));
+    }
+}
+
 // =============================================================================
 // /api/users/:username
 // =============================================================================

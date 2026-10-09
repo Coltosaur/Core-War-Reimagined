@@ -40,8 +40,11 @@ pub struct PublicProfileResponse {
     pub warriors: Vec<PublicWarrior>,
 }
 
-async fn fetch_match_stats(db: &sqlx::PgPool, user_id: Uuid) -> (i64, i64, i64, i64) {
-    let row = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+async fn fetch_match_stats(
+    db: &sqlx::PgPool,
+    user_id: Uuid,
+) -> Result<(i64, i64, i64, i64), sqlx::Error> {
+    sqlx::query_as::<_, (i64, i64, i64, i64)>(
         "SELECT \
            COUNT(*), \
            COUNT(*) FILTER (WHERE (red_user_id = $1 AND result = 'red_win') \
@@ -53,9 +56,7 @@ async fn fetch_match_stats(db: &sqlx::PgPool, user_id: Uuid) -> (i64, i64, i64, 
     )
     .bind(user_id)
     .fetch_one(db)
-    .await;
-
-    row.unwrap_or_default()
+    .await
 }
 
 async fn build_profile(
@@ -75,7 +76,7 @@ async fn build_profile(
             .fetch_one(db)
             .await?;
 
-    let (match_count, wins, losses, ties) = fetch_match_stats(db, user_id).await;
+    let (match_count, wins, losses, ties) = fetch_match_stats(db, user_id).await?;
 
     Ok(ProfileResponse {
         user_id: user_id.to_string(),

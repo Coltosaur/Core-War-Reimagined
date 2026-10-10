@@ -81,8 +81,9 @@ async fn insert_match(
 ) -> Uuid {
     sqlx::query_scalar(
         "INSERT INTO matches (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
-           result, steps_taken, created_at) \
-         VALUES ($1, $2, $3, $4, 'tie', 80000, now() - make_interval(secs => $5)) RETURNING id",
+           result, steps_taken, rated, created_at) \
+         VALUES ($1, $2, $3, $4, 'tie', 80000, FALSE, now() - make_interval(secs => $5)) \
+         RETURNING id",
     )
     .bind(red_w)
     .bind(blue_w)
@@ -113,13 +114,14 @@ fn keys(v: &Value) -> Vec<&str> {
     k
 }
 
-const MATCH_KEYS: [&str; 10] = [
+const MATCH_KEYS: [&str; 11] = [
     "blue_user_id",
     "blue_warrior_id",
     "core_size",
     "created_at",
     "id",
     "max_steps",
+    "rated",
     "red_user_id",
     "red_warrior_id",
     "result",
@@ -178,6 +180,8 @@ async fn submit_runs_battle_and_returns_created_record(pool: PgPool) {
     assert_eq!(json["result"], "red_win");
     // Decisive match stops early (#87), not at max_steps.
     assert!(json["steps_taken"].as_i64().unwrap() < 80000);
+    // Ad-hoc matches never move Elo, so they're unrated (#145).
+    assert_eq!(json["rated"], false);
 
     let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM matches WHERE id = $1::uuid")
         .bind(json["id"].as_str().unwrap())

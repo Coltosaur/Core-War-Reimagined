@@ -40,6 +40,9 @@ pub struct PublicProfileResponse {
     pub warriors: Vec<PublicWarrior>,
 }
 
+/// Counts only rated matches, so profile W/L/T comes from the same set of
+/// matches as Elo. Unrated matches, including any against your own warriors,
+/// are excluded.
 async fn fetch_match_stats(
     db: &sqlx::PgPool,
     user_id: Uuid,
@@ -52,7 +55,7 @@ async fn fetch_match_stats(
            COUNT(*) FILTER (WHERE (red_user_id = $1 AND result = 'blue_win') \
                                 OR (blue_user_id = $1 AND result = 'red_win')), \
            COUNT(*) FILTER (WHERE result IN ('tie', 'all_dead')) \
-         FROM matches WHERE red_user_id = $1 OR blue_user_id = $1",
+         FROM matches WHERE rated AND (red_user_id = $1 OR blue_user_id = $1)",
     )
     .bind(user_id)
     .fetch_one(db)

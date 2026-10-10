@@ -192,6 +192,11 @@ async fn decisive_match_red_win_updates_ratings(pool: PgPool) {
         outcome.blue_rating_after
     );
     assert_eq!(match_row_count(&pool).await, 1);
+    let rated: bool = sqlx::query_scalar("SELECT rated FROM matches")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(rated, "matchmaking matches move Elo, so they're rated");
 }
 
 // =============================================================================

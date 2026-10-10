@@ -99,8 +99,8 @@ pub async fn execute_and_persist_match(
     let match_id: Uuid = sqlx::query_scalar(
         "INSERT INTO matches \
            (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
-            core_size, max_steps, result, steps_taken) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+            core_size, max_steps, result, steps_taken, rated) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE) \
          RETURNING id",
     )
     .bind(red_warrior_id)

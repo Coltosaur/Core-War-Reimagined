@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use axum::{middleware, Router};
-use core_war_backend::{auth, profile};
+use core_war_backend::{auth, matches, profile};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -14,12 +14,13 @@ use uuid::Uuid;
 
 mod common;
 
-use common::{extract_cookies, get_with_cookies, post_json, test_state};
+use common::{extract_cookies, get_with_cookies, post_json, post_json_with_cookies, test_state};
 
 fn app(pool: PgPool) -> Router {
     let state = test_state(pool);
     Router::new()
         .route("/api/auth/register", post(auth::handlers::register))
+        .route("/api/matches", post(matches::handlers::submit))
         .route("/api/profile", get(profile::handlers::me))
         .route(
             "/api/users/:username",
@@ -74,24 +75,32 @@ async fn insert_warrior(pool: &PgPool, user_id: Uuid, name: &str, secs_ago: i32)
     .unwrap()
 }
 
-async fn insert_match(
+async fn insert_match(pool: &PgPool, red: (Uuid, Uuid), blue: (Uuid, Uuid), result: &str) {
+    try_insert_match(pool, red, blue, result, true)
+        .await
+        .unwrap();
+}
+
+async fn try_insert_match(
     pool: &PgPool,
     (red_w, red_u): (Uuid, Uuid),
     (blue_w, blue_u): (Uuid, Uuid),
     result: &str,
-) {
+    rated: bool,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO matches (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
-           result, steps_taken) VALUES ($1, $2, $3, $4, $5, 10)",
+           result, steps_taken, rated) VALUES ($1, $2, $3, $4, $5, 10, $6)",
     )
     .bind(red_w)
     .bind(blue_w)
     .bind(red_u)
     .bind(blue_u)
     .bind(result)
+    .bind(rated)
     .execute(pool)
     .await
-    .unwrap();
+    .map(|_| ())
 }
 
 fn keys(v: &Value) -> Vec<&str> {
@@ -174,6 +183,68 @@ async fn own_profile_counts_wins_losses_ties_across_both_sides(pool: PgPool) {
     assert_eq!(status, StatusCode::OK);
     // all_dead counts as a tie.
     assert_eq!(stats(&json), [2, 5, 2, 1, 2]);
+}
+
+#[sqlx::test]
+async fn own_profile_ignores_unrated_matches(pool: PgPool) {
+    let router = app(pool.clone());
+    let (alice, cookies) = register(&router, "alice").await;
+    let (bob, _) = register(&router, "bob").await;
+    let (carol, _) = register(&router, "carol").await;
+    let (a1, _) = seed_alice_history(&pool, alice, bob, carol).await;
+    let b = insert_warrior(&pool, bob, "Bob unrated", 0).await;
+    for result in ["red_win", "blue_win", "tie"] {
+        try_insert_match(&pool, (a1, alice), (b, bob), result, false)
+            .await
+            .unwrap();
+    }
+
+    let (_, json) = send(&router, get_with_cookies("/api/profile", &cookies)).await;
+    // Identical to the rated history alone.
+    assert_eq!(stats(&json), [2, 5, 2, 1, 2]);
+}
+
+/// The issue-#145 scenario end to end: a self-match through the only API
+/// that allows one must not appear in the caller's W/L/T.
+#[sqlx::test]
+async fn self_match_via_api_is_unrated_and_not_counted(pool: PgPool) {
+    let router = app(pool.clone());
+    let (alice, cookies) = register(&router, "alice").await;
+    let red = insert_warrior(&pool, alice, "Red", 0).await;
+    let blue = insert_warrior(&pool, alice, "Blue", 0).await;
+
+    let (status, json) = send(
+        &router,
+        post_json_with_cookies(
+            "/api/matches",
+            &json!({"red_warrior_id": red, "blue_warrior_id": blue}),
+            &cookies,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(json["rated"], false);
+
+    let (_, json) = send(&router, get_with_cookies("/api/profile", &cookies)).await;
+    assert_eq!(stats(&json), [2, 0, 0, 0, 0]);
+}
+
+#[sqlx::test]
+async fn db_rejects_rated_self_match(pool: PgPool) {
+    let router = app(pool.clone());
+    let (alice, _) = register(&router, "alice").await;
+    let a1 = insert_warrior(&pool, alice, "One", 0).await;
+    let a2 = insert_warrior(&pool, alice, "Two", 0).await;
+
+    let err = try_insert_match(&pool, (a1, alice), (a2, alice), "red_win", true)
+        .await
+        .unwrap_err();
+    let db_err = err.as_database_error().expect("constraint violation");
+    assert_eq!(db_err.constraint(), Some("matches_self_match_unrated"));
+    // The unrated form is fine.
+    try_insert_match(&pool, (a1, alice), (a2, alice), "red_win", false)
+        .await
+        .unwrap();
 }
 
 #[sqlx::test]

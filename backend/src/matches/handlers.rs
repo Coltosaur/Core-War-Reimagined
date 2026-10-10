@@ -103,11 +103,13 @@ pub async fn submit(
             .map_err(|e| AppError::Internal(format!("Battle task failed: {e}")))?
     }?;
 
+    // Ad-hoc matches don't touch Elo, so they're unrated and stay out of
+    // profile W/L/T. Self-matches are only possible here (#145).
     let record = sqlx::query_as::<_, MatchRecord>(
         "INSERT INTO matches \
            (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
-            core_size, max_steps, result, steps_taken) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+            core_size, max_steps, result, steps_taken, rated) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE) \
          RETURNING *",
     )
     .bind(red_warrior.id)

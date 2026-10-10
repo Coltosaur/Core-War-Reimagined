@@ -344,6 +344,42 @@ async fn get_match_by_id_and_404(pool: PgPool) {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+#[sqlx::test]
+async fn get_match_is_participant_only(pool: PgPool) {
+    let router = app(pool.clone());
+    let (alice, alice_cookies) = register(&router, "alice").await;
+    let (bob, bob_cookies) = register(&router, "bob").await;
+    let (_, carol_cookies) = register(&router, "carol").await;
+    let wa = insert_warrior(&pool, alice, DWARF).await;
+    let wb = insert_warrior(&pool, bob, DWARF).await;
+    let id = insert_match(&pool, (wa, alice), (wb, bob), 0).await;
+
+    // Both sides can fetch it.
+    for cookies in [&alice_cookies, &bob_cookies] {
+        let (status, json) = send(
+            router.clone(),
+            get_with_cookies(&format!("/api/matches/{id}"), cookies),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["id"], id.to_string());
+    }
+
+    // A non-participant gets exactly the response a nonexistent id gets.
+    let (status, hidden) = send(
+        router.clone(),
+        get_with_cookies(&format!("/api/matches/{id}"), &carol_cookies),
+    )
+    .await;
+    let (missing_status, missing) = send(
+        router,
+        get_with_cookies(&format!("/api/matches/{}", Uuid::new_v4()), &carol_cookies),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!((status, &hidden), (missing_status, &missing));
+}
+
 // =============================================================================
 // List
 // =============================================================================

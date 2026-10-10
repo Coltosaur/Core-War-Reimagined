@@ -128,14 +128,21 @@ pub async fn submit(
 
 pub async fn get(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MatchRecord>, AppError> {
-    let record = sqlx::query_as::<_, MatchRecord>("SELECT * FROM matches WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Match not found".into()))?;
+    // Same participant-only scope as `list`. A match the caller didn't play in
+    // gets the same 404 as one that doesn't exist, so this isn't an existence
+    // oracle.
+    let record = sqlx::query_as::<_, MatchRecord>(
+        "SELECT * FROM matches \
+         WHERE id = $1 AND (red_user_id = $2 OR blue_user_id = $2)",
+    )
+    .bind(id)
+    .bind(user.user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Match not found".into()))?;
 
     Ok(Json(record))
 }

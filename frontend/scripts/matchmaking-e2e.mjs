@@ -3,7 +3,9 @@
 // Spawns bot-red.mjs and bot-blue.mjs as separate Node processes, captures
 // their JSON-lines stdout, and asserts cross-bot properties: both bots got
 // distinct socket sids, both saw match:found for the same match_id, both saw
-// match:result. Exits 0 on pass, non-zero on fail.
+// match:result, and every event carried the id of the persisted match row
+// (each bot fetches GET /api/matches/:id after match:result). Exits 0 on
+// pass, non-zero on fail.
 //
 // Prerequisites:
 //   1. docker compose up -d (postgres + redis)
@@ -216,6 +218,34 @@ if (redOutcome && blueOutcome) {
     console.log(
       `✓ both saw match:result — outcome="${redOutcome.data.result}", steps=${redOutcome.data.steps_taken}`,
     );
+  }
+}
+
+// #143: match:found / match:start / match:result must all carry the same id,
+// and it must be the persisted row's id — GET /api/matches/:id as a
+// participant returns that row.
+for (const [label, events] of [
+  ['bot-red', redResult.events],
+  ['bot-blue', blueResult.events],
+]) {
+  const ids = ['match:found', 'match:start', 'match:result'].map(
+    (name) => findEvent(events, name)?.data.match_id,
+  );
+  if (ids.every(Boolean) && new Set(ids).size !== 1) {
+    failures.push(`${label} saw different match ids across events: ${ids.join(', ')}`);
+  }
+
+  const lookup = findEvent(events, 'match:lookup');
+  if (!lookup) {
+    failures.push(`${label} never looked up the match`);
+  } else if (lookup.data.status !== 200 || lookup.data.id !== lookup.data.match_id) {
+    failures.push(
+      `${label} GET /api/matches/${lookup.data.match_id} → status ${lookup.data.status}, ` +
+        `id ${lookup.data.id}${lookup.data.error ? ` (${lookup.data.error})` : ''}. ` +
+        `The emitted match_id must be the persisted row's id.`,
+    );
+  } else {
+    console.log(`✓ ${label}: emitted match_id is the persisted row (GET /api/matches/:id → 200)`);
   }
 }
 

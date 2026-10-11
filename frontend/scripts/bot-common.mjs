@@ -63,6 +63,21 @@ export async function listWarriors(cookieHeader) {
   return res.json();
 }
 
+// Fetches the persisted match the socket events named. Never throws: the
+// orchestrator asserts on the logged status.
+export async function lookupMatch(cookieHeader, matchId) {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/matches/${encodeURIComponent(matchId)}`, {
+      method: 'GET',
+      headers: { Cookie: cookieHeader },
+    });
+    const body = res.ok ? await res.json() : null;
+    return { status: res.status, id: body?.id ?? null };
+  } catch (err) {
+    return { status: null, id: null, error: err.message };
+  }
+}
+
 export function connectSocket(cookieHeader) {
   return io(BACKEND_URL, {
     transports: ['websocket'],
@@ -155,8 +170,11 @@ export async function runBot({ role, username, password, expectedWarriorName, ti
     });
   }
 
-  socket.on('match:result', (data) => {
+  socket.on('match:result', async (data) => {
     logEvent('match:result', data, { sid: socket.id });
+    // The id the events carried must name a real, persisted match (#143).
+    const lookup = await lookupMatch(session.cookieHeader, data.match_id);
+    logEvent('match:lookup', { match_id: data.match_id, ...lookup });
     finish(0);
   });
 }

@@ -130,6 +130,7 @@ async fn match_row_count(pool: &PgPool) -> i64 {
 async fn run(pool: &PgPool, s: &Seeded, red_src: &str, blue_src: &str) -> MatchOutcome {
     execute_and_persist_match(
         pool,
+        Uuid::new_v4(),
         s.red_user,
         s.blue_user,
         s.red_warrior,
@@ -300,6 +301,7 @@ async fn parse_error_no_side_effects(pool: PgPool) {
 
     let result = execute_and_persist_match(
         &pool,
+        Uuid::new_v4(),
         s.red_user,
         s.blue_user,
         s.red_warrior,
@@ -363,3 +365,90 @@ async fn atomicity_on_success(pool: PgPool) {
 // as a correctness safety net (documented in runner.rs), and if the engine
 // ever grows a simultaneous-death primitive this file should grow a scenario
 // asserting the tie-rating semantics for it.
+
+// =============================================================================
+// Match id — the id the caller announces is the persisted row's id (#143)
+// =============================================================================
+
+#[sqlx::test]
+async fn caller_supplied_match_id_is_the_row_id(pool: PgPool) {
+    // Matchmaking emits `match:found` with this id before the battle runs,
+    // and the client later looks the match up by it. It must be the row's
+    // primary key, not a throwaway.
+    let s = seed_users_and_warriors(&pool, DWARF, MICE_LITE).await;
+    let match_id = Uuid::new_v4();
+
+    let outcome = execute_and_persist_match(
+        &pool,
+        match_id,
+        s.red_user,
+        s.blue_user,
+        s.red_warrior,
+        s.blue_warrior,
+        DWARF,
+        MICE_LITE,
+        CORE_SIZE,
+        MAX_STEPS,
+    )
+    .await
+    .expect("execute_and_persist_match");
+
+    assert_eq!(outcome.match_id, match_id);
+    let (result, red_user): (String, Uuid) =
+        sqlx::query_as("SELECT result, red_user_id FROM matches WHERE id = $1")
+            .bind(match_id)
+            .fetch_one(&pool)
+            .await
+            .expect("row with the supplied id");
+    assert_eq!(result, outcome.result);
+    assert_eq!(red_user, s.red_user);
+}
+
+#[sqlx::test]
+async fn reused_match_id_fails_without_side_effects(pool: PgPool) {
+    let s = seed_users_and_warriors(&pool, DWARF, MICE_LITE).await;
+    let match_id = Uuid::new_v4();
+    let first = execute_and_persist_match(
+        &pool,
+        match_id,
+        s.red_user,
+        s.blue_user,
+        s.red_warrior,
+        s.blue_warrior,
+        DWARF,
+        MICE_LITE,
+        CORE_SIZE,
+        MAX_STEPS,
+    )
+    .await
+    .expect("first match");
+
+    let second = execute_and_persist_match(
+        &pool,
+        match_id,
+        s.red_user,
+        s.blue_user,
+        s.red_warrior,
+        s.blue_warrior,
+        DWARF,
+        MICE_LITE,
+        CORE_SIZE,
+        MAX_STEPS,
+    )
+    .await;
+
+    match second {
+        Err(MatchExecuteError::Db(_)) => {}
+        other => panic!("expected a DB error for a reused id, got {other:?}"),
+    }
+    assert_eq!(match_row_count(&pool).await, 1);
+    // Ratings reflect only the first match: the second's updates rolled back.
+    assert_eq!(
+        current_rating(&pool, s.red_user).await,
+        first.red_rating_after
+    );
+    assert_eq!(
+        current_rating(&pool, s.blue_user).await,
+        first.blue_rating_after
+    );
+}

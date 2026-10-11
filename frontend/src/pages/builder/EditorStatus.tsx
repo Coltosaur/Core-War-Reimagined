@@ -7,9 +7,16 @@ type Props = {
   parseStatus: ParseStatus;
   selected: Warrior | undefined;
   dirty: boolean;
+  actionError: string | null;
 };
 
-export default function EditorStatus({ wasmReady, parseStatus, selected, dirty }: Props) {
+export default function EditorStatus({
+  wasmReady,
+  parseStatus,
+  selected,
+  dirty,
+  actionError,
+}: Props) {
   return (
     <div className={styles.status} role="status">
       {!wasmReady && <span className={styles.loading}>Loading engine...</span>}
@@ -22,6 +29,7 @@ export default function EditorStatus({ wasmReady, parseStatus, selected, dirty }
       {wasmReady && parseStatus && !parseStatus.ok && (
         <span className={styles.error}>✗ {parseStatus.message}</span>
       )}
+      {actionError && <span className={styles.error}>✗ {actionError}</span>}
       {selected?.isPreset && (
         <span className={styles.hint}>Classic warrior — read-only. Use Duplicate to edit.</span>
       )}

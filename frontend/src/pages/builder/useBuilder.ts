@@ -15,11 +15,19 @@ import {
 } from '../../warriors/library';
 import { registerRedcode, parseErrorToMarker } from '../../redcode/monaco';
 import { useAuth } from '../../api/useAuth';
+import { ApiError } from '../../api/client';
 
 export type ParseStatus = { ok: true; name: string | null } | { ok: false; message: string } | null;
 
 function isServerWarrior(id: string): boolean {
   return id.startsWith('server:');
+}
+
+// ApiError carries the backend's own message (or the session-expired copy).
+// Anything else out of fetch is a network failure, whose raw text
+// ("Failed to fetch", "NetworkError when attempting...") varies by browser.
+function describeFailure(err: unknown): string {
+  return err instanceof ApiError ? err.message : "the server couldn't be reached";
 }
 
 export function useBuilder() {
@@ -51,6 +59,7 @@ export function useBuilder() {
   const [wasmReady, setWasmReady] = useState(false);
   const [parseStatus, setParseStatus] = useState<ParseStatus>(null);
   const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const monacoRef = useRef<Monaco | null>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -144,8 +153,27 @@ export function useBuilder() {
     if (wasmReady) runParse(editor.getValue());
   };
 
+  // Every warriors-API call goes through here: it owns the `saving` flag and
+  // turns a rejection into a message in the status bar instead of an
+  // unhandled rejection from a click handler. Resolves to whether `action`
+  // succeeded, so callers can skip whatever should only follow a success.
+  const runServerAction = async (verb: string, action: () => Promise<void>): Promise<boolean> => {
+    setSaving(true);
+    setActionError(null);
+    try {
+      await action();
+      return true;
+    } catch (err) {
+      setActionError(`Couldn't ${verb}: ${describeFailure(err)}`);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSelect = (id: string) => {
     if (dirty && !confirm('Discard unsaved changes?')) return;
+    setActionError(null);
     setSelectedId(id);
     const warrior = library.find((w) => w.id === id);
     if (warrior) syncFromWarrior(warrior);
@@ -153,8 +181,7 @@ export function useBuilder() {
 
   const handleSave = async () => {
     if (!selected || saving) return;
-    setSaving(true);
-    try {
+    await runServerAction('save warrior', async () => {
       if (selected.isPreset) {
         if (user) {
           const created = await createServerWarrior(label || 'Untitled', source);
@@ -177,23 +204,18 @@ export function useBuilder() {
         updateUserWarrior(selected.id, { label: label || 'Untitled', source });
       }
       setDirty(false);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const handleDuplicate = async () => {
     if (!selected || saving) return;
     if (user) {
-      setSaving(true);
-      try {
+      await runServerAction('duplicate warrior', async () => {
         const newLabel = `${selected.label} (copy)`;
         const created = await createServerWarrior(newLabel, selected.source);
         setSelectedId(created.id);
         syncFromWarrior(created);
-      } finally {
-        setSaving(false);
-      }
+      });
     } else {
       const created = duplicateWarrior(selected.id);
       if (created) {
@@ -207,12 +229,11 @@ export function useBuilder() {
     if (!selected || selected.isPreset || saving) return;
     if (!confirm(`Delete "${selected.label}"? This cannot be undone.`)) return;
     if (user && isServerWarrior(selected.id)) {
-      setSaving(true);
-      try {
-        await deleteServerWarrior(selected.id);
-      } finally {
-        setSaving(false);
-      }
+      // On failure the warrior still exists, so keep it selected.
+      const deleted = await runServerAction('delete warrior', () =>
+        deleteServerWarrior(selected.id),
+      );
+      if (!deleted) return;
     } else {
       deleteUserWarrior(selected.id);
     }
@@ -225,14 +246,11 @@ export function useBuilder() {
 
   const handleImport = async (name: string, content: string) => {
     if (user) {
-      setSaving(true);
-      try {
+      await runServerAction('import warrior', async () => {
         const created = await createServerWarrior(name || 'Imported', content);
         setSelectedId(created.id);
         syncFromWarrior(created);
-      } finally {
-        setSaving(false);
-      }
+      });
     } else {
       const created = createUserWarrior(name || 'Imported', content);
       setSelectedId(created.id);
@@ -247,14 +265,11 @@ export function useBuilder() {
 start   MOV.I  $0, $1
 `;
     if (user) {
-      setSaving(true);
-      try {
+      await runServerAction('create warrior', async () => {
         const created = await createServerWarrior('New Warrior', template);
         setSelectedId(created.id);
         syncFromWarrior(created);
-      } finally {
-        setSaving(false);
-      }
+      });
     } else {
       const created = createUserWarrior('New Warrior', template);
       setSelectedId(created.id);
@@ -276,13 +291,11 @@ start   MOV.I  $0, $1
         const created = createUserWarrior(label || 'Untitled', source);
         targetId = created.id;
       } else if (isServerWarrior(selected.id)) {
-        setSaving(true);
-        try {
+        const saved = await runServerAction('save warrior', async () => {
           await updateServerWarrior(selected.id, { label: label || 'Untitled', source });
           setDirty(false);
-        } finally {
-          setSaving(false);
-        }
+        });
+        if (!saved) return;
       } else {
         updateUserWarrior(selected.id, { label: label || 'Untitled', source });
       }
@@ -311,6 +324,7 @@ start   MOV.I  $0, $1
     dirty,
     wasmReady,
     parseStatus,
+    actionError,
     presets,
     userWarriors,
     saving,

@@ -17,6 +17,7 @@ export default function BuilderPage() {
     dirty,
     wasmReady,
     parseStatus,
+    actionError,
     presets,
     userWarriors,
     canSave,
@@ -93,6 +94,7 @@ export default function BuilderPage() {
           parseStatus={parseStatus}
           selected={selected}
           dirty={dirty}
+          actionError={actionError}
         />
       </section>
 

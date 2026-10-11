@@ -21,7 +21,9 @@
 //! scanner test — comes through `parse_warrior`. That makes this file a
 //! clean usage example for the eventual frontend and backend code.
 
-use core_war_engine::{parse_warrior, MatchResult, MatchState, Opcode};
+use core_war_engine::{
+    parse_warrior, MatchResult, MatchState, Opcode, WarriorLoadError, MAX_WARRIORS,
+};
 
 const IMP: &str = include_str!("warriors/imp.red");
 const DWARF: &str = include_str!("warriors/dwarf.red");
@@ -34,7 +36,7 @@ const GATE_BUILDER: &str = include_str!("warriors/gate_builder.red");
 fn parsed_imp_propagates_through_core() {
     let parsed = parse_warrior(IMP).expect("imp.red should parse");
     let mut state = MatchState::new(64, 50);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     let imp_instr = parsed.instructions()[0];
 
@@ -58,7 +60,7 @@ fn parsed_imp_propagates_through_core() {
 fn parsed_dwarf_bombs_core_at_intervals_of_four() {
     let parsed = parse_warrior(DWARF).expect("dwarf.red should parse");
     let mut state = MatchState::new(64, 100);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     // 5 iterations × 3 instructions per iteration = 15 steps.
     for _ in 0..15 {
@@ -90,7 +92,7 @@ fn parsed_dwarf_extracts_name_and_author_metadata() {
 fn parsed_mice_lite_replicates_imp_three_times() {
     let parsed = parse_warrior(MICE_LITE).expect("mice_lite.red should parse");
     let mut state = MatchState::new(32, 50);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     // The imp template is at offset 2 in the source layout.
     let template = parsed.instructions()[2];
@@ -132,7 +134,7 @@ fn parsed_mice_lite_replicates_imp_three_times() {
 fn parsed_scanner_finds_and_bombs_planted_marker() {
     let parsed = parse_warrior(SCANNER).expect("scanner.red should parse");
     let mut state = MatchState::new(32, 100);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     // Plant a recognizable marker at cell 12 — the scanner is initialized
     // with ptr.B = 9, so after three ADDs (9 → 10 → 11 → 12) it will
@@ -178,8 +180,8 @@ fn parsed_dwarf_outlasts_mice_lite_in_two_warrior_match() {
     let mice_lite = parse_warrior(MICE_LITE).expect("mice_lite.red should parse");
 
     let mut state = MatchState::new(64, 50);
-    state.load_warrior(0, &dwarf, 0);
-    state.load_warrior(1, &mice_lite, 32);
+    state.load_warrior(0, &dwarf, 0).unwrap();
+    state.load_warrior(1, &mice_lite, 32).unwrap();
 
     // 20 steps is more than enough for mice-lite to hit its landing pad
     // (~step 14) and for the dead-warrior skip path to leave the dwarf as
@@ -212,7 +214,7 @@ bomb    DAT.F  #0, #0
     ";
     let parsed = parse_warrior(source).expect("EQU-parameterized dwarf should parse");
     let mut state = MatchState::new(64, 100);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     // 5 iterations × 3 instructions = 15 steps. With step=8, bombs land at
     // 3+8=11, 3+16=19, 3+24=27, 3+32=35, 3+40=43 (not at 7 and 15 like
@@ -251,7 +253,7 @@ bomb    DAT.F  #0, #0
 fn parsed_mice_replicates_itself_to_remote_location() {
     let parsed = parse_warrior(MICE).expect("mice.red should parse");
     let mut state = MatchState::new(8000, 500);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     // Run enough steps for at least one full copy cycle + SPL.
     // One cycle: MOV.AB(1) + 8×MOV.I(8) + 8×DJN(8) + SPL(1) + ADD(1) + JMZ(1) = ~28 steps.
@@ -319,7 +321,7 @@ fn parsed_gate_builder_creates_dat_wall_via_for_rof() {
 
     // Load and run — the warrior should survive (JMP keeps it alive).
     let mut state = MatchState::new(64, 50);
-    state.load_warrior(0, &parsed, 0);
+    state.load_warrior(0, &parsed, 0).unwrap();
 
     for _ in 0..10 {
         assert!(state.step(), "gate_builder should not die (JMP self-loop)");
@@ -374,4 +376,20 @@ fn nested_for_rof_expands_multiplicatively() {
         );
     }
     assert_eq!(parsed.instructions()[6].opcode, Opcode::Nop);
+}
+
+/// The warrior-id limit and its error are part of the public API: a caller
+/// adding warriors must be able to name `MAX_WARRIORS` and match on
+/// `WarriorLoadError` (#147).
+#[test]
+fn loading_a_warrior_past_the_id_limit_is_an_error() {
+    let imp = parse_warrior(IMP).expect("Imp should parse");
+    let mut state = MatchState::new(8000, 100);
+    state
+        .load_warrior(MAX_WARRIORS - 1, &imp, 0)
+        .expect("the last valid id loads");
+
+    let err = state.load_warrior(MAX_WARRIORS, &imp, 100).unwrap_err();
+    assert_eq!(err, WarriorLoadError::IdOutOfRange { id: MAX_WARRIORS });
+    assert_eq!(state.warriors().len(), 1);
 }

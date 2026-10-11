@@ -138,9 +138,17 @@ impl WasmMatchState {
     /// in the match with the given `id`. The warrior's instructions are
     /// written sequentially starting at `baseAddress`, and its first
     /// process starts at `baseAddress + warrior.startOffset()`.
+    /// Throws (an error string) if `id` is out of range or already loaded.
     #[wasm_bindgen(js_name = "loadWarrior")]
-    pub fn load_warrior(&mut self, id: usize, warrior: &WasmParsedWarrior, base_address: usize) {
-        self.inner.load_warrior(id, &warrior.inner, base_address);
+    pub fn load_warrior(
+        &mut self,
+        id: usize,
+        warrior: &WasmParsedWarrior,
+        base_address: usize,
+    ) -> Result<(), JsValue> {
+        self.inner
+            .load_warrior(id, &warrior.inner, base_address)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Advance the simulation by one process-step. Returns `true` if the

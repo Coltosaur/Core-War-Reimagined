@@ -43,6 +43,38 @@ use std::collections::VecDeque;
 
 use crate::instruction::{AddressMode, Field, Instruction, Modifier, Opcode, Operand};
 
+/// Warrior ids run from 0 to `MAX_WARRIORS - 1`. Cell owners are stored as
+/// `u8` with 0 reserved for "unowned", so `id + 1` must fit in a `u8`;
+/// `add_warrior` / `load_warrior` reject anything outside that range rather
+/// than letting ownership silently wrap or collide.
+pub const MAX_WARRIORS: usize = u8::MAX as usize;
+
+/// Why a warrior couldn't be added to a match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarriorLoadError {
+    /// The id is `MAX_WARRIORS` or higher, so it has no cell-owner value.
+    IdOutOfRange { id: usize },
+    /// Another warrior in the match already has this id, so the two would
+    /// share cell ownership.
+    DuplicateId { id: usize },
+}
+
+impl std::fmt::Display for WarriorLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WarriorLoadError::IdOutOfRange { id } => write!(
+                f,
+                "warrior id {id} is out of range (ids must be below {MAX_WARRIORS})"
+            ),
+            WarriorLoadError::DuplicateId { id } => {
+                write!(f, "a warrior with id {id} is already in the match")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WarriorLoadError {}
+
 /// The shared memory array. Indexing is circular modulo `size()`.
 ///
 /// Tracks **cell ownership**: each cell records which warrior (if any)
@@ -100,7 +132,10 @@ impl Core {
 
     /// Mark subsequent `set()` calls as belonging to the given warrior.
     /// Called by the executor at the start of each instruction execution.
+    /// Only ever given ids that `MatchState` has validated against
+    /// `MAX_WARRIORS`, so the `+ 1` can't overflow.
     pub(crate) fn begin_write(&mut self, warrior_id: usize) {
+        debug_assert!(warrior_id < MAX_WARRIORS);
         self.current_writer = warrior_id as u8 + 1;
     }
 
@@ -242,8 +277,21 @@ impl MatchState {
     }
 
     /// Add a warrior to the match. Used at setup time, before stepping begins.
-    pub fn add_warrior(&mut self, warrior: Warrior) {
+    /// Fails if the warrior's id is `MAX_WARRIORS` or above, or already in use.
+    pub fn add_warrior(&mut self, warrior: Warrior) -> Result<(), WarriorLoadError> {
+        self.check_new_warrior_id(warrior.id)?;
         self.warriors.push(warrior);
+        Ok(())
+    }
+
+    fn check_new_warrior_id(&self, id: usize) -> Result<(), WarriorLoadError> {
+        if id >= MAX_WARRIORS {
+            return Err(WarriorLoadError::IdOutOfRange { id });
+        }
+        if self.warriors.iter().any(|w| w.id == id) {
+            return Err(WarriorLoadError::DuplicateId { id });
+        }
+        Ok(())
     }
 
     /// Load a parsed warrior into core at `base_address` and add it to the
@@ -254,12 +302,18 @@ impl MatchState {
     /// This is the bridge between the parser and the executor — once a
     /// warrior has been parsed from text via `parse_warrior`, this is how
     /// you get it into a battle.
+    ///
+    /// Fails, without touching the core, under the same conditions as
+    /// `add_warrior`.
     pub fn load_warrior(
         &mut self,
         id: usize,
         parsed: &crate::parser::ParsedWarrior,
         base_address: usize,
-    ) {
+    ) -> Result<(), WarriorLoadError> {
+        // Checked before writing any cells, so a rejected warrior leaves no
+        // trace in core.
+        self.check_new_warrior_id(id)?;
         // Attribute the initial load to this warrior so the visualizer
         // shows the starting code in the warrior's color.
         self.core.begin_write(id);
@@ -268,7 +322,7 @@ impl MatchState {
         }
         self.core.end_write();
         let start_pc = base_address + parsed.start_offset();
-        self.add_warrior(Warrior::new(id, start_pc));
+        self.add_warrior(Warrior::new(id, start_pc))
     }
 
     /// Read access to the core memory array.
@@ -369,8 +423,10 @@ impl MatchState {
     fn execute(&mut self, warrior_idx: usize, pc: usize, instr: Instruction) {
         // Attribute all core writes during this instruction (including
         // predecrement/postincrement side effects in resolve()) to the
-        // executing warrior.
-        self.core.begin_write(warrior_idx);
+        // executing warrior. Keyed by the warrior's id, not its position
+        // in `warriors`, so it matches the ownership `load_warrior` gave the
+        // warrior's initial cells.
+        self.core.begin_write(self.warriors[warrior_idx].id);
 
         let pc_i = pc as i32;
         let core_size = self.core.size();
@@ -791,7 +847,7 @@ mod tests {
     #[test]
     fn imp_propagates_one_cell_per_step() {
         let mut state = MatchState::new(8000, 100);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state.core_mut().set(0, imp());
 
         // After N steps, cells [0..=N] should all contain the imp:
@@ -818,7 +874,7 @@ mod tests {
     fn imp_wraps_around_core() {
         // Tiny core to make the wrap fast.
         let mut state = MatchState::new(4, 100);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state.core_mut().set(0, imp());
 
         // Step enough times to walk past the end of the core. The imp should
@@ -840,7 +896,7 @@ mod tests {
     #[test]
     fn dat_kills_process() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         // Cell 0 is already DAT.F #0, #0 from Core::new — execute it.
 
         state.step();
@@ -855,7 +911,7 @@ mod tests {
     #[test]
     fn match_ends_when_all_warriors_dead() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // First step executes DAT and kills the warrior.
         assert!(state.step());
@@ -871,7 +927,7 @@ mod tests {
         //                   immediate is just the literal value) to the
         //                   destination cell's B-field.
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -898,7 +954,7 @@ mod tests {
         //   - dest:   @1 — B-indirect: intermediate = PC+1 = cell 1, then
         //                  add cell 1's B-field (5) to that, giving target 6.
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -935,7 +991,7 @@ mod tests {
     #[test]
     fn dwarf_bombs_core_at_intervals_of_four() {
         let mut state = MatchState::new(64, 100);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         for (addr, cell) in (0..).zip(dwarf()) {
             state.core_mut().set(addr, cell);
@@ -969,7 +1025,7 @@ mod tests {
         // process is spawned at PC+5. Both end up in the queue, with the
         // continuing process ahead of the spawned one (per ICWS '94).
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Spl, Modifier::B, dir(5), dir(0)));
@@ -1010,7 +1066,7 @@ mod tests {
     #[test]
     fn spl_creates_two_imps_walking_in_alternation() {
         let mut state = MatchState::new(32, 100);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -1064,7 +1120,7 @@ mod tests {
         // Cell 1: DJN.B $0, $-1   — A=0 jumps back to itself, B=-1 targets cell 0.
         // Each execution: counter.B--, then jump to self if non-zero.
         let mut state = MatchState::new(8, 20);
-        state.add_warrior(Warrior::new(0, 1));
+        state.add_warrior(Warrior::new(0, 1)).unwrap();
 
         state
             .core_mut()
@@ -1096,7 +1152,7 @@ mod tests {
     #[test]
     fn jmz_b_jumps_when_destination_b_is_zero() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // JMZ.B $3, $1  — if cell 1's B == 0, jump to cell 3.
         state
@@ -1116,7 +1172,7 @@ mod tests {
     #[test]
     fn jmz_b_falls_through_when_destination_b_is_nonzero() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -1138,7 +1194,7 @@ mod tests {
     #[test]
     fn b_predecrement_decrements_intermediate_b_then_resolves() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MOV.I $5, <1
         //   - source: $5     — direct, effective = PC+5 = 5
@@ -1202,7 +1258,7 @@ mod tests {
     #[test]
     fn mice_lite_replicator_copies_marker_three_times() {
         let mut state = MatchState::new(32, 50);
-        state.add_warrior(Warrior::new(0, 3));
+        state.add_warrior(Warrior::new(0, 3)).unwrap();
 
         let template = imp();
 
@@ -1262,7 +1318,7 @@ mod tests {
     #[test]
     fn seq_i_skips_next_when_full_cells_are_equal() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SEQ.I $1, $2  — compare cells 1 and 2. Both are default DAT.F #0 #0
         // (untouched by Core::new) so they're equal as full instructions.
@@ -1283,7 +1339,7 @@ mod tests {
     #[test]
     fn seq_i_falls_through_when_full_cells_differ() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SEQ.I $1, $2 — but plant an imp at cell 1 so it differs from
         // cell 2's default DAT.
@@ -1335,7 +1391,7 @@ mod tests {
     #[test]
     fn simple_scanner_finds_and_bombs_planted_marker() {
         let mut state = MatchState::new(32, 100);
-        state.add_warrior(Warrior::new(0, 3));
+        state.add_warrior(Warrior::new(0, 3)).unwrap();
 
         state
             .core_mut()
@@ -1436,8 +1492,8 @@ mod tests {
     #[test]
     fn two_warriors_alternate_in_round_robin() {
         let mut state = MatchState::new(64, 50);
-        state.add_warrior(Warrior::new(0, 0));
-        state.add_warrior(Warrior::new(1, 32));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
+        state.add_warrior(Warrior::new(1, 32)).unwrap();
         state.core_mut().set(0, imp());
         state.core_mut().set(32, imp());
 
@@ -1479,12 +1535,12 @@ mod tests {
         let mut state = MatchState::new(64, 50);
 
         // Warrior 0: an imp at cell 0.
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state.core_mut().set(0, imp());
 
         // Warrior 1: starts at cell 50, which is the default DAT.F #0 #0.
         // It will die the first time it executes — i.e., on its first turn.
-        state.add_warrior(Warrior::new(1, 50));
+        state.add_warrior(Warrior::new(1, 50)).unwrap();
 
         // Step 1: imp executes. Both warriors still alive.
         state.step();
@@ -1559,13 +1615,13 @@ mod tests {
         let mut state = MatchState::new(64, 200);
 
         // Dwarf at cells 0..=3, starting PC 0.
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         for (addr, cell) in (0..).zip(dwarf()) {
             state.core_mut().set(addr, cell);
         }
 
         // Scanner at cells 50..=58, starting PC 53 (the scan-loop ADD).
-        state.add_warrior(Warrior::new(1, 53));
+        state.add_warrior(Warrior::new(1, 53)).unwrap();
         state
             .core_mut()
             .set(50, instr(Opcode::Dat, Modifier::F, imm(0), imm(13)));
@@ -1650,7 +1706,7 @@ mod tests {
     #[test]
     fn sub_b_subtracts_source_b_from_dest_b() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SUB.B $1, $2 — dest.B = dest.B - src.B (cell 2's B - cell 1's B)
         state
@@ -1674,7 +1730,7 @@ mod tests {
     #[test]
     fn mul_b_multiplies_dest_b_by_source_b() {
         let mut state = MatchState::new(64, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MUL.B $1, $2 — dest.B = dest.B * src.B
         state
@@ -1696,7 +1752,7 @@ mod tests {
     #[test]
     fn div_b_divides_dest_b_by_source_b() {
         let mut state = MatchState::new(64, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // DIV.B $1, $2 — dest.B = dest.B / src.B (integer division)
         state
@@ -1720,7 +1776,7 @@ mod tests {
     #[test]
     fn div_by_zero_kills_process() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // DIV.B $1, $2 — but cell 1's B is zero. Divide-by-zero must kill
         // the process, *exactly* as if it had executed a DAT.
@@ -1750,7 +1806,7 @@ mod tests {
     #[test]
     fn mod_b_takes_remainder_of_dest_b_over_source_b() {
         let mut state = MatchState::new(64, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MOD.B $1, $2 — dest.B = dest.B mod src.B
         state
@@ -1772,7 +1828,7 @@ mod tests {
     #[test]
     fn mod_by_zero_kills_process() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -1794,7 +1850,7 @@ mod tests {
     #[test]
     fn jmn_b_jumps_when_destination_b_is_nonzero() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // JMN.B $3, $1 — if cell 1's B != 0, jump to cell 3.
         state
@@ -1816,7 +1872,7 @@ mod tests {
     #[test]
     fn jmn_b_falls_through_when_destination_b_is_zero() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // JMN.B $3, $1 — but cell 1's B is zero (the default), so JMN
         // should NOT jump.
@@ -1837,7 +1893,7 @@ mod tests {
     #[test]
     fn sne_i_skips_next_when_full_cells_differ() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SNE.I $1, $2 — cells 1 and 2 differ (imp vs default DAT), so
         // SNE should skip the next instruction.
@@ -1858,7 +1914,7 @@ mod tests {
     #[test]
     fn sne_i_falls_through_when_full_cells_are_equal() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SNE.I $1, $2 — both cells are the default DAT.F #0 #0, so they
         // ARE equal and SNE should NOT skip.
@@ -1878,7 +1934,7 @@ mod tests {
     #[test]
     fn nop_advances_pc_with_no_other_effect() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // NOP $5, $3 — operands are present but should have no effect on
         // the cells they reference.
@@ -1906,8 +1962,8 @@ mod tests {
     #[test]
     fn result_is_tie_at_step_limit_with_multiple_warriors_alive() {
         let mut state = MatchState::new(64, 4);
-        state.add_warrior(Warrior::new(0, 0));
-        state.add_warrior(Warrior::new(1, 32));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
+        state.add_warrior(Warrior::new(1, 32)).unwrap();
         state.core_mut().set(0, imp());
         state.core_mut().set(32, imp());
 
@@ -1942,7 +1998,7 @@ mod tests {
     #[test]
     fn slt_b_skips_when_source_b_less_than_dest_b() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // SLT.B $1, $2 — if cell 1's B < cell 2's B, skip the next instruction.
         state
@@ -1967,7 +2023,7 @@ mod tests {
     #[test]
     fn slt_b_falls_through_when_source_b_greater_than_dest_b() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -1992,7 +2048,7 @@ mod tests {
     fn slt_b_falls_through_when_source_b_equals_dest_b() {
         // The strict-less-than edge case: equal values must NOT skip.
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         state
             .core_mut()
@@ -2025,7 +2081,7 @@ mod tests {
     #[test]
     fn a_predecrement_decrements_intermediate_a_then_resolves() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MOV.I $5, {1
         //   - source: $5 — direct, effective = PC+5 = 5
@@ -2057,7 +2113,7 @@ mod tests {
     #[test]
     fn a_postincrement_uses_current_a_then_increments() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MOV.I $5, }1
         //   - source: $5 — direct, effective = PC+5 = 5
@@ -2090,7 +2146,7 @@ mod tests {
     #[test]
     fn b_postincrement_uses_current_b_then_increments() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
 
         // MOV.I $5, >1
         //   - source: $5 — direct, effective = PC+5 = 5
@@ -2127,7 +2183,7 @@ mod tests {
     #[test]
     fn djn_f_decrements_both_and_jumps_when_either_nonzero() {
         let mut state = MatchState::new(8, 20);
-        state.add_warrior(Warrior::new(0, 1));
+        state.add_warrior(Warrior::new(0, 1)).unwrap();
         // Cell 0: counter with A=1, B=2
         state
             .core_mut()
@@ -2153,7 +2209,7 @@ mod tests {
     #[test]
     fn djn_f_falls_through_when_both_reach_zero() {
         let mut state = MatchState::new(8, 20);
-        state.add_warrior(Warrior::new(0, 1));
+        state.add_warrior(Warrior::new(0, 1)).unwrap();
         // Cell 0: A=1, B=1 — both will reach 0 on the same step.
         state
             .core_mut()
@@ -2174,7 +2230,7 @@ mod tests {
     fn jmz_f_jumps_only_when_both_fields_zero() {
         // Both zero → jump
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Jmz, Modifier::F, dir(5), dir(1)));
@@ -2184,7 +2240,7 @@ mod tests {
 
         // A=0 B=3 → fall through (B nonzero)
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Jmz, Modifier::F, dir(5), dir(1)));
@@ -2199,7 +2255,7 @@ mod tests {
     fn jmn_f_jumps_when_either_field_nonzero() {
         // A=0 B=5 → jump (B nonzero)
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Jmn, Modifier::F, dir(5), dir(1)));
@@ -2211,7 +2267,7 @@ mod tests {
 
         // A=0 B=0 → fall through
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Jmn, Modifier::F, dir(5), dir(1)));
@@ -2222,7 +2278,7 @@ mod tests {
     #[test]
     fn seq_a_compares_a_fields_only() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Seq, Modifier::A, dir(1), dir(2)));
@@ -2240,7 +2296,7 @@ mod tests {
     #[test]
     fn seq_f_requires_both_field_pairs_equal() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Seq, Modifier::F, dir(1), dir(2)));
@@ -2258,7 +2314,7 @@ mod tests {
     #[test]
     fn sne_f_skips_when_any_field_differs() {
         let mut state = MatchState::new(8, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Sne, Modifier::F, dir(1), dir(2)));
@@ -2276,7 +2332,7 @@ mod tests {
     #[test]
     fn slt_f_requires_both_pairs_less() {
         let mut state = MatchState::new(16, 10);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state
             .core_mut()
             .set(0, instr(Opcode::Slt, Modifier::F, dir(1), dir(2)));
@@ -2299,7 +2355,7 @@ mod tests {
     fn spl_respects_max_process_limit() {
         let mut state = MatchState::new(16, 50);
         state.set_max_processes(3);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         // Cell 0: SPL $1 — keep spawning processes at cell 1
         state
             .core_mut()
@@ -2326,7 +2382,7 @@ mod tests {
     fn spl_at_limit_still_continues_current_process() {
         let mut state = MatchState::new(8, 20);
         state.set_max_processes(2);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         // Cell 0: SPL $3 (spawn at cell 3)
         state
             .core_mut()
@@ -2353,7 +2409,7 @@ mod tests {
     #[test]
     fn load_warrior_attributes_initial_cells_to_warrior() {
         let mut state = MatchState::new(64, 100);
-        state.add_warrior(Warrior::new(0, 0));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
         state.core_mut().set(0, imp());
 
         // Setup writes via core_mut().set() do NOT set ownership (no active writer).
@@ -2362,7 +2418,7 @@ mod tests {
         // But load_warrior DOES attribute the cells.
         let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
         let mut state2 = MatchState::new(64, 100);
-        state2.load_warrior(0, &parsed, 10);
+        state2.load_warrior(0, &parsed, 10).unwrap();
 
         assert_eq!(
             state2.core().owner(10),
@@ -2382,13 +2438,106 @@ mod tests {
         );
     }
 
+    // ── warrior id range (#147) ──────────────────────────────────────
+
+    #[test]
+    fn highest_warrior_id_owns_its_cells_without_wrapping() {
+        // The last valid id maps to owner u8::MAX. `MOV.I $0, $1` copies
+        // itself forward, so after one step cell 11 is written by the
+        // executor, not just by the initial load.
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state = MatchState::new(64, 100);
+        state.load_warrior(MAX_WARRIORS - 1, &parsed, 10).unwrap();
+        state.step();
+
+        assert_eq!(state.core().owner(10), u8::MAX);
+        assert_eq!(state.core().owner(11), u8::MAX);
+    }
+
+    #[test]
+    fn warrior_id_at_max_is_rejected_without_touching_core() {
+        // Before #147, id 255 panicked in debug and wrapped to "unowned"
+        // in release.
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state = MatchState::new(64, 100);
+
+        assert_eq!(
+            state.load_warrior(MAX_WARRIORS, &parsed, 10),
+            Err(WarriorLoadError::IdOutOfRange { id: MAX_WARRIORS }),
+        );
+        assert!(state.warriors().is_empty());
+        assert_eq!(state.core().get(10), Instruction::dat_zero());
+        assert_eq!(state.core().owner(10), 0);
+    }
+
+    #[test]
+    fn warrior_id_above_u8_range_is_rejected() {
+        // Id 256 used to truncate to owner 1, colliding with warrior 0.
+        let mut state = MatchState::new(64, 100);
+        assert_eq!(
+            state.add_warrior(Warrior::new(256, 0)),
+            Err(WarriorLoadError::IdOutOfRange { id: 256 }),
+        );
+        assert!(state.warriors().is_empty());
+    }
+
+    #[test]
+    fn duplicate_warrior_id_is_rejected_without_touching_core() {
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state = MatchState::new(64, 100);
+        state.load_warrior(3, &parsed, 0).unwrap();
+
+        assert_eq!(
+            state.load_warrior(3, &parsed, 32),
+            Err(WarriorLoadError::DuplicateId { id: 3 }),
+        );
+        assert_eq!(state.warriors().len(), 1);
+        assert_eq!(state.core().get(32), Instruction::dat_zero());
+        assert_eq!(state.core().owner(32), 0);
+    }
+
+    #[test]
+    fn match_can_hold_every_valid_warrior_id() {
+        let mut state = MatchState::new(8000, 100);
+        for id in 0..MAX_WARRIORS {
+            state.add_warrior(Warrior::new(id, id)).unwrap();
+        }
+        assert_eq!(state.warriors().len(), MAX_WARRIORS);
+    }
+
+    #[test]
+    fn executor_attributes_writes_by_warrior_id_not_list_position() {
+        // A lone warrior with id 7 sits at index 0. Its initial cells are
+        // owned by 8 (id + 1); the cells it writes while running must be
+        // too, not 1 (index + 1).
+        let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
+        let mut state = MatchState::new(64, 100);
+        state.load_warrior(7, &parsed, 0).unwrap();
+        state.step();
+
+        assert_eq!(state.core().owner(0), 8);
+        assert_eq!(state.core().owner(1), 8);
+    }
+
+    #[test]
+    fn warrior_load_error_messages() {
+        assert_eq!(
+            WarriorLoadError::IdOutOfRange { id: 300 }.to_string(),
+            "warrior id 300 is out of range (ids must be below 255)",
+        );
+        assert_eq!(
+            WarriorLoadError::DuplicateId { id: 1 }.to_string(),
+            "a warrior with id 1 is already in the match",
+        );
+    }
+
     #[test]
     fn execution_writes_set_ownership_to_executing_warrior() {
         // Two imps loaded via load_warrior: warrior 0 at cell 0, warrior 1 at cell 50.
         let parsed = crate::parse_warrior("MOV.I $0, $1").unwrap();
         let mut state = MatchState::new(64, 50);
-        state.load_warrior(0, &parsed, 0);
-        state.load_warrior(1, &parsed, 50);
+        state.load_warrior(0, &parsed, 0).unwrap();
+        state.load_warrior(1, &parsed, 50).unwrap();
 
         // Before stepping: cell 0 owned by warrior 0 (owner=1), cell 50 by warrior 1 (owner=2).
         assert_eq!(state.core().owner(0), 1);
@@ -2423,8 +2572,8 @@ mod tests {
         // Warrior 0 writes cell 5 (via imp), then warrior 1 also writes cell 5.
         // Final owner should be warrior 1.
         let mut state = MatchState::new(16, 20);
-        state.add_warrior(Warrior::new(0, 0));
-        state.add_warrior(Warrior::new(1, 4));
+        state.add_warrior(Warrior::new(0, 0)).unwrap();
+        state.add_warrior(Warrior::new(1, 4)).unwrap();
         // Both are imps.
         state.core_mut().set(0, imp());
         state.core_mut().set(4, imp());

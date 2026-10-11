@@ -44,8 +44,10 @@ fn run_battle(red_source: &str, blue_source: &str) -> Result<(String, i32), AppE
         .map_err(|e| AppError::BadRequest(format!("Blue warrior parse error: {e}")))?;
 
     let mut m = MatchState::new(CORE_SIZE, MAX_STEPS);
-    m.load_warrior(0, &red, 0);
-    m.load_warrior(1, &blue, CORE_SIZE / 2);
+    m.load_warrior(0, &red, 0)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    m.load_warrior(1, &blue, CORE_SIZE / 2)
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Issue #87: engine's step() keeps running the survivor after a Victory,
     // so this loop would otherwise always pin steps_taken at MAX_STEPS.

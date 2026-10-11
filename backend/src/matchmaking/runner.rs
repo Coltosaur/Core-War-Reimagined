@@ -1,5 +1,5 @@
 use crate::leaderboard::elo::{rating_change, tie_change};
-use core_war_engine::{parse_warrior, MatchResult, MatchState};
+use core_war_engine::{parse_warrior, MatchResult, MatchState, WarriorLoadError};
 use sqlx::PgPool;
 use std::fmt;
 use uuid::Uuid;
@@ -23,6 +23,7 @@ pub struct MatchOutcome {
 pub enum MatchExecuteError {
     ParseRed(String),
     ParseBlue(String),
+    Load(WarriorLoadError),
     Db(sqlx::Error),
     Panic(String),
 }
@@ -32,6 +33,7 @@ impl fmt::Display for MatchExecuteError {
         match self {
             Self::ParseRed(e) => write!(f, "Red warrior parse error: {e}"),
             Self::ParseBlue(e) => write!(f, "Blue warrior parse error: {e}"),
+            Self::Load(e) => write!(f, "Warrior load error: {e}"),
             Self::Db(e) => write!(f, "DB error: {e}"),
             Self::Panic(e) => write!(f, "Battle task panic: {e}"),
         }
@@ -149,8 +151,10 @@ fn run_battle(
         parse_warrior(blue_source).map_err(|e| MatchExecuteError::ParseBlue(e.to_string()))?;
 
     let mut m = MatchState::new(core_size, max_steps);
-    m.load_warrior(0, &red, 0);
-    m.load_warrior(1, &blue, core_size / 2);
+    m.load_warrior(0, &red, 0)
+        .map_err(MatchExecuteError::Load)?;
+    m.load_warrior(1, &blue, core_size / 2)
+        .map_err(MatchExecuteError::Load)?;
 
     // Issue #87: the engine's `step()` keeps executing the surviving warrior
     // after a Victory is decided, so left uncapped this loop always runs to

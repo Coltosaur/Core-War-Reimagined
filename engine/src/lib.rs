@@ -26,4 +26,4 @@ pub mod wasm;
 
 pub use instruction::{AddressMode, Instruction, Modifier, Opcode, Operand};
 pub use parser::{parse_warrior, ParseError, ParsedWarrior};
-pub use vm::{Core, MatchResult, MatchState, Warrior};
+pub use vm::{Core, MatchResult, MatchState, Warrior, WarriorLoadError, MAX_WARRIORS};

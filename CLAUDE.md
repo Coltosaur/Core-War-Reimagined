@@ -22,6 +22,7 @@ The engine implements the **complete ICWS '94 opcode and addressing-mode set** w
 - `DIV` and `MOD` introduce the **only opcode-internal failure mode**: a divide-by-zero kills the executing process exactly as if it had executed a `DAT`. Implemented by having `arithmetic_op`'s closure return `Option<i32>` — `None` aborts the operation without writing back, and the opcode arm skips enqueueing the next PC.
 - The four side-effecting addressing modes (`{ } < >`) all share the same shape: read the intermediate cell, mutate the selected field (decrement before address calc OR increment after), write the intermediate back. This is why `resolve()` takes `&mut Core` rather than `&Core`.
 - **Process count limit:** `MatchState` has a `max_processes` field (default 8000, configurable via `set_max_processes`). SPL silently refuses to spawn a new process when the warrior is at the limit — the continuing process still runs.
+- **Warrior id limit:** ids must be below `MAX_WARRIORS` (255) and unique within a match, because cell owners are `u8` with 0 = unowned (owner = id + 1). `add_warrior` / `load_warrior` return `Result<(), WarriorLoadError>` (`IdOutOfRange` / `DuplicateId`) and reject before touching core; the wasm `loadWarrior` throws. Executor writes are attributed by warrior **id**, not list position.
 
 Deferred features: multiple warriors per file (`PIN` directive for warrior separation). Load a parsed warrior into a battle via `MatchState::load_warrior(id, &parsed, base_address)`.
 

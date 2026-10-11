@@ -1564,7 +1564,7 @@ bomb    DAT.F  #0, #0
         let parsed = parse_warrior(source).unwrap();
 
         let mut state = MatchState::new(64, 100);
-        state.load_warrior(0, &parsed, 0);
+        state.load_warrior(0, &parsed, 0).unwrap();
 
         // 5 iterations × 3 instructions per iteration = 15 steps.
         for _ in 0..15 {

@@ -57,9 +57,15 @@ impl From<sqlx::Error> for MatchExecuteError {
 /// `all_dead` (mutual destruction) is treated the same as `tie` for rating
 /// purposes — neither warrior outplayed the other, so the shift is toward the
 /// lower-rated player rather than either being credited with a win.
+///
+/// `match_id` becomes the new row's primary key. The caller picks it so it
+/// can announce the match (`match:found`) before the battle has run, using
+/// the same id the row will have. Reusing an id fails the insert, and the
+/// transaction rolls back with ratings untouched.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_and_persist_match(
     db: &PgPool,
+    match_id: Uuid,
     red_user_id: Uuid,
     blue_user_id: Uuid,
     red_warrior_id: Uuid,
@@ -100,11 +106,12 @@ pub async fn execute_and_persist_match(
 
     let match_id: Uuid = sqlx::query_scalar(
         "INSERT INTO matches \
-           (red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
+           (id, red_warrior_id, blue_warrior_id, red_user_id, blue_user_id, \
             core_size, max_steps, result, steps_taken, rated) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE) \
          RETURNING id",
     )
+    .bind(match_id)
     .bind(red_warrior_id)
     .bind(blue_warrior_id)
     .bind(red_user_id)

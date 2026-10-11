@@ -263,7 +263,11 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
             }
         };
 
-    let match_id = Uuid::new_v4().to_string();
+    // Picked here rather than by the INSERT so `match:found` can go out
+    // before the battle runs and still carry the id the persisted row will
+    // have (#143). Every event, the room name, and the row share it.
+    let match_uuid = Uuid::new_v4();
+    let match_id = match_uuid.to_string();
     let room = match_room(&match_id);
 
     // Join both participants into a dedicated room for this match. socketioxide
@@ -323,6 +327,7 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
 
     let outcome = match execute_and_persist_match(
         &db,
+        match_uuid,
         red.user_id,
         blue.user_id,
         red.warrior_id,
@@ -341,6 +346,7 @@ async fn run_matched_battle(io: SocketIo, db: PgPool, red: QueueEntry, blue: Que
         }
     };
 
+    debug_assert_eq!(outcome.match_id, match_uuid);
     let result_str = outcome.result.clone();
     let steps_taken = outcome.steps_taken as u64;
 

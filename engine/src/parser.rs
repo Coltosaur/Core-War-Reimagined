@@ -59,8 +59,9 @@ impl ParsedWarrior {
 /// Errors raised while parsing Redcode source. Every variant except
 /// `EmptyWarrior` carries the 1-indexed line number where the problem was
 /// found, so error messages can point at the right place in the source.
-/// Errors from resolving the `ORG` / `END` start label use `line: 0`
-/// because the start label isn't tied to one instruction line.
+/// Line numbers always refer to the source as written: an error in a
+/// `FOR`/`ROF` body points at the body line, and an unresolvable `ORG` /
+/// `END` target points at the directive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
     /// The source contained no instructions.
@@ -129,9 +130,10 @@ impl std::error::Error for ParseError {}
 /// so they can be used in FOR count expressions. EQU definitions inside a
 /// loop body are expanded with the same iteration suffix as labels.
 ///
-/// This function returns the expanded source text, ready for the two-pass
-/// parse.
-fn preprocess_for_rof(source: &str) -> Result<String, ParseError> {
+/// This function returns the expanded lines, ready for the two-pass parse,
+/// each paired with the source line it came from so later errors can point
+/// at the line the user wrote rather than its position after expansion.
+fn preprocess_for_rof(source: &str) -> Result<Vec<SourceLine>, ParseError> {
     // First pass: collect EQU definitions that appear at the top level
     // (before any FOR) so they're available for FOR count expressions.
     let mut equ_table: HashMap<String, String> = HashMap::new();
@@ -159,9 +161,24 @@ fn preprocess_for_rof(source: &str) -> Result<String, ParseError> {
         }
     }
 
-    let lines: Vec<&str> = source.lines().collect();
-    let expanded = expand_for_rof_block(&lines, 0, lines.len(), &equ_table, "")?;
-    Ok(expanded.join("\n"))
+    let lines: Vec<SourceLine> = source
+        .lines()
+        .enumerate()
+        .map(|(idx, text)| SourceLine {
+            line_no: idx + 1,
+            text: text.to_string(),
+        })
+        .collect();
+    expand_for_rof_block(&lines, 0, lines.len(), &equ_table, "")
+}
+
+/// One line of preprocessed source and the 1-indexed line of the original
+/// source it came from. Every copy of a `FOR` body line shares the body
+/// line's number.
+#[derive(Debug, Clone)]
+struct SourceLine {
+    line_no: usize,
+    text: String,
 }
 
 /// Recursively expand FOR/ROF blocks in `lines[start..end]`.
@@ -169,18 +186,18 @@ fn preprocess_for_rof(source: &str) -> Result<String, ParseError> {
 /// Returns the expanded lines. `suffix` is the current label-rename suffix
 /// inherited from enclosing FOR loops (empty at the top level).
 fn expand_for_rof_block(
-    lines: &[&str],
+    lines: &[SourceLine],
     start: usize,
     end: usize,
     equ_table: &HashMap<String, String>,
     suffix: &str,
-) -> Result<Vec<String>, ParseError> {
+) -> Result<Vec<SourceLine>, ParseError> {
     let mut expanded = Vec::new();
     let mut i = start;
 
     while i < end {
-        let line_no = i + 1; // 1-indexed for error messages
-        let code = strip_comment(lines[i]);
+        let line_no = lines[i].line_no;
+        let code = strip_comment(&lines[i].text);
         let trimmed = code.trim();
 
         // Check for ROF — if we hit one at this level, it's unmatched.
@@ -216,15 +233,18 @@ fn expand_for_rof_block(
 
                 // Rename labels in each line of the body, then recursively
                 // expand any nested FOR/ROF blocks.
-                let renamed_body: Vec<String> = (body_start..rof_line)
-                    .map(|j| rename_labels_in_line(lines[j], &body_labels, &iter_suffix))
+                let renamed_body: Vec<SourceLine> = lines[body_start..rof_line]
+                    .iter()
+                    .map(|line| SourceLine {
+                        line_no: line.line_no,
+                        text: rename_labels_in_line(&line.text, &body_labels, &iter_suffix),
+                    })
                     .collect();
-                let renamed_refs: Vec<&str> = renamed_body.iter().map(|s| s.as_str()).collect();
 
                 let inner = expand_for_rof_block(
-                    &renamed_refs,
+                    &renamed_body,
                     0,
-                    renamed_refs.len(),
+                    renamed_body.len(),
                     equ_table,
                     "", // suffix already applied via renaming
                 )?;
@@ -234,7 +254,7 @@ fn expand_for_rof_block(
             i = rof_line + 1; // skip past the ROF
         } else {
             // Regular line — pass through.
-            expanded.push(lines[i].to_string());
+            expanded.push(lines[i].clone());
             i += 1;
         }
     }
@@ -315,10 +335,14 @@ fn evaluate_for_count(
 
 /// Find the line index of the ROF that matches a FOR at `body_start - 1`.
 /// Handles nesting by tracking depth.
-fn find_matching_rof(lines: &[&str], body_start: usize, end: usize) -> Result<usize, ParseError> {
+fn find_matching_rof(
+    lines: &[SourceLine],
+    body_start: usize,
+    end: usize,
+) -> Result<usize, ParseError> {
     let mut depth = 0usize;
     for (i, line) in lines.iter().enumerate().take(end).skip(body_start) {
-        let code = strip_comment(line);
+        let code = strip_comment(&line.text);
         let trimmed = code.trim();
 
         if is_for_directive_any(trimmed) {
@@ -330,9 +354,9 @@ fn find_matching_rof(lines: &[&str], body_start: usize, end: usize) -> Result<us
             depth -= 1;
         }
     }
-    // No matching ROF found.
+    // No matching ROF found; point at the FOR itself.
     Err(ParseError::UnmatchedFor {
-        line: body_start, // 0-indexed here, but close enough — the FOR line is body_start - 1
+        line: lines[body_start - 1].line_no,
     })
 }
 
@@ -370,10 +394,10 @@ fn is_rof_directive(trimmed: &str) -> bool {
 /// A label is the first whitespace-separated token on a line if it doesn't
 /// parse as a known opcode and isn't a FOR/ROF directive. EQU names (the
 /// token before `EQU`) are also collected as labels for renaming.
-fn collect_labels_in_range(lines: &[&str], start: usize, end: usize) -> HashSet<String> {
+fn collect_labels_in_range(lines: &[SourceLine], start: usize, end: usize) -> HashSet<String> {
     let mut labels = HashSet::new();
     for line in lines.iter().take(end).skip(start) {
-        let code = strip_comment(line);
+        let code = strip_comment(&line.text);
         let trimmed = code.trim();
         if trimmed.is_empty() {
             continue;
@@ -474,19 +498,19 @@ fn strip_comment(line: &str) -> String {
 /// Parse a Redcode warrior from text source.
 pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
     // ─── Preprocessor: expand FOR/ROF loops ───
-    let expanded = preprocess_for_rof(source)?;
-    let source = &expanded;
+    let lines = preprocess_for_rof(source)?;
 
     // ─── Pass 1: classify lines, extract metadata, find labels ───
     let mut name: Option<String> = None;
     let mut author: Option<String> = None;
-    let mut start_label: Option<String> = None;
+    // The ORG / END target and the line of the directive that named it.
+    let mut start_label: Option<(String, usize)> = None;
     let mut equ_table: HashMap<String, String> = HashMap::new();
     let mut instr_lines: Vec<InstructionLine> = Vec::new();
 
-    'lines: for (idx, raw) in source.lines().enumerate() {
-        let line_no = idx + 1; // human-friendly 1-indexed line numbers
-        let code = strip_comment_extracting_metadata(raw, &mut name, &mut author);
+    'lines: for SourceLine { line_no, text } in &lines {
+        let line_no = *line_no;
+        let code = strip_comment_extracting_metadata(text, &mut name, &mut author);
         let code = code.trim();
         if code.is_empty() {
             continue;
@@ -502,13 +526,13 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
                     message: "ORG requires a target label".to_string(),
                 });
             }
-            start_label = Some(target.to_string());
+            start_label = Some((target.to_string(), line_no));
             continue;
         }
         if let Some(rest) = strip_keyword_ci(code, "END") {
             let target = rest.trim();
             if !target.is_empty() {
-                start_label = Some(target.to_string());
+                start_label = Some((target.to_string(), line_no));
             }
             break 'lines;
         }
@@ -576,21 +600,21 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
     // can be a label name, an EQU constant (resolved to a number), or a
     // direct numeric literal.
     let start_offset = match start_label {
-        Some(target) => {
+        Some((target, line)) => {
             if let Some(&offset) = label_table.get(&target) {
                 offset
             } else if let Some(value) = equ_table.get(&target) {
                 value
                     .parse::<usize>()
                     .map_err(|_| ParseError::UnknownLabel {
-                        line: 0,
+                        line,
                         label: target.clone(),
                     })?
             } else if let Ok(n) = target.parse::<usize>() {
                 n
             } else {
                 return Err(ParseError::UnknownLabel {
-                    line: 0,
+                    line,
                     label: target,
                 });
             }
@@ -2083,5 +2107,92 @@ target  DAT #0, #0
         assert_eq!(parsed.instructions()[3].opcode, Opcode::Add);
         assert_eq!(parsed.instructions()[4].opcode, Opcode::Sub);
         assert_eq!(parsed.instructions()[5].opcode, Opcode::Mov);
+    }
+
+    // ── error line numbers refer to the source as written (#146) ─────
+
+    #[test]
+    fn error_after_for_block_reports_source_line() {
+        // The issue's repro: before #146 this reported line 12, past the
+        // end of the file, because the 10 expanded DATs were counted.
+        let err = parse_warrior("FOR 10\nDAT 0\nROF\nMOV 0,1\nBOGUS 1\n").unwrap_err();
+        assert!(matches!(err, ParseError::UnknownOpcode { line: 5, .. }));
+        assert!(err.to_string().starts_with("line 5:"));
+    }
+
+    #[test]
+    fn error_in_for_body_reports_body_line() {
+        // Every copy of a body line maps back to the body line itself.
+        let source = "FOR 2\nDAT 0\nROF\nFOR 3\nBOGUS 1\nROF\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::UnknownOpcode { line: 5, .. }));
+    }
+
+    #[test]
+    fn error_after_nested_for_reports_source_line() {
+        let source = "FOR 2\nFOR 3\nDAT 0\nROF\nROF\nBOGUS 1\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::UnknownOpcode { line: 6, .. }));
+    }
+
+    #[test]
+    fn error_in_nested_for_body_reports_body_line() {
+        let source = "FOR 2\nDAT 0\nFOR 3\nMOV.Q 0, 1\nROF\nROF\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::UnknownModifier { line: 4, .. }));
+    }
+
+    #[test]
+    fn preprocessor_error_in_nested_for_reports_source_line() {
+        // Errors raised while expanding an inner FOR used to count lines
+        // from the start of the outer body, not the file.
+        let source = "DAT 0\nFOR 2\nFOR -1\nDAT 0\nROF\nROF\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::SyntaxError { line: 3, .. }));
+    }
+
+    #[test]
+    fn unmatched_for_reports_the_for_line() {
+        let err = parse_warrior("DAT 0\nFOR 3\nDAT 0\n").unwrap_err();
+        assert!(matches!(err, ParseError::UnmatchedFor { line: 2 }));
+    }
+
+    #[test]
+    fn duplicate_label_after_for_reports_source_line() {
+        let source = "a DAT 0\nFOR 4\nDAT 0\nROF\na DAT 0\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::DuplicateLabel { line: 5, .. }));
+    }
+
+    #[test]
+    fn org_unknown_label_reports_org_line() {
+        let err = parse_warrior("ORG nowhere\nMOV 0,1\n").unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { line: 1, .. }));
+    }
+
+    #[test]
+    fn end_unknown_label_reports_end_line() {
+        let err = parse_warrior("MOV 0,1\nEND nowhere\n").unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { line: 2, .. }));
+    }
+
+    #[test]
+    fn org_non_numeric_equ_reports_org_line() {
+        let source = "x EQU 2 + 1\nMOV 0,1\nORG x\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { line: 3, .. }));
+    }
+
+    #[test]
+    fn org_after_for_block_reports_source_line() {
+        let err = parse_warrior("FOR 5\nDAT 0\nROF\nORG nowhere\n").unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { line: 4, .. }));
+    }
+
+    #[test]
+    fn later_org_wins_and_reports_its_own_line() {
+        let source = "start MOV 0,1\nORG start\nORG nowhere\n";
+        let err = parse_warrior(source).unwrap_err();
+        assert!(matches!(err, ParseError::UnknownLabel { line: 3, .. }));
     }
 }

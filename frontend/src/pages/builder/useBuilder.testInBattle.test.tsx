@@ -80,7 +80,7 @@ describe('handleTestInBattle with a saved server warrior', () => {
     );
   });
 
-  it('stays on the Builder (edits intact) if the save fails', async () => {
+  it('stays on the Builder (edits intact) and says so if the save fails', async () => {
     setServerOwner('u1');
     vi.mocked(api.createWarrior).mockResolvedValue(sw('s2', 'Other', 'MOV.I $0, $1'));
     await createServerWarrior('Other', 'MOV.I $0, $1');
@@ -92,10 +92,13 @@ describe('handleTestInBattle with a saved server warrior', () => {
 
     vi.mocked(api.updateWarrior).mockRejectedValue(new Error('network down'));
     await act(async () => {
-      await result.current.handleTestInBattle().catch(() => {});
+      await result.current.handleTestInBattle();
     });
 
     expect(navigate).not.toHaveBeenCalled();
+    expect(result.current.actionError).toBe(
+      "Couldn't save warrior: the server couldn't be reached",
+    );
     expect(result.current.source).toBe('DAT #1, #1');
     expect(result.current.dirty).toBe(true);
   });

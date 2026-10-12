@@ -53,6 +53,9 @@ export function useBattle() {
   const gridRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const hoveredAddrRef = useRef(-1);
+  // Mirrors `selectedCell` so the RAF loop can refresh the inspector without
+  // reading state through an updater. Written only via `setSelection`.
+  const selectedCellRef = useRef<number | null>(null);
   const rendererRef = useRef<CoreRenderer | null>(null);
   const matchRef = useRef<MatchState | null>(null);
   const warriorNamesRef = useRef<string[]>([]);
@@ -112,16 +115,25 @@ export function useBattle() {
     if (tip) tip.style.display = 'none';
   }, []);
 
-  const handleGridClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const addr = cellAddressAtPixel(x, y, rect.width, rect.height);
-    if (addr >= 0) {
-      setSelectedCell(addr);
-      if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));
-    }
+  // The one place the inspector selection changes, so the ref and the
+  // state can't drift apart.
+  const setSelection = useCallback((addr: number | null) => {
+    selectedCellRef.current = addr;
+    setSelectedCell(addr);
+    const m = matchRef.current;
+    setCellInfo(addr !== null && m ? readCellFromMatch(m, addr) : null);
   }, []);
+
+  const handleGridClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const addr = cellAddressAtPixel(x, y, rect.width, rect.height);
+      if (addr >= 0) setSelection(addr);
+    },
+    [setSelection],
+  );
 
   useEffect(() => {
     if (!gridRef.current) return;
@@ -132,6 +144,11 @@ export function useBattle() {
       rendererRef.current = null;
     };
   }, []);
+
+  // Stop a running battle when the page unmounts. Deliberately its own
+  // effect: the loop must not rely on the renderer cleanup above nulling
+  // `rendererRef` to notice it should stop.
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   const loadBattle = useCallback(
     (currentRedId: string, currentBlueId: string) => {
@@ -217,10 +234,8 @@ export function useBattle() {
     }
     setWarriors(ws);
     setProcesses(ps);
-    setSelectedCell((prev) => {
-      if (prev !== null) setCellInfo(readCellFromMatch(m, prev));
-      return prev;
-    });
+    const selected = selectedCellRef.current;
+    if (selected !== null) setCellInfo(readCellFromMatch(m, selected));
   }, []);
 
   const tickRef = useRef<() => void>(() => {});
@@ -286,10 +301,9 @@ export function useBattle() {
   const reset = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     setRunning(false);
-    setSelectedCell(null);
-    setCellInfo(null);
+    setSelection(null);
     loadBattle(redId, blueId);
-  }, [loadBattle, redId, blueId]);
+  }, [loadBattle, redId, blueId, setSelection]);
 
   const handlePickChange = useCallback(
     (side: 0 | 1, id: string) => {
@@ -304,15 +318,9 @@ export function useBattle() {
     [loadBattle, redId, blueId],
   );
 
-  const selectCell = useCallback((addr: number) => {
-    setSelectedCell(addr);
-    if (matchRef.current) setCellInfo(readCellFromMatch(matchRef.current, addr));
-  }, []);
+  const selectCell = useCallback((addr: number) => setSelection(addr), [setSelection]);
 
-  const clearCell = useCallback(() => {
-    setSelectedCell(null);
-    setCellInfo(null);
-  }, []);
+  const clearCell = useCallback(() => setSelection(null), [setSelection]);
 
   return {
     ready,

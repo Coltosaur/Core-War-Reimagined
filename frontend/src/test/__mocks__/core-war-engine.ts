@@ -42,11 +42,17 @@ export class MatchState {
   stepN(n: number): void {
     this._step += n;
   }
+  steps(): number {
+    return this._step;
+  }
   resultCode(): number {
     return 0;
   }
   resultWinnerId(): number {
     return -1;
+  }
+  coreOwnership(): Uint8Array {
+    return new Uint8Array(this._coreSize);
   }
   coreOpcodes(): Uint8Array {
     return new Uint8Array(this._coreSize);
@@ -74,6 +80,9 @@ export class MatchState {
   }
   warriorCount(): number {
     return 2;
+  }
+  warriorId(i: number): number {
+    return i;
   }
   warriorIsAlive(): boolean {
     return true;

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { API_BASE } from '../api/config';
+import { SessionExpiredError } from '../api/errors';
 import { useAuth } from '../api/useAuth';
 import { installSocketAuthRecovery, type PendingSocketAction } from '../api/socketAuth';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
+import { isServerId, toServerId } from '../warriors/serverId';
 import { io, type Socket } from 'socket.io-client';
 import alertStyles from '../components/alert.module.css';
 import controls from '../components/controls.module.css';
@@ -10,10 +13,8 @@ import { matchOutcome } from './match/matchOutcome';
 import type { MatchStartPayload } from './match/useMatchReplay';
 import styles from './LobbyPage.module.css';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-
 function serverUuid(w: Warrior): string | null {
-  return w.id.startsWith('server:') ? w.id.slice(7) : null;
+  return isServerId(w.id) ? toServerId(w.id) : null;
 }
 
 type MatchFoundData = {
@@ -99,7 +100,7 @@ export default function LobbyPage() {
       onSessionExpired: () => {
         pendingActionRef.current = null;
         setPhase('idle');
-        setError('Your session has expired. Please log in again.');
+        setError(new SessionExpiredError().message);
       },
     });
 

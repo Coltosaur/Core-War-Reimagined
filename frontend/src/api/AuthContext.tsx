@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as authApi from './auth';
 import { AuthContext } from './authContextValue';
@@ -42,9 +42,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
-      {children}
-    </AuthContext.Provider>
+  // Memoized so consumers re-render when auth state changes, not on every
+  // AuthProvider render.
+  const value = useMemo(
+    () => ({ user, loading, login, register, logout }),
+    [user, loading, login, register, logout],
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

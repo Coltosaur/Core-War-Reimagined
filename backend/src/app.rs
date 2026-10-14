@@ -65,7 +65,10 @@ pub fn router(
 
     let app = Router::new()
         .route("/health", get(health::liveness))
-        .route("/health/deep", get(health::readiness))
+        .route(
+            "/health/deep",
+            get(health::readiness).layer(axum::Extension(redis_conn)),
+        )
         .route(
             "/api/auth/register",
             post(auth::handlers::register).layer(middleware::from_fn_with_state(

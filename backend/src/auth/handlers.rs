@@ -166,16 +166,13 @@ pub async fn register(
     .fetch_one(&state.db)
     .await
     .map_err(|e| match &e {
-        sqlx::Error::Database(db_err) if db_err.constraint().is_some() => {
-            let constraint = db_err.constraint().unwrap();
-            if constraint.contains("username") {
+        sqlx::Error::Database(db_err) => match db_err.constraint() {
+            Some(c) if c.contains("username") => {
                 AppError::Conflict("Username is already taken".into())
-            } else if constraint.contains("email") {
-                AppError::Conflict("Email is already registered".into())
-            } else {
-                AppError::Internal(e.to_string())
             }
-        }
+            Some(c) if c.contains("email") => AppError::Conflict("Email is already registered".into()),
+            _ => AppError::Internal(e.to_string()),
+        },
         _ => AppError::Internal(e.to_string()),
     })?;
 

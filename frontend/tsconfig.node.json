@@ -16,5 +16,5 @@
     "strict": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["vite.config.ts", "src/deploy", "src/routes.test.ts", "src/styles/tokens.test.ts"]
+  "include": ["vite.config.ts", "src/deploy", "src/routes.test.ts", "src/styles/tokens.test.ts", "src/pages/builder/EditorStatus.css.test.ts"]
 }

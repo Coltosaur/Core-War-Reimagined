@@ -18,5 +18,5 @@
   },
   "include": ["src"],
   // Node-run files, checked by tsconfig.node.json instead.
-  "exclude": ["src/deploy", "src/routes.test.ts", "src/styles/tokens.test.ts"]
+  "exclude": ["src/deploy", "src/routes.test.ts", "src/styles/tokens.test.ts", "src/pages/builder/EditorStatus.css.test.ts"]
 }

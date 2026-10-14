@@ -352,6 +352,20 @@ mod tests {
         assert_eq!(got, Some(ip("203.0.113.50")));
     }
 
+    /// #130: with IPv6 on the Docker network, Caddy may reach the backend
+    /// from its ULA address, forwarding an IPv6 visitor. The trust list is
+    /// docker-compose.prod.yml's.
+    #[test]
+    fn ipv6_visitor_through_caddy_on_a_ula_address() {
+        let prod = nets(&["172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]);
+        let got = extract_ip(
+            Some(&peer("fd8b:2e1c:9a0f::3")),
+            &xff("2604:a880:4:1d0::1234"),
+            &prod,
+        );
+        assert_eq!(got, Some(ip("2604:a880:4:1d0::1234")));
+    }
+
     async fn test_conn() -> ConnectionManager {
         let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
         let client = redis::Client::open(url.as_str()).unwrap();

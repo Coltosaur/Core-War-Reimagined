@@ -42,9 +42,11 @@ services:
       # address from these default pools, so trust the pools rather than an
       # address that changes. Safe because the backend publishes no host
       # port: only containers on this host can reach it at all.
+      # fc00::/7 covers the private (ULA) IPv6 subnet Docker gives the `app`
+      # network now that it has IPv6 enabled (#130).
       # Set here rather than in .env.production so it can't be forgotten;
       # this overrides any value there.
-      TRUSTED_PROXIES: "172.16.0.0/12,192.168.0.0/16"
+      TRUSTED_PROXIES: "172.16.0.0/12,192.168.0.0/16,fc00::/7"
     expose:
       - "3001"
     depends_on:
@@ -111,3 +113,11 @@ volumes:
 
 networks:
   app:
+    # Without IPv6 on this network, IPv6 connections to Caddy's published
+    # ports go through Docker's userland proxy, which replaces the visitor's
+    # address with the network gateway, so every IPv6 visitor shared one
+    # rate-limit bucket (#130). Since Docker 27 an IPv6-enabled network gets
+    # an automatic ULA subnet and published ports keep the real address.
+    # Changing this needs the network recreated: `down` then `up -d` on the
+    # droplet (see deploy/README.md); CI's `up -d` alone won't apply it.
+    enable_ipv6: true

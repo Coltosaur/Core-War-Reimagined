@@ -384,6 +384,14 @@ docker compose -f docker-compose.prod.yml --env-file .env.production restart bac
 # Stop everything (volumes survive)
 docker compose -f docker-compose.prod.yml --env-file .env.production down
 
+# Recreate the network after changing its settings in docker-compose.prod.yml
+# (e.g. enable_ipv6, #130). `up -d` alone keeps the old network. About a
+# minute of downtime; no -v, so volumes survive. Afterwards, a failed login
+# from a phone on cellular should key rate_limit:login_failures:ip:<ip> on the
+# phone's real IPv6 address (compare https://api64.ipify.org on the phone).
+docker compose -f docker-compose.prod.yml --env-file .env.production down
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+
 # Nuke the database (only if you mean it — volumes go too)
 docker compose -f docker-compose.prod.yml --env-file .env.production down -v
 
@@ -393,7 +401,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.production down -v
 # public IP. A 172.x / 192.168.x address means the visitor's real address
 # was lost before the backend and everyone behind it shares that bucket:
 # either Caddy isn't trusted (the backend also logs a TRUSTED_PROXIES
-# warning once) or the visitor came in over IPv6 (#130).
+# warning once) or the visitor came in over IPv6 and the `app` network was
+# created before it had IPv6 enabled (#130; see below).
 docker compose -f docker-compose.prod.yml --env-file .env.production exec redis \
   redis-cli --scan --pattern 'rate_limit:*'
 ```

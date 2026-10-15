@@ -217,6 +217,10 @@ jobs:
           # #178's deploy. Recreating every container restores the aliases.
           # Checking the symptom rather than predicting the network change
           # also catches anything else that leaves a service unresolvable.
+          # If recreating isn't enough, `down` + `up -d` rebuilds the
+          # network too (what fixed #178's outage by hand). No retries of
+          # the same step: both are deterministic, so a repeat changes
+          # nothing.
           missing_aliases() {
               local svc id aliases missing=()
               for svc in $(./compose.sh config --services); do
@@ -231,11 +235,18 @@ jobs:
               echo "==> No network alias for: $missing. Recreating all containers"
               ./compose.sh up -d --force-recreate
               missing=$(missing_aliases)
-              if [[ -n "$missing" ]]; then
-                  echo "ERROR: still no network alias for: $missing" >&2
-                  ./compose.sh ps -a >&2
-                  exit 1
-              fi
+          fi
+          if [[ -n "$missing" ]]; then
+              echo "==> Still no network alias for: $missing. Taking the stack down and up"
+              ./compose.sh down
+              ./compose.sh up -d
+              missing=$(missing_aliases)
+          fi
+          if [[ -n "$missing" ]]; then
+              echo "ERROR: still no network alias for: $missing" >&2
+              ./compose.sh ps -a >&2
+              ./compose.sh logs --tail 80 backend >&2
+              exit 1
           fi
 
           echo "==> Waiting up to 60s for backend to be healthy"

@@ -33,3 +33,17 @@
   margin-left: auto;
   color: var(--violet);
 }
+
+/* Phones: the Builder is one scrolling column and the 60dvh editor pushes
+   this bar below the first screen, but it's the only place save and parse
+   errors show (#175). Stick it to the bottom of the shell's scrolling main,
+   which ends above the tab bar (the tab bar owns the safe-area inset, and
+   hides while an input has focus, which only grows main). It scrolls away
+   with the editor once the cheat sheet comes into view. */
+@media (max-width: 47.99rem) {
+  .status {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+  }
+}

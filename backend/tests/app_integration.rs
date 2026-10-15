@@ -4,12 +4,17 @@
 //! once started without client addresses, which put every visitor in one
 //! login rate-limit bucket: five logins from anyone locked everyone out (#116).
 
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
 use core_war_backend::app;
+use http_body_util::BodyExt;
 use redis::aio::ConnectionManager;
+use serde_json::Value;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tower::ServiceExt;
 
 mod common;
 
@@ -75,6 +80,27 @@ async fn serving_without_client_addresses_fails_closed(pool: PgPool) {
     tokio::spawn(async move { axum::serve(listener, router).await });
 
     assert_eq!(failed_login_status(addr).await, 500);
+}
+
+#[sqlx::test]
+async fn production_readiness_probes_postgres_and_redis(pool: PgPool) {
+    // `/health/deep` gets Redis from an `Extension` that `app::router` adds
+    // to the route. Dropping it still compiles, but every probe would 500,
+    // which marks the container unhealthy and fails every deploy.
+    // health_integration.rs adds the extension itself, so only a test
+    // against the production router can catch that.
+    let response = production_router(pool)
+        .await
+        .oneshot(Request::get("/health/deep").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["database"], "ok");
+    assert_eq!(body["redis"], "ok");
 }
 
 #[sqlx::test]

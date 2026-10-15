@@ -30,6 +30,12 @@ TARGET="$1"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_PATH="corewar"  # relative to the remote user's $HOME
 
+# docker-compose.prod.yml requires a tag. Name the image built on the
+# droplet after the commit it came from, so `compose.sh ps` shows what's
+# running and it can't be mistaken for a CI-published `master-<sha>`.
+TAG="manual-$(git -C "$REPO_ROOT" rev-parse --short=7 HEAD)"
+git -C "$REPO_ROOT" diff --quiet HEAD || TAG="$TAG-dirty"
+
 echo "==> Syncing $REPO_ROOT -> $TARGET:~/$REMOTE_PATH/"
 
 # Rsync filter rules are evaluated in order; first match wins.
@@ -37,11 +43,15 @@ echo "==> Syncing $REPO_ROOT -> $TARGET:~/$REMOTE_PATH/"
 # `cp .env.production.example .env.production` step has something to
 # copy on the droplet. Real .env files are excluded so secrets never
 # leave the laptop — and excluded files are not deleted by --delete
-# either, so the droplet's .env.production survives redeploys.
+# either, so the droplet's .env.production survives redeploys. The same
+# goes for /compose.sh and /.backend-image-tag, which CI puts at the top
+# of ~/corewar/ and the remote step below rewrites.
 rsync -azh --delete \
     --include '.env.production.example' \
     --exclude '.env' \
     --exclude '.env.*' \
+    --exclude '/compose.sh' \
+    --exclude '/.backend-image-tag' \
     --exclude '.git' \
     --exclude '.github' \
     --exclude 'target' \
@@ -55,13 +65,15 @@ rsync -azh --delete \
     --exclude '.DS_Store' \
     "$REPO_ROOT/" "$TARGET:$REMOTE_PATH/"
 
-echo "==> Rebuilding and restarting prod stack on $TARGET"
+echo "==> Rebuilding and restarting prod stack on $TARGET at tag $TAG"
 
 # Run a single remote bash session so we can keep -euo pipefail
-# behavior on the droplet side.
-ssh "$TARGET" 'bash -s' <<'REMOTE'
+# behavior on the droplet side. The tag goes through the ssh command
+# prefix, as in .github/workflows/deploy-backend.yml.
+ssh "$TARGET" "BACKEND_IMAGE_TAG=$TAG bash -s" <<'REMOTE'
 set -euo pipefail
 cd ~/corewar
+export BACKEND_IMAGE_TAG
 
 if [[ ! -f .env.production ]]; then
     echo "ERROR: ~/corewar/.env.production not found." >&2
@@ -71,8 +83,15 @@ if [[ ! -f .env.production ]]; then
     exit 1
 fi
 
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-docker compose -f docker-compose.prod.yml --env-file .env.production ps
+install -m 755 deploy/compose.sh compose.sh
+printf '%s\n' "$BACKEND_IMAGE_TAG" > .backend-image-tag
+
+# --force-recreate: if docker-compose.prod.yml changed the network, a plain
+# `up -d` reattaches the containers it doesn't recreate without their
+# service-name aliases and the backend can't resolve postgres. CI checks for
+# that and recreates only when needed; this escape hatch just always does.
+./compose.sh up -d --build --force-recreate
+./compose.sh ps
 REMOTE
 
 echo "==> Done. Smoke-test with: curl -i https://<your-api-host>/health"

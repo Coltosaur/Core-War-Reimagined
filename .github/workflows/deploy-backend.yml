@@ -16,6 +16,7 @@ on:
       - 'engine/**'
       - 'Caddyfile'
       - 'docker-compose.prod.yml'
+      - 'deploy/compose.sh'
       - '.github/workflows/deploy-backend.yml'
   pull_request:
     branches: [master]
@@ -24,6 +25,7 @@ on:
       - 'engine/**'
       - 'Caddyfile'
       - 'docker-compose.prod.yml'
+      - 'deploy/compose.sh'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
@@ -148,13 +150,13 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
 
-      - name: Sync compose + Caddyfile to droplet
+      - name: Sync compose + Caddyfile + compose.sh to droplet
         # No --delete: we don't want to nuke .env.production on the
         # destination, and the only files we push are listed explicitly
-        # anyway.
+        # anyway. deploy/compose.sh lands as ~/corewar/compose.sh.
         run: |
           rsync -azh \
-            docker-compose.prod.yml Caddyfile \
+            docker-compose.prod.yml Caddyfile deploy/compose.sh \
             "${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}:~/corewar/"
 
       - name: Pull image + restart stack + verify health
@@ -183,19 +185,21 @@ jobs:
           fi
 
           echo "==> Deploying backend at tag ${BACKEND_IMAGE_TAG}"
-          # Export so `docker compose` sees BACKEND_IMAGE_TAG via the
-          # compose file's `${BACKEND_IMAGE_TAG:-latest}` interpolation.
-          # (`--env-file` supplies the app's runtime secrets, but
-          # variable interpolation in the compose file itself uses the
-          # calling shell's env — those are two separate resolution
-          # paths, both required.)
+          # compose.sh passes an explicit BACKEND_IMAGE_TAG through (shell
+          # env wins over --env-file), so every command below runs this
+          # run's tag.
           export BACKEND_IMAGE_TAG
 
           echo "==> Pulling backend image"
-          docker compose -f docker-compose.prod.yml --env-file .env.production pull backend
+          ./compose.sh pull backend
+
+          # Record the tag before anything restarts, so a manual
+          # ./compose.sh on the droplet runs what is deployed even if a
+          # later step fails. docker-compose.prod.yml has no fallback tag.
+          printf '%s\n' "$BACKEND_IMAGE_TAG" > .backend-image-tag
 
           echo "==> Restarting stack"
-          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
+          ./compose.sh up -d --remove-orphans
 
           # Caddyfile is a single-file bind mount. rsync replaces the host
           # file via write-new + rename, which leaves the running container
@@ -204,7 +208,46 @@ jobs:
           # file. ~1s bounce, no data loss (caddy_data + caddy_config are
           # named volumes that survive container recreation).
           echo "==> Recreating caddy to refresh single-file bind mount"
-          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate caddy
+          ./compose.sh up -d --force-recreate caddy
+
+          # When the `app` network's settings change, `up -d` recreates the
+          # network but reattaches the containers it didn't recreate
+          # (postgres, redis) without their service-name aliases. The
+          # backend then can't resolve `postgres` and crash-loops, as on
+          # #178's deploy. Recreating every container restores the aliases.
+          # Checking the symptom rather than predicting the network change
+          # also catches anything else that leaves a service unresolvable.
+          # If recreating isn't enough, `down` + `up -d` rebuilds the
+          # network too (what fixed #178's outage by hand). No retries of
+          # the same step: both are deterministic, so a repeat changes
+          # nothing.
+          missing_aliases() {
+              local svc id aliases missing=()
+              for svc in $(./compose.sh config --services); do
+                  id=$(./compose.sh ps -aq "$svc")
+                  aliases=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{join .Aliases " "}} {{end}}' $id 2>/dev/null || true)
+                  [[ " $aliases " == *" $svc "* ]] || missing+=("$svc")
+              done
+              echo "${missing[*]}"
+          }
+          missing=$(missing_aliases)
+          if [[ -n "$missing" ]]; then
+              echo "==> No network alias for: $missing. Recreating all containers"
+              ./compose.sh up -d --force-recreate
+              missing=$(missing_aliases)
+          fi
+          if [[ -n "$missing" ]]; then
+              echo "==> Still no network alias for: $missing. Taking the stack down and up"
+              ./compose.sh down
+              ./compose.sh up -d
+              missing=$(missing_aliases)
+          fi
+          if [[ -n "$missing" ]]; then
+              echo "ERROR: still no network alias for: $missing" >&2
+              ./compose.sh ps -a >&2
+              ./compose.sh logs --tail 80 backend >&2
+              exit 1
+          fi
 
           echo "==> Waiting up to 60s for backend to be healthy"
           end=$((SECONDS + 60))
@@ -212,7 +255,7 @@ jobs:
               state=$(docker inspect -f '{{.State.Health.Status}}' corewar-prod-backend-1 2>/dev/null || echo "starting")
               if [[ "$state" == "healthy" ]]; then
                   echo "==> Backend healthy"
-                  docker compose -f docker-compose.prod.yml --env-file .env.production ps
+                  ./compose.sh ps
                   docker image prune -f
                   exit 0
               fi
@@ -221,6 +264,6 @@ jobs:
           done
 
           echo "ERROR: backend did not become healthy within 60s" >&2
-          docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail 80 backend >&2
+          ./compose.sh logs --tail 80 backend >&2
           exit 1
           REMOTE

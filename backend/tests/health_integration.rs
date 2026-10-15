@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
-use axum::Router;
+use axum::{Extension, Router};
 use core_war_backend::health;
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -12,16 +12,24 @@ mod common;
 
 use common::test_state;
 
-fn app(pool: PgPool) -> Router {
+async fn app(pool: PgPool) -> Router {
+    let url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".into());
+    let redis = redis::aio::ConnectionManager::new(redis::Client::open(url).unwrap())
+        .await
+        .unwrap();
     Router::new()
         .route("/health", get(health::liveness))
-        .route("/health/deep", get(health::readiness))
+        .route(
+            "/health/deep",
+            get(health::readiness).layer(Extension(redis)),
+        )
         .with_state(test_state(pool))
 }
 
 #[sqlx::test]
 async fn liveness_returns_ok_regardless_of_db(pool: PgPool) {
     let response = app(pool)
+        .await
         .oneshot(Request::get("/health").body(Body::empty()).unwrap())
         .await
         .unwrap();
@@ -41,6 +49,7 @@ async fn liveness_returns_ok_regardless_of_db(pool: PgPool) {
 #[sqlx::test]
 async fn readiness_returns_ok_when_db_reachable(pool: PgPool) {
     let response = app(pool)
+        .await
         .oneshot(Request::get("/health/deep").body(Body::empty()).unwrap())
         .await
         .unwrap();
@@ -52,6 +61,7 @@ async fn readiness_returns_ok_when_db_reachable(pool: PgPool) {
 
     assert_eq!(body["status"], "ok");
     assert_eq!(body["database"], "ok");
+    assert_eq!(body["redis"], "ok");
 }
 
 #[tokio::test]
@@ -61,6 +71,7 @@ async fn readiness_returns_503_when_db_unreachable() {
     let pool = PgPool::connect_lazy("postgresql://corewar:bogus@127.0.0.1:1/corewar").unwrap();
 
     let response = app(pool)
+        .await
         .oneshot(Request::get("/health/deep").body(Body::empty()).unwrap())
         .await
         .unwrap();
@@ -72,6 +83,7 @@ async fn readiness_returns_503_when_db_unreachable() {
 
     assert_eq!(body["status"], "degraded");
     assert_eq!(body["database"], "fail");
+    assert_eq!(body["redis"], "ok");
 }
 
 #[tokio::test]
@@ -81,6 +93,7 @@ async fn liveness_responds_when_db_unreachable() {
     let pool = PgPool::connect_lazy("postgresql://corewar:bogus@127.0.0.1:1/corewar").unwrap();
 
     let response = app(pool)
+        .await
         .oneshot(Request::get("/health").body(Body::empty()).unwrap())
         .await
         .unwrap();

@@ -325,7 +325,7 @@ droplet — the build is CPU-bound on cargo) and bring the stack up.
 # Cheap liveness probe — public, no DB work.
 curl -i https://api.corewar.example.com/health
 
-# Deep readiness probe — DB-probing, used by the container HEALTHCHECK.
+# Deep readiness probe — probes Postgres and Redis, used by the container HEALTHCHECK.
 curl -i https://api.corewar.example.com/health/deep
 ```
 
@@ -341,14 +341,18 @@ content-type: application/json
 ```
 HTTP/2 200
 content-type: application/json
-{"status":"ok","database":"ok"}
+{"status":"ok","database":"ok","redis":"ok"}
 ```
 
 `/health` always returns 200 if the process is listening; it does no DB
 work, so it can't be used to amplify load against Postgres. `/health/deep`
-runs a 2s-timeout `SELECT 1` and returns HTTP 503 if the DB is
-unreachable — Docker's HEALTHCHECK uses it so a downstream outage marks
-the container unhealthy.
+runs a `SELECT 1` and a Redis `PING` concurrently, each with a 2s timeout,
+and returns HTTP 503 with `"status":"degraded"` if either is unreachable
+(the failing one reads `"fail"`). Docker's HEALTHCHECK uses it so a
+downstream outage marks the container unhealthy, and the CI deploy waits
+for healthy, so a deploy fails while Redis is down. Unhealthy doesn't
+restart the container (no autoheal), so a Redis blip can't cause a
+restart loop.
 
 If the cert handshake fails:
 
@@ -358,7 +362,9 @@ If the cert handshake fails:
 - Inspect Caddy's logs: `~/corewar/compose.sh logs caddy`.
 
 If `/health/deep` returns 503 with `"database":"fail"`, the backend booted but
-can't talk to Postgres. Tail the backend logs to see the exact error:
+can't talk to Postgres. With `"redis":"fail"`, it can't reach Redis:
+matchmaking stops, and the auth rate limiters fall back to per-process
+counters. Tail the backend logs to see the exact error:
 
 ```bash
 ~/corewar/compose.sh logs --tail 80 backend

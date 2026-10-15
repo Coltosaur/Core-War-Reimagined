@@ -211,6 +211,8 @@ You should see `Login Succeeded`. Verify the pull path works:
 
 ```bash
 docker pull ghcr.io/coltosaur/core-war-backend:latest
+# Don't keep it: nothing ever pulls :latest again, so it only goes stale.
+docker image rm ghcr.io/coltosaur/core-war-backend:latest
 ```
 
 ## 6. DNS records at Porkbun
@@ -353,13 +355,13 @@ If the cert handshake fails:
 - `dig +short api.corewar.example.com` must return the droplet IP.
 - Port 80 must be reachable from the public internet (Let's Encrypt's
   HTTP-01 challenge uses it). `sudo ufw status` should show 80/tcp ALLOW.
-- Inspect Caddy's logs: `docker compose -f docker-compose.prod.yml logs caddy`.
+- Inspect Caddy's logs: `~/corewar/compose.sh logs caddy`.
 
 If `/health/deep` returns 503 with `"database":"fail"`, the backend booted but
 can't talk to Postgres. Tail the backend logs to see the exact error:
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail 80 backend
+~/corewar/compose.sh logs --tail 80 backend
 ```
 
 Common causes:
@@ -368,32 +370,41 @@ Common causes:
 - **`password authentication failed for user "corewar"`** — `POSTGRES_PASSWORD`
   and the password in `DATABASE_URL` disagree, OR a previous `up` initialized
   the postgres volume with different credentials. Fix: nuke the volume with
-  `docker compose ... down -v` and re-up.
+  `./compose.sh down -v` and re-up.
 
 ## 9. Operations cheat sheet
 
-All commands run from `~/corewar/` on the droplet.
+All commands run from `~/corewar/` on the droplet, through `./compose.sh`
+rather than `docker compose` directly. CI keeps `compose.sh` (a copy of
+`deploy/compose.sh`) up to date, and each deploy writes the tag it rolled
+out to `.backend-image-tag`. `compose.sh` reads that tag, so manual
+commands run the deployed backend. `docker-compose.prod.yml` has no
+fallback tag: a bare `docker compose` refuses to start rather than run
+the droplet's stale local `:latest`, which is what happened after #178's
+deploy (a July backend against an October schema: sqlx
+`Migrate(VersionMissing(...))`).
 
 ```bash
 # Tail logs
-docker compose -f docker-compose.prod.yml --env-file .env.production logs -f backend
+./compose.sh logs -f backend
 
-# Restart just the backend (after a config change)
-docker compose -f docker-compose.prod.yml --env-file .env.production restart backend
+# Apply a .env.production change to the backend. `restart` would keep the
+# old environment; only a new container re-reads the env file.
+./compose.sh up -d --force-recreate backend
 
 # Stop everything (volumes survive)
-docker compose -f docker-compose.prod.yml --env-file .env.production down
+./compose.sh down
 
-# Recreate the network after changing its settings in docker-compose.prod.yml
-# (e.g. enable_ipv6, #130). `up -d` alone keeps the old network. About a
-# minute of downtime; no -v, so volumes survive. Afterwards, a failed login
-# from a phone on cellular should key rate_limit:login_failures:ip:<ip> on the
-# phone's real IPv6 address (compare https://api64.ipify.org on the phone).
-docker compose -f docker-compose.prod.yml --env-file .env.production down
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# Bring everything back with fresh containers. Use this if a service
+# can't resolve another by name (e.g. the backend logs "Temporary failure
+# in name resolution"). After a change to the `app` network's settings, a
+# plain `up -d` recreates the network but leaves the containers it didn't
+# recreate without their service-name aliases. The CI deploy checks for
+# that and does this itself.
+./compose.sh up -d --force-recreate
 
 # Nuke the database (only if you mean it — volumes go too)
-docker compose -f docker-compose.prod.yml --env-file .env.production down -v
+./compose.sh down -v
 
 # Check the auth rate limiters see real visitor addresses: expect keys like
 # rate_limit:refresh:<ip> and, after a failed login,
@@ -401,10 +412,10 @@ docker compose -f docker-compose.prod.yml --env-file .env.production down -v
 # public IP. A 172.x / 192.168.x address means the visitor's real address
 # was lost before the backend and everyone behind it shares that bucket:
 # either Caddy isn't trusted (the backend also logs a TRUSTED_PROXIES
-# warning once) or the visitor came in over IPv6 and the `app` network was
-# created before it had IPv6 enabled (#130; see below).
-docker compose -f docker-compose.prod.yml --env-file .env.production exec redis \
-  redis-cli --scan --pattern 'rate_limit:*'
+# warning once) or the visitor came in over IPv6 and the `app` network
+# doesn't have IPv6 enabled (#130). To check IPv6, do one failed login from
+# a phone on cellular: its key should match https://api64.ipify.org there.
+./compose.sh exec redis redis-cli --scan --pattern 'rate_limit:*'
 ```
 
 Steady-state redeploy from your laptop after pushing code (escape hatch
@@ -416,16 +427,18 @@ GitHub Actions, see section 10):
 ```
 
 The script rsyncs (skipping `.env.production` and other excluded paths),
-then runs `docker compose up -d --build` over SSH so only changed layers
-rebuild.
+then runs `./compose.sh up -d --build --force-recreate` over SSH so only
+changed layers rebuild. The image is tagged `manual-<sha>` (plus `-dirty`
+for uncommitted changes) and recorded in `.backend-image-tag`, so
+`./compose.sh ps` shows it. The next CI deploy replaces it.
 
 ### 9a. Rollback to an earlier backend image
 
 Every push to master publishes an immutable `master-<sha>` tag alongside
 `:latest` (see the `Compute image tags` step in
-`.github/workflows/deploy-backend.yml`). The `docker-compose.prod.yml`
-backend service resolves `${BACKEND_IMAGE_TAG:-latest}`, so pinning to
-an older SHA is one env var away — no code change, no CI run.
+`.github/workflows/deploy-backend.yml`). `compose.sh` runs whatever tag
+`.backend-image-tag` names, so pinning to an older SHA is one file
+write — no code change, no CI run.
 
 1. Pick a target SHA from **GitHub → your profile → Packages →
    `core-war-backend` → Tags**. Anything of the form `master-abcdef1`
@@ -433,40 +446,38 @@ an older SHA is one env var away — no code change, no CI run.
    `.github/workflows/prune-ghcr.yml` (currently: last 20 versions,
    ~2 months at present cadence).
 
+   **Don't roll back past a migration.** The backend refuses to start if
+   the database has a migration it doesn't know (sqlx
+   `Migrate(VersionMissing(...))`), so the target must be at least as new
+   as the newest file in `backend/migrations/` that has been deployed.
+
 2. SSH into the droplet and pin the tag:
 
    ```bash
    ssh colt@<DROPLET_IP>
    cd ~/corewar
-   # Add or update the line — no other secrets change.
-   echo 'BACKEND_IMAGE_TAG=master-abcdef1' >> .env.production
-   # (Or edit .env.production directly if BACKEND_IMAGE_TAG is already set.)
+   echo master-abcdef1 > .backend-image-tag
    ```
 
 3. Pull the pinned image and restart just the backend:
 
    ```bash
-   docker compose -f docker-compose.prod.yml --env-file .env.production pull backend
-   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --remove-orphans
+   ./compose.sh pull backend
+   ./compose.sh up -d backend
    ```
 
-4. Verify the container came up healthy:
+4. Verify the container came up healthy. The backend publishes no host
+   port, so check through Caddy:
 
    ```bash
-   docker compose -f docker-compose.prod.yml --env-file .env.production ps
-   curl -f http://localhost:3001/health/deep
+   ./compose.sh ps
+   curl -f https://<BACKEND_DOMAIN>/health/deep
    ```
 
-To return to normal (deploy-managed) operation: the next `Deploy
-backend` workflow run exports `BACKEND_IMAGE_TAG=master-<tip-sha>` in
-the SSH session before the compose commands, and docker compose's
-shell-env-wins-over-`--env-file` rule means the workflow's value
-overrides anything in `.env.production` during the automated deploy.
-However, any *manual* `docker compose up -d` on the droplet (without
-`BACKEND_IMAGE_TAG` in the current shell) would still pick up whatever
-you left in `.env.production` — so once the incident is resolved,
-remove the `BACKEND_IMAGE_TAG=` line to avoid a surprise on the next
-manual restart.
+To return to normal (deploy-managed) operation, do nothing: the next
+`Deploy backend` workflow run deploys `master-<tip-sha>` and overwrites
+`.backend-image-tag`. Until then, every manual `./compose.sh` command
+keeps running the pinned image.
 
 ## 10. Enable CI deploys (deploy-on-merge)
 

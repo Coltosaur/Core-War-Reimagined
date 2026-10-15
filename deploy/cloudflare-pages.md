@@ -79,10 +79,11 @@ the droplet, edit `~/corewar/.env.production`:
 FRONTEND_URL=https://corewar.example.com
 ```
 
-Then restart the backend container:
+Then recreate the backend container (`restart` would keep the old
+environment; only a new container reads `.env.production` again):
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production restart backend
+~/corewar/compose.sh up -d --force-recreate backend
 ```
 
 `<project>.pages.dev` itself will get blocked by CORS at this point — that's

@@ -2,7 +2,11 @@
 #
 # Usage:
 #   cp .env.production.example .env.production   # then edit it
-#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#   BACKEND_IMAGE_TAG=local docker compose -f docker-compose.prod.yml \
+#     --env-file .env.production up -d --build
+#
+# On the droplet, run compose through ~/corewar/compose.sh instead, which
+# fills in the deployed BACKEND_IMAGE_TAG (deploy/compose.sh).
 #
 # Caddy is the only service that publishes host ports (80/443). The backend,
 # Postgres, and Redis are only reachable on the internal docker network.
@@ -21,14 +25,14 @@ services:
     # this same name, which is harmless. If you fork, update the owner
     # segment to match your GitHub login (lowercase).
     #
-    # `BACKEND_IMAGE_TAG` is deliberately overridable: the deploy workflow
-    # sets it to the exact `master-<sha>` tag it just pushed, which makes
-    # each deploy race-immune (no dependence on the mutable `:latest`
-    # tag). For manual `docker pull` / local prod-mirror / doc examples,
-    # it falls back to `:latest`. For rollback, set BACKEND_IMAGE_TAG in
-    # `.env.production` on the droplet to any older `master-<sha>` tag
-    # from GHCR and `docker compose pull backend && up -d`.
-    image: ghcr.io/coltosaur/core-war-backend:${BACKEND_IMAGE_TAG:-latest}
+    # `BACKEND_IMAGE_TAG` is required. The deploy workflow sets it to the
+    # exact `master-<sha>` tag it just pushed, which makes each deploy
+    # race-immune (no dependence on the mutable `:latest` tag), and records
+    # it in ~/corewar/.backend-image-tag for compose.sh. There is no
+    # fallback: the droplet's local `:latest` is never pulled, so falling
+    # back to it once started a months-old backend against a newer schema.
+    # For rollback, see deploy/README.md section 9a.
+    image: ghcr.io/coltosaur/core-war-backend:${BACKEND_IMAGE_TAG:?set BACKEND_IMAGE_TAG (on the droplet, use ./compose.sh)}
     build:
       context: .
       dockerfile: backend/Dockerfile

@@ -18,10 +18,9 @@
 //!
 //! - **Bulk reads for the visualizer.** Individual cell reads across the
 //!   wasm boundary (8000 calls per frame at 60fps) would be too slow.
-//!   `core_opcodes()` returns a `Uint8Array` of opcode bytes (one per cell)
-//!   for the fast render path; `core_snapshot()` returns a `Uint32Array`
-//!   with two words per cell (packed metadata + field values) for the
-//!   detail/inspector view.
+//!   `core_ownership()` returns a `Uint8Array` of cell owners (one per
+//!   cell) for the grid's render path; the single-cell getters serve the
+//!   tooltip and inspector, which only read the cell under inspection.
 //!
 //! ## JS usage example
 //!
@@ -41,8 +40,8 @@
 //! function tick() {
 //!     match.stepN(100);
 //!     if (match.resultCode() !== 0) { /* handle end */ return; }
-//!     const opcodes = match.coreOpcodes(); // Uint8Array(8000)
-//!     renderGrid(opcodes);
+//!     const owners = match.coreOwnership(); // Uint8Array(8000)
+//!     renderGrid(owners);
 //!     requestAnimationFrame(tick);
 //! }
 //! tick();
@@ -114,8 +113,8 @@ impl WasmParsedWarrior {
 ///
 /// Construct with `new MatchState(coreSize, maxSteps)`, load warriors with
 /// `loadWarrior`, advance with `step` or `stepN`, read results with
-/// `resultCode` / `resultWinnerId`, and read core state with `coreOpcodes`
-/// or `coreSnapshot`.
+/// `resultCode` / `resultWinnerId`, and read core state with `coreOwnership`
+/// or the single-cell getters.
 #[wasm_bindgen(js_name = "MatchState")]
 pub struct WasmMatchState {
     inner: MatchState,
@@ -325,52 +324,5 @@ impl WasmMatchState {
         let core = self.inner.core();
         let size = core.size();
         (0..size).map(|i| core.owner(i as i32)).collect()
-    }
-
-    /// A `Uint8Array` of opcode bytes, one per cell, in address order.
-    /// This is the fast path for coloring the PixiJS grid — one byte per
-    /// cell, no decoding needed on the JS side.
-    ///
-    /// Opcode encoding: Dat=0, Mov=1, Add=2, Sub=3, Mul=4, Div=5, Mod=6,
-    /// Jmp=7, Jmz=8, Jmn=9, Djn=10, Spl=11, Slt=12, Seq=13, Sne=14, Nop=15.
-    #[wasm_bindgen(js_name = "coreOpcodes")]
-    pub fn core_opcodes(&self) -> Vec<u8> {
-        let core = self.inner.core();
-        let size = core.size();
-        (0..size).map(|i| core.get(i as i32).opcode as u8).collect()
-    }
-
-    /// Full core snapshot as a `Uint32Array` with **two words per cell**.
-    /// This is the detail path for the inspector / tooltip view.
-    ///
-    /// Encoding per cell (2 consecutive `u32` entries):
-    ///
-    /// **Word 0** — packed metadata (13 bits used, 19 spare):
-    ///   - bits 12..9: opcode (4 bits, 0–15)
-    ///   - bits  8..6: modifier (3 bits, 0–6)
-    ///   - bits  5..3: A addressing mode (3 bits, 0–7)
-    ///   - bits  2..0: B addressing mode (3 bits, 0–7)
-    ///
-    /// **Word 1** — field values:
-    ///   - bits 31..16: A-operand value as signed i16 (upper half)
-    ///   - bits 15.. 0: B-operand value as signed i16 (lower half)
-    ///
-    /// JS decoding example (mirrored by `js_decode` in snapshot.rs's tests;
-    /// keep the two in sync):
-    /// ```js
-    /// const snap = match.coreSnapshot();
-    /// for (let i = 0; i < coreSize; i++) {
-    ///     const w0 = snap[i * 2], w1 = snap[i * 2 + 1];
-    ///     const opcode = (w0 >> 9) & 0xF;
-    ///     const aValue = w1 >> 16;            // sign-extends naturally
-    ///     const bValue = (w1 << 16) >> 16;    // sign-extend lower half
-    /// }
-    /// ```
-    ///
-    /// Note: field values are stored as i16 (signed 16-bit), which
-    /// accommodates core sizes up to 32767. Standard Core War uses 8000.
-    #[wasm_bindgen(js_name = "coreSnapshot")]
-    pub fn core_snapshot(&self) -> Vec<u32> {
-        crate::snapshot::core_snapshot(self.inner.core())
     }
 }

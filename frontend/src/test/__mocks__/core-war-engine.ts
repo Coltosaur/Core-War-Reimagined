@@ -78,6 +78,9 @@ export class MatchState {
   cellBValue(): number {
     return 0;
   }
+  cellOwner(): number {
+    return 0;
+  }
   warriorCount(): number {
     return 2;
   }

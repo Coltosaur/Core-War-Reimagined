@@ -144,19 +144,10 @@ fn preprocess_for_rof(source: &str) -> Result<Vec<SourceLine>, ParseError> {
         if code.is_empty() {
             continue;
         }
-        // Check for EQU pseudo-op.
-        let first_end = code
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(i, _)| i)
-            .unwrap_or(code.len());
-        let after_first = code[first_end..].trim_start();
-        if let Some(rest) = strip_keyword_ci(after_first, "EQU") {
-            let equ_name = code[..first_end].trim_end_matches(':').to_string();
-            let equ_value = rest.trim().to_string();
+        if let Some((equ_name, equ_value)) = equ_definition(code) {
             if !equ_value.is_empty() {
                 // Don't error on duplicates here — let the main parser catch that.
-                equ_table.entry(equ_name).or_insert(equ_value);
+                equ_table.entry(equ_name).or_insert(equ_value.to_string());
             }
         }
     }
@@ -206,9 +197,7 @@ fn expand_for_rof_block(
         }
 
         // Check for bare `FOR` with no count — produce a clear error.
-        if strip_keyword_ci(trimmed, "FOR").is_some()
-            && strip_keyword_ci(trimmed, "FOR").unwrap().trim().is_empty()
-        {
+        if matches!(strip_keyword_ci(trimmed, "FOR"), Some(rest) if rest.trim().is_empty()) {
             return Err(ParseError::SyntaxError {
                 line: line_no,
                 message: "FOR requires a count expression".to_string(),
@@ -264,43 +253,24 @@ fn expand_for_rof_block(
 
 /// Detect a FOR directive in a trimmed line. Returns the count expression
 /// string if found. Handles both bare `FOR expr` and labeled `label FOR expr`.
+/// A FOR with no count returns `None`; the caller reports that separately.
 fn detect_for_directive(trimmed: &str) -> Option<String> {
-    // Case 1: line starts with FOR keyword.
+    let expr = for_directive_rest(trimmed)?.trim();
+    (!expr.is_empty()).then(|| expr.to_string())
+}
+
+/// The text after the `FOR` keyword (untrimmed, possibly empty) if `trimmed`
+/// is a FOR line: `FOR ...`, or `label FOR ...` where the label isn't an
+/// opcode (otherwise it's an instruction). `None` otherwise.
+fn for_directive_rest(trimmed: &str) -> Option<&str> {
     if let Some(rest) = strip_keyword_ci(trimmed, "FOR") {
-        let expr = rest.trim().to_string();
-        if expr.is_empty() {
-            return None; // FOR with no count — will be caught as syntax error
-        }
-        return Some(expr);
+        return Some(rest);
     }
-
-    // Case 2: "label FOR expr" — first token is a label (not an opcode).
-    if trimmed.is_empty() {
+    let (first_token, after_first) = split_first_token(trimmed);
+    if is_opcode_token(first_token) {
         return None;
     }
-    let first_end = trimmed
-        .char_indices()
-        .find(|(_, c)| c.is_whitespace())
-        .map(|(i, _)| i)
-        .unwrap_or(trimmed.len());
-    let first_token = &trimmed[..first_end];
-    let after_first = trimmed[first_end..].trim_start();
-
-    // The first token must NOT be a known opcode (otherwise it's an instruction).
-    let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
-    if parse_opcode_name(first_no_modifier).is_some() {
-        return None;
-    }
-
-    if let Some(rest) = strip_keyword_ci(after_first, "FOR") {
-        let expr = rest.trim().to_string();
-        if expr.is_empty() {
-            return None;
-        }
-        return Some(expr);
-    }
-
-    None
+    strip_keyword_ci(after_first, "FOR")
 }
 
 /// Evaluate a FOR count expression using only EQU constants and numeric
@@ -311,19 +281,15 @@ fn evaluate_for_count(
     equ_table: &HashMap<String, String>,
 ) -> Result<usize, ParseError> {
     let empty_labels: HashMap<String, usize> = HashMap::new();
-    let tokens = tokenize_expr(expr, line_no)?;
-    let mut cursor = ExprCursor {
-        tokens: &tokens,
-        pos: 0,
-    };
-    let mut visiting = HashSet::new();
-    let value = cursor.parse_expr(0, line_no, &empty_labels, equ_table, &mut visiting)?;
-    if cursor.pos < tokens.len() {
-        return Err(ParseError::SyntaxError {
-            line: line_no,
-            message: format!("trailing tokens in FOR count expression: {expr:?}"),
-        });
-    }
+    let value = eval_expr(
+        expr,
+        0,
+        line_no,
+        &empty_labels,
+        equ_table,
+        &mut HashSet::new(),
+        || format!("trailing tokens in FOR count expression: {expr:?}"),
+    )?;
     if value < 0 {
         return Err(ParseError::SyntaxError {
             line: line_no,
@@ -345,7 +311,7 @@ fn find_matching_rof(
         let code = strip_comment(&line.text);
         let trimmed = code.trim();
 
-        if is_for_directive_any(trimmed) {
+        if for_directive_rest(trimmed).is_some() {
             depth += 1;
         } else if is_rof_directive(trimmed) {
             if depth == 0 {
@@ -358,31 +324,6 @@ fn find_matching_rof(
     Err(ParseError::UnmatchedFor {
         line: lines[body_start - 1].line_no,
     })
-}
-
-/// Check if a trimmed line is any FOR directive (with or without count).
-/// Used for depth tracking in `find_matching_rof`.
-fn is_for_directive_any(trimmed: &str) -> bool {
-    // Bare `FOR` or `FOR expr`.
-    if strip_keyword_ci(trimmed, "FOR").is_some() {
-        return true;
-    }
-    // `label FOR ...` where label is not an opcode.
-    if trimmed.is_empty() {
-        return false;
-    }
-    let first_end = trimmed
-        .char_indices()
-        .find(|(_, c)| c.is_whitespace())
-        .map(|(i, _)| i)
-        .unwrap_or(trimmed.len());
-    let first_token = &trimmed[..first_end];
-    let after_first = trimmed[first_end..].trim_start();
-    let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
-    if parse_opcode_name(first_no_modifier).is_some() {
-        return false;
-    }
-    strip_keyword_ci(after_first, "FOR").is_some()
 }
 
 /// Check if a trimmed line is a ROF directive.
@@ -406,15 +347,8 @@ fn collect_labels_in_range(lines: &[SourceLine], start: usize, end: usize) -> Ha
         if detect_for_directive(trimmed).is_some() || is_rof_directive(trimmed) {
             continue;
         }
-        let first_end = trimmed
-            .char_indices()
-            .find(|(_, c)| c.is_whitespace())
-            .map(|(idx, _)| idx)
-            .unwrap_or(trimmed.len());
-        let first_token = &trimmed[..first_end];
-        let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
-
-        if parse_opcode_name(first_no_modifier).is_none() {
+        let (first_token, _) = split_first_token(trimmed);
+        if !is_opcode_token(first_token) {
             let label = first_token.trim_end_matches(':').to_string();
             labels.insert(label);
         }
@@ -540,30 +474,23 @@ pub fn parse_warrior(source: &str) -> Result<ParsedWarrior, ParseError> {
         // EQU pseudo-op: "name EQU value". Must be checked before
         // parse_label_and_body because EQU lines are not instructions —
         // they define text substitutions consumed during operand parsing.
-        {
-            let first_end = code
-                .char_indices()
-                .find(|(_, c)| c.is_whitespace())
-                .map(|(i, _)| i)
-                .unwrap_or(code.len());
-            let after_first = code[first_end..].trim_start();
-            if let Some(rest) = strip_keyword_ci(after_first, "EQU") {
-                let equ_name = code[..first_end].trim_end_matches(':').to_string();
-                let equ_value = rest.trim().to_string();
-                if equ_value.is_empty() {
-                    return Err(ParseError::SyntaxError {
-                        line: line_no,
-                        message: "EQU requires a value".to_string(),
-                    });
-                }
-                if equ_table.insert(equ_name.clone(), equ_value).is_some() {
-                    return Err(ParseError::DuplicateLabel {
-                        line: line_no,
-                        label: equ_name,
-                    });
-                }
-                continue 'lines;
+        if let Some((equ_name, equ_value)) = equ_definition(code) {
+            if equ_value.is_empty() {
+                return Err(ParseError::SyntaxError {
+                    line: line_no,
+                    message: "EQU requires a value".to_string(),
+                });
             }
+            if equ_table
+                .insert(equ_name.clone(), equ_value.to_string())
+                .is_some()
+            {
+                return Err(ParseError::DuplicateLabel {
+                    line: line_no,
+                    label: equ_name,
+                });
+            }
+            continue 'lines;
         }
 
         // Otherwise, it's a (possibly labeled) instruction line.
@@ -675,23 +602,36 @@ fn strip_keyword_ci<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
     }
 }
 
+/// Split `code` at its first whitespace into the first token and the rest,
+/// with the rest's leading whitespace trimmed.
+fn split_first_token(code: &str) -> (&str, &str) {
+    let end = code.find(char::is_whitespace).unwrap_or(code.len());
+    (&code[..end], code[end..].trim_start())
+}
+
+/// Whether `token` is an opcode, with or without a `.modifier`. This is how
+/// a line's first token is told apart from a label.
+fn is_opcode_token(token: &str) -> bool {
+    parse_opcode_name(token.split('.').next().unwrap_or(token)).is_some()
+}
+
+/// If `code` is a `name EQU value` line, returns the name (minus any label
+/// colon) and the trimmed value, which may be empty.
+fn equ_definition(code: &str) -> Option<(String, &str)> {
+    let (first_token, after_first) = split_first_token(code);
+    let value = strip_keyword_ci(after_first, "EQU")?;
+    Some((first_token.trim_end_matches(':').to_string(), value.trim()))
+}
+
 /// Pull the optional leading label off an instruction line. The first
 /// whitespace-separated token is a label if it does NOT parse as a known
 /// opcode (with optional `.modifier`); otherwise the line has no label.
 fn parse_label_and_body(code: &str, line_no: usize) -> Result<InstructionLine, ParseError> {
-    let first_end = code
-        .char_indices()
-        .find(|(_, c)| c.is_whitespace())
-        .map(|(i, _)| i)
-        .unwrap_or(code.len());
+    let (first_token, rest) = split_first_token(code);
 
-    let first_token = &code[..first_end];
-    let rest = code[first_end..].trim_start();
-
-    // The opcode-or-label decision: try the first token (minus any modifier)
-    // as a known opcode. If it parses, there's no label.
-    let first_no_modifier = first_token.split('.').next().unwrap_or(first_token);
-    if parse_opcode_name(first_no_modifier).is_some() {
+    // The opcode-or-label decision: if the first token is an opcode, there's
+    // no label.
+    if is_opcode_token(first_token) {
         Ok(InstructionLine {
             label: None,
             body: code.to_string(),
@@ -906,17 +846,39 @@ fn parse_value(
         });
     }
 
-    let tokens = tokenize_expr(trimmed, line_no)?;
+    eval_expr(
+        trimmed,
+        offset,
+        line_no,
+        labels,
+        equ_table,
+        &mut HashSet::new(),
+        || format!("trailing tokens in operand expression: {trimmed:?}"),
+    )
+}
+
+/// Tokenize `text` and evaluate it as one complete expression. If tokens are
+/// left over after it, fails with a syntax error whose message is
+/// `trailing()`, so each caller keeps its own wording.
+fn eval_expr(
+    text: &str,
+    offset: usize,
+    line_no: usize,
+    labels: &HashMap<String, usize>,
+    equ_table: &HashMap<String, String>,
+    visiting: &mut HashSet<String>,
+    trailing: impl FnOnce() -> String,
+) -> Result<i32, ParseError> {
+    let tokens = tokenize_expr(text, line_no)?;
     let mut cursor = ExprCursor {
         tokens: &tokens,
         pos: 0,
     };
-    let mut visiting = HashSet::new();
-    let value = cursor.parse_expr(offset, line_no, labels, equ_table, &mut visiting)?;
+    let value = cursor.parse_expr(offset, line_no, labels, equ_table, visiting)?;
     if cursor.pos < tokens.len() {
         return Err(ParseError::SyntaxError {
             line: line_no,
-            message: format!("trailing tokens in operand expression: {trimmed:?}"),
+            message: trailing(),
         });
     }
     Ok(value)
@@ -1141,19 +1103,16 @@ impl<'a> ExprCursor<'a> {
                     message: format!("circular EQU reference involving {name:?}"),
                 });
             }
-            let sub_tokens = tokenize_expr(replacement.trim(), line_no)?;
-            let mut sub = ExprCursor {
-                tokens: &sub_tokens,
-                pos: 0,
-            };
-            let value = sub.parse_expr(offset, line_no, labels, equ_table, visiting)?;
+            let value = eval_expr(
+                replacement.trim(),
+                offset,
+                line_no,
+                labels,
+                equ_table,
+                visiting,
+                || format!("malformed EQU value for {name:?}: {replacement:?}"),
+            )?;
             visiting.remove(name);
-            if sub.pos < sub_tokens.len() {
-                return Err(ParseError::SyntaxError {
-                    line: line_no,
-                    message: format!("malformed EQU value for {name:?}: {replacement:?}"),
-                });
-            }
             return Ok(value);
         }
 

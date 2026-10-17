@@ -69,8 +69,7 @@ backend/   Rust (axum + socketioxide + tokio). Postgres via sqlx, Redis via redi
 - `matchState.loadWarrior(id, warrior, baseAddress)` — bridge from parser to executor
 - `matchState.step()` / `matchState.stepN(n)` — advance the simulation (use `stepN` to avoid N individual wasm boundary crossings per frame)
 - `matchState.resultCode()` → `0=Ongoing, 1=Victory, 2=Tie, 3=AllDead`; `resultWinnerId()` → winner id or -1
-- `matchState.coreOpcodes()` → `Uint8Array` of opcode bytes (fast render path for the PixiJS grid)
-- `matchState.coreSnapshot()` → `Uint32Array` with two words per cell (packed metadata + signed i16 field values for the detail/inspector view)
+- `matchState.coreOwnership()` → `Uint8Array` of cell owners, one per cell (the PixiJS grid's render path; the grid colors by last writer)
 - Individual cell reads: `cellOpcode(addr)`, `cellModifier(addr)`, `cellAMode(addr)`, `cellAValue(addr)`, `cellBMode(addr)`, `cellBValue(addr)`, `cellOwner(addr)` (0 = unowned, else warrior id + 1)
 - Warrior queries: `warriorCount()`, `warriorIsAlive(idx)`, `warriorProcessCount(idx)`, `warriorProcessPcs(idx)` → `Uint32Array`
 

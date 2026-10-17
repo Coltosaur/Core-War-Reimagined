@@ -54,12 +54,6 @@ export class MatchState {
   coreOwnership(): Uint8Array {
     return new Uint8Array(this._coreSize);
   }
-  coreOpcodes(): Uint8Array {
-    return new Uint8Array(this._coreSize);
-  }
-  coreSnapshot(): Uint32Array {
-    return new Uint32Array(this._coreSize * 2);
-  }
   cellOpcode(): number {
     return 0;
   }

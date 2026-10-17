@@ -348,7 +348,8 @@ impl WasmMatchState {
     ///   - bits 31..16: A-operand value as signed i16 (upper half)
     ///   - bits 15.. 0: B-operand value as signed i16 (lower half)
     ///
-    /// JS decoding example:
+    /// JS decoding example (mirrored by `js_decode` in snapshot.rs's tests;
+    /// keep the two in sync):
     /// ```js
     /// const snap = match.coreSnapshot();
     /// for (let i = 0; i < coreSize; i++) {

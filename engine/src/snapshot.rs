@@ -42,7 +42,8 @@ mod tests {
     }
 
     /// The decoding from the doc comment on `coreSnapshot` in wasm.rs, as
-    /// JS runs it (`>>` on int32, so the upper half sign-extends).
+    /// JS runs it (`>>` on int32, so the upper half sign-extends). Keep the
+    /// two in sync: nothing fails if only the doc comment changes.
     fn js_decode(w: [u32; 2]) -> (u32, u32, u32, u32, i32, i32) {
         let (w0, w1) = (w[0], w[1] as i32);
         (

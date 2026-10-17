@@ -52,6 +52,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::parser::ParsedWarrior;
 use crate::vm::{MatchResult, MatchState};
+use crate::Instruction;
 
 // ─── Free functions ─────────────────────────────────────────────────
 
@@ -118,6 +119,13 @@ impl WasmParsedWarrior {
 #[wasm_bindgen(js_name = "MatchState")]
 pub struct WasmMatchState {
     inner: MatchState,
+}
+
+impl WasmMatchState {
+    /// The instruction at `addr`, for the single-cell getters below.
+    fn cell(&self, addr: usize) -> Instruction {
+        self.inner.core().get(addr as i32)
+    }
 }
 
 #[wasm_bindgen(js_class = "MatchState")]
@@ -263,37 +271,37 @@ impl WasmMatchState {
     /// See the Opcode enum docs for the mapping (Dat=0, Mov=1, ..., Nop=15).
     #[wasm_bindgen(js_name = "cellOpcode")]
     pub fn cell_opcode(&self, addr: usize) -> u8 {
-        self.inner.core().get(addr as i32).opcode as u8
+        self.cell(addr).opcode as u8
     }
 
     /// The modifier of the cell at the given address, as a `u8` (A=0 .. I=6).
     #[wasm_bindgen(js_name = "cellModifier")]
     pub fn cell_modifier(&self, addr: usize) -> u8 {
-        self.inner.core().get(addr as i32).modifier as u8
+        self.cell(addr).modifier as u8
     }
 
     /// The A-operand addressing mode, as a `u8` (Immediate=0 .. BPostincrement=7).
     #[wasm_bindgen(js_name = "cellAMode")]
     pub fn cell_a_mode(&self, addr: usize) -> u8 {
-        self.inner.core().get(addr as i32).a.mode as u8
+        self.cell(addr).a.mode as u8
     }
 
     /// The A-operand value (signed integer).
     #[wasm_bindgen(js_name = "cellAValue")]
     pub fn cell_a_value(&self, addr: usize) -> i32 {
-        self.inner.core().get(addr as i32).a.value
+        self.cell(addr).a.value
     }
 
     /// The B-operand addressing mode, as a `u8`.
     #[wasm_bindgen(js_name = "cellBMode")]
     pub fn cell_b_mode(&self, addr: usize) -> u8 {
-        self.inner.core().get(addr as i32).b.mode as u8
+        self.cell(addr).b.mode as u8
     }
 
     /// The B-operand value (signed integer).
     #[wasm_bindgen(js_name = "cellBValue")]
     pub fn cell_b_value(&self, addr: usize) -> i32 {
-        self.inner.core().get(addr as i32).b.value
+        self.cell(addr).b.value
     }
 
     // ── Bulk core reads for the visualizer ──────────────────────────
@@ -355,22 +363,6 @@ impl WasmMatchState {
     /// accommodates core sizes up to 32767. Standard Core War uses 8000.
     #[wasm_bindgen(js_name = "coreSnapshot")]
     pub fn core_snapshot(&self) -> Vec<u32> {
-        let core = self.inner.core();
-        let size = core.size();
-        let mut buf = Vec::with_capacity(size * 2);
-        for i in 0..size {
-            let instr = core.get(i as i32);
-            // Word 0: packed opcode | modifier | a_mode | b_mode
-            let w0 = (instr.opcode as u32) << 9
-                | (instr.modifier as u32) << 6
-                | (instr.a.mode as u32) << 3
-                | instr.b.mode as u32;
-            // Word 1: a_value(i16) in upper half, b_value(i16) in lower half
-            let w1 =
-                ((instr.a.value as i16 as u16) as u32) << 16 | (instr.b.value as i16 as u16) as u32;
-            buf.push(w0);
-            buf.push(w1);
-        }
-        buf
+        crate::snapshot::core_snapshot(self.inner.core())
     }
 }

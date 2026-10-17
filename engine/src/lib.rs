@@ -21,6 +21,9 @@ pub mod vm;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod snapshot;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 

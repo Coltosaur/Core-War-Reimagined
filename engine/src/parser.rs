@@ -281,15 +281,15 @@ fn evaluate_for_count(
     equ_table: &HashMap<String, String>,
 ) -> Result<usize, ParseError> {
     let empty_labels: HashMap<String, usize> = HashMap::new();
-    let value = eval_expr(
-        expr,
-        0,
+    let ctx = EvalCtx {
+        offset: 0,
         line_no,
-        &empty_labels,
+        labels: &empty_labels,
         equ_table,
-        &mut HashSet::new(),
-        || format!("trailing tokens in FOR count expression: {expr:?}"),
-    )?;
+    };
+    let value = eval_expr(expr, &ctx, &mut HashSet::new(), || {
+        format!("trailing tokens in FOR count expression: {expr:?}")
+    })?;
     if value < 0 {
         return Err(ParseError::SyntaxError {
             line: line_no,
@@ -846,15 +846,15 @@ fn parse_value(
         });
     }
 
-    eval_expr(
-        trimmed,
+    let ctx = EvalCtx {
         offset,
         line_no,
         labels,
         equ_table,
-        &mut HashSet::new(),
-        || format!("trailing tokens in operand expression: {trimmed:?}"),
-    )
+    };
+    eval_expr(trimmed, &ctx, &mut HashSet::new(), || {
+        format!("trailing tokens in operand expression: {trimmed:?}")
+    })
 }
 
 /// Tokenize `text` and evaluate it as one complete expression. If tokens are
@@ -862,26 +862,35 @@ fn parse_value(
 /// `trailing()`, so each caller keeps its own wording.
 fn eval_expr(
     text: &str,
-    offset: usize,
-    line_no: usize,
-    labels: &HashMap<String, usize>,
-    equ_table: &HashMap<String, String>,
+    ctx: &EvalCtx<'_>,
     visiting: &mut HashSet<String>,
     trailing: impl FnOnce() -> String,
 ) -> Result<i32, ParseError> {
-    let tokens = tokenize_expr(text, line_no)?;
+    let tokens = tokenize_expr(text, ctx.line_no)?;
     let mut cursor = ExprCursor {
         tokens: &tokens,
         pos: 0,
+        ctx,
+        visiting,
     };
-    let value = cursor.parse_expr(offset, line_no, labels, equ_table, visiting)?;
+    let value = cursor.parse_expr()?;
     if cursor.pos < tokens.len() {
         return Err(ParseError::SyntaxError {
-            line: line_no,
+            line: ctx.line_no,
             message: trailing(),
         });
     }
     Ok(value)
+}
+
+/// What an expression is evaluated against: the instruction it belongs to
+/// (`offset`, for PC-relative labels; `line_no`, for errors) and the names
+/// it can use. A FOR count has no labels and offset 0.
+struct EvalCtx<'a> {
+    offset: usize,
+    line_no: usize,
+    labels: &'a HashMap<String, usize>,
+    equ_table: &'a HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -951,25 +960,23 @@ fn tokenize_expr(text: &str, line_no: usize) -> Result<Vec<Tok>, ParseError> {
     Ok(tokens)
 }
 
+/// Recursive-descent evaluator over one token list. `visiting` holds the EQU
+/// names being expanded, shared with nested EQU evaluations so a cycle is
+/// caught instead of recursing forever.
 struct ExprCursor<'a> {
     tokens: &'a [Tok],
     pos: usize,
+    ctx: &'a EvalCtx<'a>,
+    visiting: &'a mut HashSet<String>,
 }
 
-impl<'a> ExprCursor<'a> {
+impl ExprCursor<'_> {
     fn peek(&self) -> Option<&Tok> {
         self.tokens.get(self.pos)
     }
 
-    fn parse_expr(
-        &mut self,
-        offset: usize,
-        line_no: usize,
-        labels: &HashMap<String, usize>,
-        equ_table: &HashMap<String, String>,
-        visiting: &mut HashSet<String>,
-    ) -> Result<i32, ParseError> {
-        let mut lhs = self.parse_term(offset, line_no, labels, equ_table, visiting)?;
+    fn parse_expr(&mut self) -> Result<i32, ParseError> {
+        let mut lhs = self.parse_term()?;
         loop {
             let add = match self.peek() {
                 Some(Tok::Plus) => true,
@@ -977,7 +984,7 @@ impl<'a> ExprCursor<'a> {
                 _ => break,
             };
             self.pos += 1;
-            let rhs = self.parse_term(offset, line_no, labels, equ_table, visiting)?;
+            let rhs = self.parse_term()?;
             lhs = if add {
                 lhs.wrapping_add(rhs)
             } else {
@@ -987,15 +994,8 @@ impl<'a> ExprCursor<'a> {
         Ok(lhs)
     }
 
-    fn parse_term(
-        &mut self,
-        offset: usize,
-        line_no: usize,
-        labels: &HashMap<String, usize>,
-        equ_table: &HashMap<String, String>,
-        visiting: &mut HashSet<String>,
-    ) -> Result<i32, ParseError> {
-        let mut lhs = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+    fn parse_term(&mut self) -> Result<i32, ParseError> {
+        let mut lhs = self.parse_factor()?;
         loop {
             enum MulOp {
                 Mul,
@@ -1009,13 +1009,13 @@ impl<'a> ExprCursor<'a> {
                 _ => break,
             };
             self.pos += 1;
-            let rhs = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+            let rhs = self.parse_factor()?;
             lhs = match op {
                 MulOp::Mul => lhs.wrapping_mul(rhs),
                 MulOp::Div => {
                     if rhs == 0 {
                         return Err(ParseError::SyntaxError {
-                            line: line_no,
+                            line: self.ctx.line_no,
                             message: "division by zero in operand expression".to_string(),
                         });
                     }
@@ -1024,7 +1024,7 @@ impl<'a> ExprCursor<'a> {
                 MulOp::Rem => {
                     if rhs == 0 {
                         return Err(ParseError::SyntaxError {
-                            line: line_no,
+                            line: self.ctx.line_no,
                             message: "modulo by zero in operand expression".to_string(),
                         });
                     }
@@ -1035,34 +1035,27 @@ impl<'a> ExprCursor<'a> {
         Ok(lhs)
     }
 
-    fn parse_factor(
-        &mut self,
-        offset: usize,
-        line_no: usize,
-        labels: &HashMap<String, usize>,
-        equ_table: &HashMap<String, String>,
-        visiting: &mut HashSet<String>,
-    ) -> Result<i32, ParseError> {
+    fn parse_factor(&mut self) -> Result<i32, ParseError> {
         match self.peek() {
             Some(Tok::Plus) => {
                 self.pos += 1;
-                self.parse_factor(offset, line_no, labels, equ_table, visiting)
+                self.parse_factor()
             }
             Some(Tok::Minus) => {
                 self.pos += 1;
-                let v = self.parse_factor(offset, line_no, labels, equ_table, visiting)?;
+                let v = self.parse_factor()?;
                 Ok(v.wrapping_neg())
             }
             Some(Tok::LParen) => {
                 self.pos += 1;
-                let v = self.parse_expr(offset, line_no, labels, equ_table, visiting)?;
+                let v = self.parse_expr()?;
                 match self.tokens.get(self.pos) {
                     Some(Tok::RParen) => {
                         self.pos += 1;
                         Ok(v)
                     }
                     _ => Err(ParseError::SyntaxError {
-                        line: line_no,
+                        line: self.ctx.line_no,
                         message: "unmatched '(' in operand expression".to_string(),
                     }),
                 }
@@ -1075,53 +1068,40 @@ impl<'a> ExprCursor<'a> {
             Some(Tok::Ident(name)) => {
                 let name = name.clone();
                 self.pos += 1;
-                self.resolve_ident(&name, offset, line_no, labels, equ_table, visiting)
+                self.resolve_ident(&name)
             }
             _ => Err(ParseError::SyntaxError {
-                line: line_no,
+                line: self.ctx.line_no,
                 message: "expected value in operand expression".to_string(),
             }),
         }
     }
 
-    fn resolve_ident(
-        &mut self,
-        name: &str,
-        offset: usize,
-        line_no: usize,
-        labels: &HashMap<String, usize>,
-        equ_table: &HashMap<String, String>,
-        visiting: &mut HashSet<String>,
-    ) -> Result<i32, ParseError> {
+    fn resolve_ident(&mut self, name: &str) -> Result<i32, ParseError> {
+        let ctx = self.ctx;
         // EQU takes precedence over labels. Recursively evaluate the
         // substitution text as its own expression so EQU values can
         // themselves be expressions (e.g. `foo EQU bar + 1`).
-        if let Some(replacement) = equ_table.get(name) {
-            if !visiting.insert(name.to_string()) {
+        if let Some(replacement) = ctx.equ_table.get(name) {
+            if !self.visiting.insert(name.to_string()) {
                 return Err(ParseError::SyntaxError {
-                    line: line_no,
+                    line: ctx.line_no,
                     message: format!("circular EQU reference involving {name:?}"),
                 });
             }
-            let value = eval_expr(
-                replacement.trim(),
-                offset,
-                line_no,
-                labels,
-                equ_table,
-                visiting,
-                || format!("malformed EQU value for {name:?}: {replacement:?}"),
-            )?;
-            visiting.remove(name);
+            let value = eval_expr(replacement.trim(), ctx, self.visiting, || {
+                format!("malformed EQU value for {name:?}: {replacement:?}")
+            })?;
+            self.visiting.remove(name);
             return Ok(value);
         }
 
-        if let Some(&label_offset) = labels.get(name) {
-            return Ok(label_offset as i32 - offset as i32);
+        if let Some(&label_offset) = ctx.labels.get(name) {
+            return Ok(label_offset as i32 - ctx.offset as i32);
         }
 
         Err(ParseError::UnknownLabel {
-            line: line_no,
+            line: ctx.line_no,
             label: name.to_string(),
         })
     }
@@ -1736,6 +1716,20 @@ step    EQU base + 1
         ";
         let parsed = parse_warrior(source).unwrap();
         assert_eq!(parsed.instructions()[0].b, imm(10));
+    }
+
+    #[test]
+    fn expr_equ_used_twice_is_not_a_cycle() {
+        // Cycle detection tracks the names currently being expanded, not
+        // every name seen: `a` appears twice inside `b`, then again after
+        // `b` finishes.
+        let source = "
+a       EQU 2
+b       EQU a + a
+        DAT #0, #b * a
+        ";
+        let parsed = parse_warrior(source).unwrap();
+        assert_eq!(parsed.instructions()[0].b, imm(8));
     }
 
     #[test]

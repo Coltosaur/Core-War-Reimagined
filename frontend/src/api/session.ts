@@ -9,9 +9,10 @@
 // Socket.IO client used to know how to trade the second for the first —
 // this module is the single place that does.
 
+import { API_BASE } from './config';
+
 export { SessionExpiredError } from './errors';
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 const REFRESH_PATH = '/api/auth/refresh';
 
 type SessionHandlers = {

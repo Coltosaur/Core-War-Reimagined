@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import * as warriorsApi from '../api/warriors';
+import { fromServerId, isServerId, toServerId } from './serverId';
 
 export type Warrior = {
   id: string;
@@ -139,10 +140,6 @@ const SERVER_CACHE_KEY = 'corewar.serverWarriors.v1';
 
 type StoredWarrior = { id: string; label: string; source: string };
 type ServerCache = { userId: string; warriors: StoredWarrior[] };
-
-function isServerId(id: string): boolean {
-  return id.startsWith('server:');
-}
 
 function readStoredList(raw: unknown): Warrior[] {
   if (!Array.isArray(raw)) return [];
@@ -327,7 +324,7 @@ export async function syncFromServer(): Promise<void> {
     if (serverOwner !== owner) return;
     if (serverVersion !== startVersion) continue;
     serverWarriors = resp.warriors.map((w) => ({
-      id: `server:${w.id}`,
+      id: fromServerId(w.id),
       label: w.name,
       source: w.source,
       isPreset: false,
@@ -346,7 +343,12 @@ export async function syncFromServer(): Promise<void> {
 export async function createServerWarrior(label: string, source: string): Promise<Warrior> {
   const owner = serverOwner;
   const sw = await warriorsApi.createWarrior(label, source);
-  const w: Warrior = { id: `server:${sw.id}`, label: sw.name, source: sw.source, isPreset: false };
+  const w: Warrior = {
+    id: fromServerId(sw.id),
+    label: sw.name,
+    source: sw.source,
+    isPreset: false,
+  };
   if (serverOwner !== owner) return w;
   serverWarriors = [...serverWarriors, w];
   serverVersion++;
@@ -358,7 +360,7 @@ export async function updateServerWarrior(
   localId: string,
   patch: { label?: string; source?: string },
 ): Promise<void> {
-  const serverId = localId.replace('server:', '');
+  const serverId = toServerId(localId);
   const apiPatch: { name?: string; source?: string } = {};
   if (patch.label !== undefined) apiPatch.name = patch.label;
   if (patch.source !== undefined) apiPatch.source = patch.source;
@@ -373,7 +375,7 @@ export async function updateServerWarrior(
 }
 
 export async function deleteServerWarrior(localId: string): Promise<void> {
-  const serverId = localId.replace('server:', '');
+  const serverId = toServerId(localId);
   const owner = serverOwner;
   await warriorsApi.deleteWarrior(serverId);
   if (serverOwner !== owner) return;

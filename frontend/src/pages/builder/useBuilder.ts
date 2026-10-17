@@ -16,11 +16,13 @@ import {
 import { registerRedcode, parseErrorToMarker } from '../../redcode/monaco';
 import { useAuth } from '../../api/useAuth';
 import { ApiError } from '../../api/client';
+import { isServerId } from '../../warriors/serverId';
 
 export type ParseStatus = { ok: true; name: string | null } | { ok: false; message: string } | null;
 
-function isServerWarrior(id: string): boolean {
-  return id.startsWith('server:');
+/** A blank name saves as "Untitled". */
+function orUntitled(label: string): string {
+  return label || 'Untitled';
 }
 
 // ApiError carries the backend's own message (or the session-expired copy).
@@ -94,6 +96,12 @@ export function useBuilder() {
     setLabel(warrior.label);
     setDirty(false);
   }, []);
+
+  // Select a warrior that was just created and show its saved state.
+  const selectWarrior = (warrior: Warrior) => {
+    setSelectedId(warrior.id);
+    syncFromWarrior(warrior);
+  };
 
   // Mirror the selected warrior into local source/label state whenever the
   // selection or the library snapshot changes and the user has no pending
@@ -184,24 +192,21 @@ export function useBuilder() {
     await runServerAction('save warrior', async () => {
       if (selected.isPreset) {
         if (user) {
-          const created = await createServerWarrior(label || 'Untitled', source);
-          setSelectedId(created.id);
-          syncFromWarrior(created);
+          const created = await createServerWarrior(orUntitled(label), source);
+          selectWarrior(created);
         } else {
-          const created = createUserWarrior(label || 'Untitled', source);
-          setSelectedId(created.id);
-          syncFromWarrior(created);
+          const created = createUserWarrior(orUntitled(label), source);
+          selectWarrior(created);
         }
         return;
       }
-      if (user && isServerWarrior(selected.id)) {
-        await updateServerWarrior(selected.id, { label: label || 'Untitled', source });
-      } else if (user && !isServerWarrior(selected.id)) {
-        const created = await createServerWarrior(label || 'Untitled', source);
-        setSelectedId(created.id);
-        syncFromWarrior(created);
+      if (user && isServerId(selected.id)) {
+        await updateServerWarrior(selected.id, { label: orUntitled(label), source });
+      } else if (user && !isServerId(selected.id)) {
+        const created = await createServerWarrior(orUntitled(label), source);
+        selectWarrior(created);
       } else {
-        updateUserWarrior(selected.id, { label: label || 'Untitled', source });
+        updateUserWarrior(selected.id, { label: orUntitled(label), source });
       }
       setDirty(false);
     });
@@ -213,14 +218,12 @@ export function useBuilder() {
       await runServerAction('duplicate warrior', async () => {
         const newLabel = `${selected.label} (copy)`;
         const created = await createServerWarrior(newLabel, selected.source);
-        setSelectedId(created.id);
-        syncFromWarrior(created);
+        selectWarrior(created);
       });
     } else {
       const created = duplicateWarrior(selected.id);
       if (created) {
-        setSelectedId(created.id);
-        syncFromWarrior(created);
+        selectWarrior(created);
       }
     }
   };
@@ -228,7 +231,7 @@ export function useBuilder() {
   const handleDelete = async () => {
     if (!selected || selected.isPreset || saving) return;
     if (!confirm(`Delete "${selected.label}"? This cannot be undone.`)) return;
-    if (user && isServerWarrior(selected.id)) {
+    if (user && isServerId(selected.id)) {
       // On failure the warrior still exists, so keep it selected.
       const deleted = await runServerAction('delete warrior', () =>
         deleteServerWarrior(selected.id),
@@ -248,13 +251,11 @@ export function useBuilder() {
     if (user) {
       await runServerAction('import warrior', async () => {
         const created = await createServerWarrior(name || 'Imported', content);
-        setSelectedId(created.id);
-        syncFromWarrior(created);
+        selectWarrior(created);
       });
     } else {
       const created = createUserWarrior(name || 'Imported', content);
-      setSelectedId(created.id);
-      syncFromWarrior(created);
+      selectWarrior(created);
     }
   };
 
@@ -267,13 +268,11 @@ start   MOV.I  $0, $1
     if (user) {
       await runServerAction('create warrior', async () => {
         const created = await createServerWarrior('New Warrior', template);
-        setSelectedId(created.id);
-        syncFromWarrior(created);
+        selectWarrior(created);
       });
     } else {
       const created = createUserWarrior('New Warrior', template);
-      setSelectedId(created.id);
-      syncFromWarrior(created);
+      selectWarrior(created);
     }
   };
 
@@ -288,16 +287,16 @@ start   MOV.I  $0, $1
     let targetId = selected.id;
     if (dirty) {
       if (selected.isPreset) {
-        const created = createUserWarrior(label || 'Untitled', source);
+        const created = createUserWarrior(orUntitled(label), source);
         targetId = created.id;
-      } else if (isServerWarrior(selected.id)) {
+      } else if (isServerId(selected.id)) {
         const saved = await runServerAction('save warrior', async () => {
-          await updateServerWarrior(selected.id, { label: label || 'Untitled', source });
+          await updateServerWarrior(selected.id, { label: orUntitled(label), source });
           setDirty(false);
         });
         if (!saved) return;
       } else {
-        updateUserWarrior(selected.id, { label: label || 'Untitled', source });
+        updateUserWarrior(selected.id, { label: orUntitled(label), source });
       }
     }
     const opponent =

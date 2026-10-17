@@ -1,12 +1,11 @@
 import { ApiError, SessionExpiredError } from './errors';
+import { API_BASE } from './config';
 import { attemptRefresh, forceLogout, isAuthEndpoint } from './session';
 
 // Re-exported so existing consumers `import { ApiError } from './client'`
 // keep working — the class itself now lives in `./errors` to break a
 // circular import with `./session`.
 export { ApiError, SessionExpiredError };
-
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 async function performRequest(path: string, options: RequestInit): Promise<Response> {
   return fetch(`${API_BASE}${path}`, {

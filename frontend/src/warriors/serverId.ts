@@ -1,5 +1,7 @@
 // Library ids for warriors saved on the server are the database id with a
 // `server:` prefix (local drafts are `user:*`, presets `preset:*`).
+// This is its own module, not part of library.ts, because tests that
+// auto-mock library.ts would turn these helpers into mocks too.
 
 const SERVER_PREFIX = 'server:';
 
@@ -9,11 +11,11 @@ export function isServerId(id: string): boolean {
 }
 
 /** Library id for the server warrior with this database id. */
-export function fromServerId(serverId: string): string {
+export function libraryIdFor(serverId: string): string {
   return SERVER_PREFIX + serverId;
 }
 
 /** The database id behind a `server:` library id (other ids pass through). */
-export function toServerId(localId: string): string {
-  return isServerId(localId) ? localId.slice(SERVER_PREFIX.length) : localId;
+export function serverIdOf(libraryId: string): string {
+  return isServerId(libraryId) ? libraryId.slice(SERVER_PREFIX.length) : libraryId;
 }

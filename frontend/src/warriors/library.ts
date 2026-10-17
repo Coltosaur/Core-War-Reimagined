@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import * as warriorsApi from '../api/warriors';
-import { fromServerId, isServerId, toServerId } from './serverId';
+import { isServerId, libraryIdFor, serverIdOf } from './serverId';
 
 export type Warrior = {
   id: string;
@@ -324,7 +324,7 @@ export async function syncFromServer(): Promise<void> {
     if (serverOwner !== owner) return;
     if (serverVersion !== startVersion) continue;
     serverWarriors = resp.warriors.map((w) => ({
-      id: fromServerId(w.id),
+      id: libraryIdFor(w.id),
       label: w.name,
       source: w.source,
       isPreset: false,
@@ -344,7 +344,7 @@ export async function createServerWarrior(label: string, source: string): Promis
   const owner = serverOwner;
   const sw = await warriorsApi.createWarrior(label, source);
   const w: Warrior = {
-    id: fromServerId(sw.id),
+    id: libraryIdFor(sw.id),
     label: sw.name,
     source: sw.source,
     isPreset: false,
@@ -360,7 +360,7 @@ export async function updateServerWarrior(
   localId: string,
   patch: { label?: string; source?: string },
 ): Promise<void> {
-  const serverId = toServerId(localId);
+  const serverId = serverIdOf(localId);
   const apiPatch: { name?: string; source?: string } = {};
   if (patch.label !== undefined) apiPatch.name = patch.label;
   if (patch.source !== undefined) apiPatch.source = patch.source;
@@ -375,7 +375,7 @@ export async function updateServerWarrior(
 }
 
 export async function deleteServerWarrior(localId: string): Promise<void> {
-  const serverId = toServerId(localId);
+  const serverId = serverIdOf(localId);
   const owner = serverOwner;
   await warriorsApi.deleteWarrior(serverId);
   if (serverOwner !== owner) return;

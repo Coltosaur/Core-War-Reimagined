@@ -5,7 +5,7 @@ import { SessionExpiredError } from '../api/errors';
 import { useAuth } from '../api/useAuth';
 import { installSocketAuthRecovery, type PendingSocketAction } from '../api/socketAuth';
 import { useWarriorLibrary, type Warrior } from '../warriors/library';
-import { isServerId, toServerId } from '../warriors/serverId';
+import { isServerId, serverIdOf } from '../warriors/serverId';
 import { io, type Socket } from 'socket.io-client';
 import alertStyles from '../components/alert.module.css';
 import controls from '../components/controls.module.css';
@@ -14,7 +14,7 @@ import type { MatchStartPayload } from './match/useMatchReplay';
 import styles from './LobbyPage.module.css';
 
 function serverUuid(w: Warrior): string | null {
-  return isServerId(w.id) ? toServerId(w.id) : null;
+  return isServerId(w.id) ? serverIdOf(w.id) : null;
 }
 
 type MatchFoundData = {

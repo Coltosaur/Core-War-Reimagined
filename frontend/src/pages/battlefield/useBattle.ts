@@ -17,7 +17,7 @@ function readCellFromMatch(match: MatchState, addr: number): CellInfo {
     aValue: match.cellAValue(addr),
     bMode: match.cellBMode(addr),
     bValue: match.cellBValue(addr),
-    owner: match.coreOwnership()[addr] ?? 0,
+    owner: match.cellOwner(addr),
   };
 }
 

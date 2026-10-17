@@ -304,6 +304,13 @@ impl WasmMatchState {
         self.cell(addr).b.value
     }
 
+    /// Which warrior last wrote the cell: 0 = unowned, 1 = warrior 0,
+    /// 2 = warrior 1, etc. (same values as `coreOwnership`).
+    #[wasm_bindgen(js_name = "cellOwner")]
+    pub fn cell_owner(&self, addr: usize) -> u8 {
+        self.inner.core().owner(addr as i32)
+    }
+
     // ── Bulk core reads for the visualizer ──────────────────────────
 
     /// A `Uint8Array` of cell ownership values, one per cell, in address

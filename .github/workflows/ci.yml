@@ -243,15 +243,16 @@ jobs:
         run: cargo audit
         working-directory: engine
 
-      # RUSTSEC-2023-0071 (`rsa` 0.9.x Marvin timing sidechannel) has no
-      # upstream fix. The crate enters our Cargo.lock via sqlx-mysql,
-      # which sqlx-macros-core pulls in for compile-time query checking
-      # against all DB backends. We don't actually link against MySQL
-      # support — `cargo tree --target all -i rsa` shows no reachable
-      # path from `core-war-backend`. Revisit when the rsa crate ships
-      # a constant-time fix.
+      # RUSTSEC-2026-0459 (`libsqlite3-sys` bundling a vulnerable C
+      # SQLite) needs libsqlite3-sys >= 0.39, but sqlx-sqlite 0.9.0 (the
+      # latest release) caps it below 0.38. The crate is in Cargo.lock
+      # only because sqlx-macros-core lists every DB backend; we enable
+      # only `postgres`, and `cargo tree --target all -e all -i
+      # libsqlite3-sys` shows no path from `core-war-backend`. sqlx main
+      # already allows <0.40, so remove this ignore once that ships —
+      # tracked in #208.
       - name: Audit backend deps
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        run: cargo audit --ignore RUSTSEC-2026-0459
         working-directory: backend
 
       - name: Setup Node.js

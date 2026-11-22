@@ -198,6 +198,18 @@ jobs:
           # later step fails. docker-compose.prod.yml has no fallback tag.
           printf '%s\n' "$BACKEND_IMAGE_TAG" > .backend-image-tag
 
+          # #77: apply migrations here, before the new backend serves, instead
+          # of at backend startup. A broken migration now fails THIS step
+          # (before any restart) rather than surfacing as a health-check
+          # timeout. `compose run` brings postgres up first (depends_on:
+          # service_healthy) and resolves the backend image to the same pinned
+          # tag as `up -d` below. --entrypoint overrides the image CMD so the
+          # one-shot runs the migrator, not the server; --rm discards the
+          # container, -T disables the TTY (there is no terminal over ssh -s).
+          # set -e aborts the deploy here if the migrator exits non-zero.
+          echo "==> Applying database migrations"
+          ./compose.sh run --rm -T --entrypoint /usr/local/bin/core-war-migrate backend
+
           echo "==> Restarting stack"
           ./compose.sh up -d --remove-orphans
 

@@ -390,6 +390,28 @@ the droplet's stale local `:latest`, which is what happened after #178's
 deploy (a July backend against an October schema: sqlx
 `Migrate(VersionMissing(...))`).
 
+### Database migrations
+
+Migrations run as an explicit step of the deploy workflow (#77), not at backend
+startup. Each deploy applies them with a one-shot `core-war-migrate` container
+(built into the backend image) *before* the new backend starts, so a broken
+migration fails the deploy at the migrations step instead of surfacing as a
+health-check timeout. The backend binary no longer migrates on boot.
+
+To apply migrations by hand against prod — after restoring the database, or to
+retry a migration a deploy flagged — run the migrator from the deployed image:
+
+```bash
+# Applies the embedded migrations against the live database, then exits. Uses
+# the deployed tag from .backend-image-tag, like every other compose.sh command.
+./compose.sh run --rm -T --entrypoint /usr/local/bin/core-war-migrate backend
+```
+
+sqlx records applied versions in `_sqlx_migrations` and skips them, so this is
+safe to re-run. A migration that failed partway is **not** rolled back
+automatically: inspect `_sqlx_migrations` (the failed version has
+`success = false`) and remediate before retrying.
+
 ```bash
 # Tail logs
 ./compose.sh logs -f backend

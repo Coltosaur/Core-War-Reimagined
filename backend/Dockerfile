@@ -14,7 +14,9 @@ COPY engine engine
 COPY backend backend
 
 WORKDIR /app/backend
-RUN cargo build --release --bin core-war-backend
+# Build the server and the one-shot migrator (#77) in the same image, so the
+# deploy step's migrator is the exact migration set of the release it ships with.
+RUN cargo build --release --bin core-war-backend --bin core-war-migrate
 
 
 FROM debian:bookworm-slim AS runtime
@@ -26,6 +28,7 @@ RUN apt-get update \
 RUN groupadd --system app && useradd --system --gid app --create-home --shell /bin/bash app
 
 COPY --from=builder /app/backend/target/release/core-war-backend /usr/local/bin/core-war-backend
+COPY --from=builder /app/backend/target/release/core-war-migrate /usr/local/bin/core-war-migrate
 
 USER app
 WORKDIR /home/app

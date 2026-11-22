@@ -12,6 +12,12 @@ name = "seed-test-users"
 path = "src/bin/seed_test_users.rs"
 required-features = ["dev-fixtures"]
 
+# One-shot database migrator for the explicit deploy step (#77). Ships in the
+# same image as the backend; the deploy workflow runs it before `up -d`.
+[[bin]]
+name = "core-war-migrate"
+path = "src/bin/migrate.rs"
+
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
